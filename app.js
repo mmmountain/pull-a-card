@@ -1,5 +1,6 @@
 import * as S from "./store.js";
 import { ORIGINAL, randomTheme } from "./theme.js";
+import { myChaos, myDeck } from "./model.js";
 import { SUIT, SUITS, ago, fmtTime, heat, newId, parseLater } from "./model.js";
 
 const $app = document.getElementById("app");
@@ -67,7 +68,7 @@ function bigCard(t) {
 function playView() {
   const me = profile.me, t = state.tables[me.id], top = t && !t.empty ? t : null;
   const hand = state.hands.filter((h) => h.seat === me.id).sort((a, b) => (a.heldAt || "").localeCompare(b.heldAt || ""));
-  const left = Math.max(0, state.cards.filter((c) => c.active !== false).length - state.hands.length);
+  const left = Math.max(0, myDeck(state.cards, state.players, me.id).filter((c) => c.active !== false).length - hand.length);
   const mine = state.game.active === me.id;
   const selH = hand.find((h) => h.id === sel);
   return `<section class="stage">${top
@@ -101,7 +102,7 @@ function tableView() {
       <div class="cubes"><span class="lbl">Cubes · ${plays.length}</span><div class="g">${plays.slice(-24).map((x) => `<span class="cube" style="background:${SUITC[x.suit]}"></span>`).join("")}</div></div></div></div>`;
   };
   const others = players.filter((p) => p.id !== me.id);
-  const drawN = Math.max(0, state.cards.filter((c) => c.active !== false).length - state.hands.length);
+  const drawN = Math.max(0, myDeck(state.cards, state.players, me.id).filter((c) => c.active !== false).length - state.hands.filter((h) => h.seat === me.id).length);
   return `<div class="board">${others.length ? others.map(side).join("") : side(null)}
     <div class="mid"><div class="pile"><span class="s b"></span>DRAW ${drawN}</div>
       <div class="turn">TURN<b>${state.game.turn}</b>${active ? (active.id === me.id ? "YOU PLAY" : esc(active.name.toUpperCase()) + " TO PLAY") : ""}</div>
@@ -110,11 +111,13 @@ function tableView() {
 }
 
 function deckView() {
-  const cards = [...state.cards].sort((a, b) => a.label.localeCompare(b.label));
-  return `<div class="panel"><h3>Randomness · ${state.config.chaos}%</h3>
-      <div class="chips">${[0, 15, 30, 50, 75, 100].map((v) => `<button class="chip" aria-pressed="${state.config.chaos === v}" data-chaos="${v}">${v === 0 ? "Steady" : v === 100 ? "Wild" : v + "%"}</button>`).join("")}</div>
+  const me = profile.me;
+  const cards = myDeck(state.cards, state.players, me.id).sort((a, b) => a.label.localeCompare(b.label));
+  const chaos = myChaos(state.players, me.id, state.config.chaos);
+  return `<div class="panel"><h3>Your randomness · ${chaos}%</h3>
+      <div class="chips">${[0, 15, 30, 50, 75, 100].map((v) => `<button class="chip" aria-pressed="${chaos === v}" data-chaos="${v}">${v === 0 ? "Steady" : v === 100 ? "Wild" : v + "%"}</button>`).join("")}</div>
       <p class="note left">Steady deals whatever is most overdue on a regular clock. Wild picks any card at uneven times.</p></div>
-    <section style="display:flex;flex-direction:column;gap:8px"><h3>Cards in the deck</h3>
+    <section style="display:flex;flex-direction:column;gap:8px"><h3>Your deck · only you see it</h3>
       ${cards.map((c) => `<button class="deckrow${c.active === false ? " off" : ""}" data-edit="${c.id}"><span style="color:${SUITC[c.suit]};width:20px">${SUIT[c.suit]}</span><span class="n">${esc(c.label)}</span><span class="f">every ${c.every}h · ${"●".repeat(c.imm || 3)}</span></button>`).join("")}
       <button class="btn primary" data-act="newcard">New card</button></section>`;
 }
@@ -226,7 +229,7 @@ $app.addEventListener("click", async (e) => {
   const d = b.dataset, room = profile?.room, me = profile?.me;
   if (d.tab) { tab = d.tab; sheet = null; if (tab === "me") await loadPush(); render(); return; }
   if (d.sel) { sel = sel === d.sel ? null : d.sel; render(); return; }
-  if (d.chaos) return act(() => S.setChaos(room, +d.chaos));
+  if (d.chaos) return act(() => S.setChaos(room, me, +d.chaos));
   if (d.edit) { sheet = { type: "edit", card: { ...state.cards.find((c) => c.id === d.edit) } }; render(); return; }
   if (d.esuit) { readEdit(); sheet.card.suit = d.esuit; render(); return; }
   if (d.eimm) { readEdit(); sheet.card.imm = +d.eimm; render(); return; }
@@ -270,7 +273,7 @@ $app.addEventListener("click", async (e) => {
       readEdit(); const c = sheet.card;
       if (!c.label.trim()) { toast("Give the card a label."); return; }
       sheet = null;
-      return act(() => S.saveCard(room, { ...c, label: c.label.trim(), every: Math.max(0.25, parseFloat(c.every) || 4) }), "Saved " + c.label);
+      return act(() => S.saveCard(room, me, { ...c, label: c.label.trim(), every: Math.max(0.25, parseFloat(c.every) || 4) }), "Saved " + c.label);
     }
     case "edel": {
       if (!sheet.arm) { readEdit(); sheet.arm = true; return render(); }

@@ -1,6 +1,6 @@
 // Same document store the Android app uses: one Supabase table, docs(room, coll, id, data).
 import { createClient } from "./supabase.js";
-import { SEED_CARDS, dealFrom, newId, nextTurn, pickCard } from "./model.js";
+import { SEED_CARDS, dealFrom, myChaos, myDeck, newId, nextTurn, pickCard } from "./model.js";
 
 export const SUPABASE_URL = "https://znhbphohxomvldyvewyj.supabase.co";
 export const SUPABASE_KEY = "sb_publishable_B9UMRmmdVo9HSRwVuUEEhw_hEOyGToB";
@@ -62,13 +62,16 @@ export function subscribeRoom(room, onChange) {
 }
 
 export async function joinRoom(room, me) {
-  const existing = await listColl(room, "cards");
-  if (!existing.length) {
-    for (const c of SEED_CARDS) { const { id, ...data } = c; await upsert(room, "cards", id, data); }
-    await upsert(room, "config", "main", { chaos: 30 });
-  }
   const p = await getDoc(room, "players", me.id);
-  await upsert(room, "players", me.id, { name: me.name, joined: p?.joined || new Date().toISOString() });
+  await upsert(room, "players", me.id, { ...(p || {}), name: me.name, joined: p?.joined || new Date().toISOString() });
+  // Everyone gets their own deck. A newcomer starts with the starter cards.
+  const [cards, players] = await Promise.all([listColl(room, "cards"), listColl(room, "players")]);
+  if (!myDeck(cards, players, me.id).length) {
+    for (const c of SEED_CARDS) {
+      const { id, ...data } = c;
+      await upsert(room, "cards", me.id + "-" + id, { ...data, owner: me.id });
+    }
+  }
   const g = await getDoc(room, "game", "main");
   if (!g || !g.active) await upsert(room, "game", "main", { turn: g?.turn || 1, active: me.id });
 }
@@ -81,9 +84,9 @@ async function advance(room, me) {
 }
 
 export async function draw(room, me) {
-  const [cards, hands, tables, config] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), getDoc(room, "config", "main")]);
+  const [cards, hands, tables, players] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), listColl(room, "players")]);
   const busy = [...hands.map((h) => h.cardId), ...tables.filter((t) => !t.empty).map((t) => t.cardId)];
-  const k = pickCard(cards, busy, config?.chaos ?? 30);
+  const k = pickCard(myDeck(cards, players, me.id), busy, myChaos(players, me.id));
   if (!k) return null;
   const t = dealFrom(k);
   await upsert(room, "tables", me.id, t);
@@ -126,9 +129,15 @@ export async function setRemind(room, handId, at) {
   if (!h) return;
   await upsert(room, "hands", handId, { ...h, remindAt: at ? at.toISOString() : null, reminded: false });
 }
-export async function saveCard(room, card) { const { id, ...data } = card; await upsert(room, "cards", id || newId(), data); }
 export const deleteCard = (room, id) => remove(room, "cards", id);
-export const setChaos = (room, chaos) => upsert(room, "config", "main", { chaos });
+export async function saveCard(room, me, card) {
+  const { id, ...data } = card;
+  await upsert(room, "cards", id || me.id + "-" + newId(), { ...data, owner: data.owner || me.id });
+}
+export async function setChaos(room, me, chaos) {
+  const p = (await getDoc(room, "players", me.id)) || { name: me.name, joined: new Date().toISOString() };
+  await upsert(room, "players", me.id, { ...p, chaos });
+}
 
 /* ---------- web push: the Supabase dealer reads this to know when to deal to you ---------- */
 export async function savePush(room, me, sub, prefs) {
