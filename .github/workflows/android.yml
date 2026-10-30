@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@v4
         with: { ref: "${{ needs.setup.outputs.sha }}" }
       - name: Share game logic with the web app
-        run: cp src/model.js web/model.js
+        run: cp src/model.js src/theme.js web/
       - uses: JamesIves/github-pages-deploy-action@v4
         with:
           folder: web

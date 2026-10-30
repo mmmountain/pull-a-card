@@ -9,13 +9,20 @@ import * as Notifications from "expo-notifications";
 import * as Updates from "expo-updates";
 import * as S from "./src/store";
 import * as N from "./src/notify";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { ORIGINAL, randomTheme } from "./src/theme";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 
-const C = {
-  bg: "#fff3a6", bg2: "#ffe57a", felt: "#ffd3e6", paper: "#fffdf7", ink: "#3a1630", muted: "#8a4f6c",
-  line: "#f4a9c9", accent: "#ff7eb6", hot: "#ff4f86", warm: "#ffb020",
-  suit: { body: "#ff5c93", home: "#6cbcff", mind: "#ffb81f", work: "#5fd394" },
-};
+// Live color palette. applyTheme() swaps it in place and redraws the app.
+const C = { ...ORIGINAL, suit: { ...ORIGINAL.suit } };
+const THEME_KEY = "pac.theme.v1";
+let redraw = null;
+function applyTheme(t, save = true) {
+  Object.assign(C, t, { suit: { ...t.suit } });
+  st = makeStyles();
+  if (save) AsyncStorage.setItem(THEME_KEY, JSON.stringify(t)).catch(() => {});
+  redraw?.();
+}
 
 /* ---------------- room hook ---------------- */
 function useRoom(room) {
@@ -59,6 +66,12 @@ async function applyUpdate() {
 }
 
 export default function App() {
+  const [, setVer] = useState(0);
+  useEffect(() => {
+    redraw = () => setVer((v) => v + 1);
+    AsyncStorage.getItem(THEME_KEY).then((raw) => { if (raw) applyTheme(JSON.parse(raw), false); }).catch(() => {});
+    return () => { redraw = null; };
+  }, []);
   useEffect(() => {
     applyUpdate();
     const sub = AppState.addEventListener("change", (s) => { if (s === "active") applyUpdate(); });
@@ -484,6 +497,15 @@ function MeView({ profile, prefs, setProfile, act, state }) {
         <Text style={st.label}>COMING UP ON THIS PHONE</Text>
         {plan.length ? plan.map((p) => <Text key={p.id} style={st.planRow}>{p.at ? fmtTime(new Date(p.at)) : "—"}  {p.title}</Text>) : <Text style={[st.note, { textAlign: "left" }]}>Nothing scheduled.</Text>}
       </View>
+      <View style={st.panel}>
+        <Text style={st.label}>COLORS</Text>
+        <View style={st.chips}>{[C.bg, C.bg2, C.felt, C.accent, C.ink, ...Object.values(C.suit)].map((c, i) => <View key={i} style={{ width: 22, height: 22, borderRadius: 6, backgroundColor: c, borderWidth: 1, borderColor: C.line }} />)}</View>
+        <Text style={[st.note, { textAlign: "left" }]}>{C.name || ORIGINAL.name}</Text>
+        <View style={st.row}>
+          <Btn primary flex label="Shuffle colors" onPress={() => applyTheme(randomTheme())} />
+          <Btn flex label="Original" onPress={() => applyTheme(ORIGINAL)} />
+        </View>
+      </View>
       <Btn label="Leave this table" onPress={leave} />
       <Text style={st.note}>Version {Updates.createdAt ? Updates.createdAt.toLocaleString() : "built-in"}{Updates.isEmbeddedLaunch ? "" : " · updated"}</Text>
     </>
@@ -511,7 +533,7 @@ function Field({ label, ...props }) {
   );
 }
 
-const st = StyleSheet.create({
+function makeStyles() { return StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 8, gap: 10 },
   tabs: { flexDirection: "row", backgroundColor: C.bg2, borderRadius: 999, padding: 3, gap: 2 },
@@ -580,4 +602,5 @@ const st = StyleSheet.create({
   planRow: { fontSize: 14, color: C.ink, fontVariant: ["tabular-nums"] },
   toast: { position: "absolute", left: 16, right: 16, bottom: 24, backgroundColor: C.ink, borderRadius: 12, padding: 12 },
   toastTxt: { color: C.bg, textAlign: "center", fontWeight: "600" },
-});
+}); }
+let st = makeStyles();

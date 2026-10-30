@@ -47,7 +47,7 @@ h3,.lbl{font:500 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;c
 .card .var{margin-top:12px;color:var(--muted)}
 .pips{position:absolute;bottom:18px;display:flex;gap:4px}.pip{width:7px;height:7px;border-radius:50%;background:#f6d6e4}.pip.on{background:var(--hot)}
 .deck{position:relative;width:min(290px,76vw);aspect-ratio:5/7;border:0;background:none;padding:0;cursor:pointer}
-.back{position:absolute;inset:0;border-radius:16px;background:repeating-linear-gradient(45deg,var(--accent) 0 6px,#ff9cc8 6px 12px);border:6px solid var(--paper);box-shadow:var(--shadow)}
+.back{position:absolute;inset:0;border-radius:16px;background:repeating-linear-gradient(45deg,var(--accent) 0 6px,var(--line) 6px 12px);border:6px solid var(--paper);box-shadow:var(--shadow)}
 .deck .back:nth-child(1){transform:rotate(-4deg);opacity:.6}.deck .back:nth-child(2){transform:rotate(3deg);opacity:.8}
 .deck .pull{position:absolute;inset:0;margin:auto;width:60%;height:64px;display:grid;place-items:center;border-radius:14px;background:var(--paper);font:800 22px var(--display);box-shadow:var(--shadow)}
 .row{display:flex;gap:10px;align-items:center}
@@ -87,7 +87,7 @@ label{display:flex;flex-direction:column;gap:4px}
 .mid{display:flex;justify-content:space-around;align-items:center;background:var(--bg2);padding:14px}
 .pile{display:flex;flex-direction:column;align-items:center;gap:6px;font:500 10px var(--mono);color:var(--muted);letter-spacing:.06em}
 .pile .s{width:56px;height:78px;border-radius:8px}
-.pile .s.b{background:repeating-linear-gradient(45deg,var(--accent) 0 4px,#ff9cc8 4px 8px);border:3px solid var(--paper)}
+.pile .s.b{background:repeating-linear-gradient(45deg,var(--accent) 0 4px,var(--line) 4px 8px);border:3px solid var(--paper)}
 .pile .s.d{border:1.5px dashed var(--line);display:grid;place-items:center;font:700 11px/1.1 var(--display);color:var(--ink);text-align:center;padding:4px}
 .pile .s.d.has{background:var(--paper);border:0;box-shadow:var(--shadow);transform:rotate(-4deg)}
 .turn{text-align:center;font:500 10px var(--mono);color:var(--muted);letter-spacing:.06em}.turn b{display:block;font:800 28px var(--display);color:var(--ink)}
