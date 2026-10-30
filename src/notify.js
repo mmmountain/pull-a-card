@@ -1,7 +1,7 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { cardLine, fmtTime, parseLater, pickCard, planDealTimes, dealFrom, hoursSince } from "./model";
+import { cardLine, fmtTime, parseLater, pickCard, planDealTimes, dealFrom, hoursSince, myChaos, myDeck } from "./model";
 import * as S from "./store";
 
 export const DEAL_CAT = "deal";
@@ -75,12 +75,13 @@ export async function cancelKind(kind, match) {
 export async function rescheduleDeals(room, me, prefs, state) {
   await cancelKind("deal");
   if (!prefs.notify || !state) return [];
-  const times = planDealTimes({ everyMins: prefs.everyMins, chaos: state.config?.chaos ?? 30, startHour: prefs.startHour, endHour: prefs.endHour });
-  const cards = state.cards.map((c) => ({ ...c }));
+  const chaos = myChaos(state.players, me.id, state.config?.chaos ?? 30);
+  const times = planDealTimes({ everyMins: prefs.everyMins, chaos, startHour: prefs.startHour, endHour: prefs.endHour });
+  const cards = myDeck(state.cards, state.players, me.id).map((c) => ({ ...c }));
   const busy = [...state.hands.map((h) => h.cardId), ...Object.values(state.tables).filter((t) => !t.empty).map((t) => t.cardId)];
   const out = [];
   for (const when of times) {
-    const k = pickCard(cards, busy, state.config?.chaos ?? 30, when.getTime());
+    const k = pickCard(cards, busy, chaos, when.getTime());
     if (!k) break;
     k.lastDrawn = when.toISOString();
     const t = dealFrom(k, when.getTime());

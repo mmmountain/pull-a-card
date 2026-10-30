@@ -11,6 +11,7 @@ import * as S from "./src/store";
 import * as N from "./src/notify";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, randomTheme } from "./src/theme";
+import { myChaos, myDeck } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
@@ -169,8 +170,8 @@ function Game({ profile, setProfile }) {
 
   // Keep this phone's upcoming deals in step with the deck, randomness and your settings.
   const planKey = useMemo(() => state && JSON.stringify([
-    state.cards.map((c) => [c.id, c.label, c.every, c.imm, c.active, c.variants]),
-    state.config.chaos, prefs, state.hands.length,
+    myDeck(state.cards, state.players, me.id).map((c) => [c.id, c.label, c.every, c.imm, c.active, c.variants]),
+    myChaos(state.players, me.id, state.config.chaos), prefs, state.hands.length,
   ]), [state, profile.prefs]);
   useEffect(() => {
     if (!state) return;
@@ -204,7 +205,7 @@ function Game({ profile, setProfile }) {
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 18 }}>
         {tab === "play" && <PlayView state={state} room={room} me={me} act={act} focusHand={focusHand} setFocusHand={setFocusHand} />}
         {tab === "table" && <TableView state={state} me={me} />}
-        {tab === "deck" && <DeckView state={state} room={room} act={act} />}
+        {tab === "deck" && <DeckView state={state} room={room} me={me} act={act} />}
         {tab === "me" && <MeView profile={profile} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
       </ScrollView>
       {!!msg && <View style={st.toast}><Text style={st.toastTxt}>{msg}</Text></View>}
@@ -219,7 +220,7 @@ function PlayView({ state, room, me, act, focusHand, setFocusHand }) {
   const myHand = state.hands.filter((h) => h.seat === me.id).sort((a, b) => (a.heldAt || "").localeCompare(b.heldAt || ""));
   const [later, setLater] = useState(null); // {kind:'table'} | {kind:'hand', h}
   const sel = myHand.find((h) => h.id === focusHand);
-  const left = state.cards.filter((c) => c.active !== false).length - state.hands.length;
+  const left = myDeck(state.cards, state.players, me.id).filter((c) => c.active !== false).length - myHand.length;
   const myTurn = state.game.active === me.id;
 
   const setReminder = async (at) => {
@@ -343,7 +344,7 @@ function TableView({ state, me }) {
   const mine = players.find((p) => p.id === me.id);
   const lastPlay = state.plays.reduce((a, p) => (!a || p.at > a.at ? p : a), null);
   const topDis = state.discards.reduce((a, d) => (!a || d.at > a.at ? d : a), null);
-  const drawN = Math.max(0, state.cards.filter((c) => c.active !== false).length - state.hands.length);
+  const drawN = Math.max(0, myDeck(state.cards, state.players, me.id).filter((c) => c.active !== false).length - state.hands.filter((h) => h.seat === me.id).length);
   const active = players.find((p) => p.id === state.game.active);
   const Side = ({ p }) => {
     if (!p) return <View style={st.side}><Text style={[st.h3, { color: C.muted }]}>Open seat</Text><Text style={st.note}>Give a friend your table name so they can sit here.</Text></View>;
@@ -394,18 +395,19 @@ function TableView({ state, me }) {
 }
 
 /* ---------------- deck ---------------- */
-function DeckView({ state, room, act }) {
+function DeckView({ state, room, me, act }) {
   const [edit, setEdit] = useState(null);
-  const cards = [...state.cards].sort((a, b) => a.label.localeCompare(b.label));
+  const cards = myDeck(state.cards, state.players, me.id).sort((a, b) => a.label.localeCompare(b.label));
+  const chaos = myChaos(state.players, me.id, state.config.chaos);
   return (
     <>
       <View style={st.panel}>
-        <Text style={st.label}>RANDOMNESS · {state.config.chaos}%</Text>
-        <View style={st.chips}>{[0, 15, 30, 50, 75, 100].map((v) => <Chip key={v} label={v === 0 ? "Steady" : v === 100 ? "Wild" : v + "%"} on={state.config.chaos === v} onPress={() => act(() => S.setChaos(room, v))} />)}</View>
+        <Text style={st.label}>YOUR RANDOMNESS · {chaos}%</Text>
+        <View style={st.chips}>{[0, 15, 30, 50, 75, 100].map((v) => <Chip key={v} label={v === 0 ? "Steady" : v === 100 ? "Wild" : v + "%"} on={chaos === v} onPress={() => act(() => S.setChaos(room, me, v))} />)}</View>
         <Text style={[st.note, { textAlign: "left" }]}>Steady deals whatever is most overdue, on a regular clock. Wild picks any card at uneven times.</Text>
       </View>
       <View style={{ gap: 8 }}>
-        <Text style={st.label}>CARDS IN THE DECK</Text>
+        <Text style={st.label}>YOUR DECK · ONLY YOU SEE IT</Text>
         {cards.map((c) => (
           <Pressable key={c.id} onPress={() => setEdit(c)} style={[st.deckRow, c.active === false && { opacity: 0.5 }]}>
             <Text style={{ color: C.suit[c.suit], fontSize: 18, width: 22 }}>{SUIT[c.suit]}</Text>
@@ -415,7 +417,7 @@ function DeckView({ state, room, act }) {
         ))}
         <Btn primary label="New card" onPress={() => setEdit({ label: "", variants: [], suit: "body", every: 4, imm: 3, active: true, plays: 0 })} />
       </View>
-      <CardEditor card={edit} onClose={() => setEdit(null)} onSave={(c) => { setEdit(null); act(() => S.saveCard(room, c), "Saved " + c.label); }}
+      <CardEditor card={edit} onClose={() => setEdit(null)} onSave={(c) => { setEdit(null); act(() => S.saveCard(room, me, c), "Saved " + c.label); }}
         onDelete={(c) => { setEdit(null); act(() => S.deleteCard(room, c.id), "Deleted " + c.label); }} />
     </>
   );

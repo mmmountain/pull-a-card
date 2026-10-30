@@ -2,7 +2,7 @@ import "react-native-url-polyfill/auto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config";
-import { SEED_CARDS, dealFrom, newId, nextTurn, pickCard } from "./model";
+import { SEED_CARDS, dealFrom, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -84,16 +84,16 @@ export function subscribeRoom(room, onChange) {
 
 /* ---------- joining ---------- */
 export async function joinRoom(room, me) {
-  const existing = await listColl(room, "cards");
-  if (!existing.length) {
+  const p = await getDoc(room, "players", me.id);
+  await upsert(room, "players", me.id, { ...(p || {}), name: me.name, joined: p?.joined || new Date().toISOString() });
+  // Everyone gets their own deck. A newcomer starts with the starter cards.
+  const [cards, players] = await Promise.all([listColl(room, "cards"), listColl(room, "players")]);
+  if (!myDeck(cards, players, me.id).length) {
     for (const c of SEED_CARDS) {
       const { id, ...data } = c;
-      await upsert(room, "cards", id, data);
+      await upsert(room, "cards", me.id + "-" + id, { ...data, owner: me.id });
     }
-    await upsert(room, "config", "main", { chaos: 30 });
   }
-  const p = await getDoc(room, "players", me.id);
-  await upsert(room, "players", me.id, { name: me.name, joined: p?.joined || new Date().toISOString() });
   const g = await getDoc(room, "game", "main");
   if (!g || !g.active) await upsert(room, "game", "main", { turn: g?.turn || 1, active: me.id });
 }
@@ -107,14 +107,9 @@ async function advance(room, me) {
 }
 
 export async function draw(room, me) {
-  const [cards, hands, tables, config] = await Promise.all([
-    listColl(room, "cards"),
-    listColl(room, "hands"),
-    listColl(room, "tables"),
-    getDoc(room, "config", "main"),
-  ]);
+  const [cards, hands, tables, players] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), listColl(room, "players")]);
   const busy = [...hands.map((h) => h.cardId), ...tables.filter((t) => !t.empty).map((t) => t.cardId)];
-  const k = pickCard(cards, busy, config?.chaos ?? 30);
+  const k = pickCard(myDeck(cards, players, me.id), busy, myChaos(players, me.id));
   if (!k) return null;
   const t = dealFrom(k);
   await upsert(room, "tables", me.id, t);
@@ -189,9 +184,12 @@ export async function setRemind(room, handId, at) {
 export const getHand = (room, handId) => getDoc(room, "hands", handId);
 
 /* ---------- deck editing ---------- */
-export async function saveCard(room, card) {
-  const { id, ...data } = card;
-  await upsert(room, "cards", id || newId(), data);
-}
 export const deleteCard = (room, id) => remove(room, "cards", id);
-export const setChaos = (room, chaos) => upsert(room, "config", "main", { chaos });
+export async function saveCard(room, me, card) {
+  const { id, ...data } = card;
+  await upsert(room, "cards", id || me.id + "-" + newId(), { ...data, owner: data.owner || me.id });
+}
+export async function setChaos(room, me, chaos) {
+  const p = (await getDoc(room, "players", me.id)) || { name: me.name, joined: new Date().toISOString() };
+  await upsert(room, "players", me.id, { ...p, chaos });
+}

@@ -141,3 +141,19 @@ export function planDealTimes({ now = new Date(), everyMins = 120, chaos = 30, s
 }
 
 export const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+/* ---------- personal decks ---------- */
+// A card belongs to card.owner. Cards from before decks were personal have no owner;
+// they belong to whoever sat at the table first.
+const firstPlayer = (players) => [...(players || [])].sort((a, b) => (a.joined || "").localeCompare(b.joined || ""))[0]?.id;
+export function deckOwner(card, players) {
+  return card.owner || firstPlayer(players);
+}
+export function myDeck(cards, players, meId) {
+  const first = firstPlayer(players);
+  return cards.filter((c) => (c.owner || first) === meId);
+}
+export function myChaos(players, meId, fallback = 30) {
+  const p = (players || []).find((x) => x.id === meId);
+  return typeof p?.chaos === "number" ? p.chaos : fallback;
+}

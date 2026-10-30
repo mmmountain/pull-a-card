@@ -71,9 +71,13 @@ Deno.serve(async (req) => {
     const { data: rows } = await db.from("docs").select("coll,id,data").eq("room", room);
     const all = (rows || []) as Doc[];
     const get = (coll: string) => all.filter((r) => r.coll === coll).map((r) => ({ id: r.id, ...r.data }));
-    const cards = get("cards"), hands = get("hands");
+    const players = get("players").sort((x: any, y: any) => (x.joined || "").localeCompare(y.joined || ""));
+    const first = players[0]?.id;
+    // Personal decks: only this player's cards (old ownerless cards belong to the first player).
+    const cards = get("cards").filter((c: any) => (c.owner || first) === player), hands = get("hands");
     const tables = Object.fromEntries(all.filter((r) => r.coll === "tables").map((r) => [r.id, r.data]));
-    const chaos = all.find((r) => r.coll === "config" && r.id === "main")?.data?.chaos ?? 30;
+    const me = players.find((x: any) => x.id === player) as any;
+    const chaos = typeof me?.chaos === "number" ? me.chaos : (all.find((r) => r.coll === "config" && r.id === "main")?.data?.chaos ?? 30);
     const game = all.find((r) => r.coll === "game" && r.id === "main")?.data || { turn: 1 };
 
     const send = async (title: string, body: string, tag: string) => {
