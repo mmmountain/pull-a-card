@@ -29,6 +29,11 @@
         "android.permission.USE_EXACT_ALARM",
         "android.permission.SCHEDULE_EXACT_ALARM",
         "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.USE_EXACT_ALARM",
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.VIBRATE"
       ]
     },
@@ -51,7 +56,14 @@
       "fallbackToCacheTimeout": 0,
       "requestHeaders": {
         "expo-channel-name": "production"
+      },
+      "url": "https://u.expo.dev/34d12e0d-8dca-442a-9fe8-6e985076c665"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "34d12e0d-8dca-442a-9fe8-6e985076c665"
       }
-    }
+    },
+    "owner": "mmmountain"
   }
 }
