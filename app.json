@@ -39,7 +39,19 @@
           "color": "#ff7eb6"
         }
       ],
-      "expo-task-manager"
-    ]
+      "expo-task-manager",
+      "expo-updates"
+    ],
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0,
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    }
   }
 }

@@ -6,6 +6,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import * as Notifications from "expo-notifications";
+import * as Updates from "expo-updates";
 import * as S from "./src/store";
 import * as N from "./src/notify";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
@@ -46,7 +47,23 @@ function useRoom(room) {
 }
 
 /* ---------------- app ---------------- */
+// Pull new versions published from GitHub. Runs at launch and whenever the app comes back to the front.
+async function applyUpdate() {
+  if (__DEV__ || !Updates.isEnabled) return;
+  try {
+    const check = await Updates.checkForUpdateAsync();
+    if (!check.isAvailable) return;
+    const got = await Updates.fetchUpdateAsync();
+    if (got.isNew) await Updates.reloadAsync();
+  } catch {}
+}
+
 export default function App() {
+  useEffect(() => {
+    applyUpdate();
+    const sub = AppState.addEventListener("change", (s) => { if (s === "active") applyUpdate(); });
+    return () => sub.remove();
+  }, []);
   return <SafeAreaProvider><Root /></SafeAreaProvider>;
 }
 
@@ -468,6 +485,7 @@ function MeView({ profile, prefs, setProfile, act, state }) {
         {plan.length ? plan.map((p) => <Text key={p.id} style={st.planRow}>{p.at ? fmtTime(new Date(p.at)) : "—"}  {p.title}</Text>) : <Text style={[st.note, { textAlign: "left" }]}>Nothing scheduled.</Text>}
       </View>
       <Btn label="Leave this table" onPress={leave} />
+      <Text style={st.note}>Version {Updates.createdAt ? Updates.createdAt.toLocaleString() : "built-in"}{Updates.isEmbeddedLaunch ? "" : " · updated"}</Text>
     </>
   );
 }

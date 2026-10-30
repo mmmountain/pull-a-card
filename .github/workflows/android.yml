@@ -1,5 +1,10 @@
-name: Build Android APK
+name: Ship Pull a Card
 
+# Every push to main:
+#   web     → republishes the iPhone/web app (gh-pages)
+#   dealer  → redeploys the Supabase dealer function
+#   update  → sends an over-the-air update to installed Android apps
+#   apk     → builds a new APK only when the app's native side changed
 on:
   push:
     branches: [main]
@@ -8,49 +13,116 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ship
+  cancel-in-progress: false
+
 jobs:
-  build:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+      fingerprint: ${{ steps.fp.outputs.hash }}
+      need_apk: ${{ steps.fp.outputs.need_apk }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+
+      - name: Link the Expo project (first run only)
+        env: { EXPO_TOKEN: "${{ secrets.EXPO_TOKEN }}" }
+        run: |
+          if ! node -e 'process.exit(require("./app.json").expo?.extra?.eas?.projectId ? 0 : 1)'; then
+            npx eas-cli@latest init --non-interactive --force
+            npx eas-cli@latest update:configure --platform android --non-interactive
+          fi
+
+      - name: Save any config changes
+        id: commit
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "Link Expo project [skip ci]"
+            git push
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Does this change need a new APK?
+        id: fp
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          HASH=$(npx expo-updates fingerprint:generate --platform android | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).hash))')
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          LAST=$(gh release view --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null | grep -o 'fingerprint: [0-9a-f]*' | cut -d' ' -f2 || true)
+          if [ "$HASH" = "$LAST" ]; then echo "need_apk=false" >> "$GITHUB_OUTPUT"; else echo "need_apk=true" >> "$GITHUB_OUTPUT"; fi
+          echo "fingerprint $HASH, last APK $LAST"
+
+  web:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ needs.setup.outputs.sha }}" }
+      - name: Share game logic with the web app
+        run: cp src/model.js web/model.js
+      - uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: web
+          branch: gh-pages
+
+  dealer:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ needs.setup.outputs.sha }}" }
+      - name: Deploy the Supabase dealer
+        env: { SUPABASE_ACCESS_TOKEN: "${{ secrets.SUPABASE_ACCESS_TOKEN }}" }
+        run: npx supabase@latest functions deploy dealer --project-ref znhbphohxomvldyvewyj --no-verify-jwt --use-api
+
+  update:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ needs.setup.outputs.sha }}" }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Send the update to installed phones
+        env: { EXPO_TOKEN: "${{ secrets.EXPO_TOKEN }}" }
+        run: npx eas-cli@latest update --channel production --platform android --message "${{ github.event.head_commit.message || 'manual run' }}" --non-interactive
+
+  apk:
+    needs: setup
+    if: needs.setup.outputs.need_apk == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
+        with: { ref: "${{ needs.setup.outputs.sha }}" }
       - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
+        with: { node-version: 22, cache: npm }
       - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
+        with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
-
-      - name: Install
-        run: npm ci
-
+      - run: npm ci
       - name: Generate native project
         run: npx expo prebuild --platform android --no-install
-        env:
-          CI: 1
-
+        env: { CI: 1 }
       - name: Build release APK
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
-
-      - name: Name the APK
-        run: cp android/app/build/outputs/apk/release/app-release.apk pull-a-card.apk
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pull-a-card-apk
-          path: pull-a-card.apk
-
-      - name: Publish as the latest release
-        uses: softprops/action-gh-release@v2
+      - run: cp android/app/build/outputs/apk/release/app-release.apk pull-a-card.apk
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
           name: Pull a Card build ${{ github.run_number }}
           make_latest: true
+          body: |
+            Install this only if Claude says a reinstall is needed. Everyday changes arrive on their own.
+            fingerprint: ${{ needs.setup.outputs.fingerprint }}
           files: pull-a-card.apk
