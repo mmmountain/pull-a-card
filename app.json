@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "Pull a Card",
+    "slug": "pull-a-card",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#fff3a6",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#fff3a6"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.scott.pullacard"
+    },
+    "android": {
+      "package": "com.scott.pullacard",
+      "adaptiveIcon": {
+        "backgroundColor": "#ff7eb6",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.USE_EXACT_ALARM",
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "color": "#ff7eb6"
+        }
+      ],
+      "expo-task-manager"
+    ]
+  }
+}
