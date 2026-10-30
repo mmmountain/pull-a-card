@@ -1,7 +1,21 @@
 import * as S from "./store.js";
+import { ORIGINAL, randomTheme } from "./theme.js";
 import { SUIT, SUITS, ago, fmtTime, heat, newId, parseLater } from "./model.js";
 
 const $app = document.getElementById("app");
+
+/* ---------- colors ---------- */
+const THEME_KEY = "pac.theme.v1";
+let theme = ORIGINAL;
+function applyTheme(t, save = true) {
+  theme = t;
+  const r = document.documentElement.style;
+  for (const k of ["bg", "bg2", "felt", "paper", "ink", "muted", "line", "accent", "hot", "warm"]) r.setProperty("--" + k, t[k]);
+  for (const k of ["body", "home", "mind", "work"]) r.setProperty("--s-" + k, t.suit[k]);
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", t.bg);
+  if (save) try { localStorage.setItem(THEME_KEY, JSON.stringify(t)); } catch {}
+}
+try { const saved = JSON.parse(localStorage.getItem(THEME_KEY)); if (saved?.bg) applyTheme(saved, false); } catch {}
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const SUITC = { body: "var(--s-body)", home: "var(--s-home)", mind: "var(--s-mind)", work: "var(--s-work)" };
 const pips = (n) => `<div class="pips">${[1, 2, 3, 4, 5].map((i) => `<span class="pip${i <= n ? " on" : ""}"></span>`).join("")}</div>`;
@@ -127,6 +141,10 @@ function meView() {
     <div class="panel"><h3>About every</h3><div class="chips">${chips("everyMins", [[45, "45 min"], [60, "1 h"], [90, "1.5 h"], [120, "2 h"], [180, "3 h"], [240, "4 h"]])}</div>
       <h3>Awake from</h3><div class="chips">${chips("startHour", [6, 7, 8, 9, 10].map((h) => [h, h + " AM"]))}</div>
       <h3>Until</h3><div class="chips">${chips("endHour", [19, 20, 21, 22, 23].map((h) => [h, h - 12 + " PM"]))}</div></div>
+    <div class="panel"><h3>Colors</h3>
+      <div class="chips">${[theme.bg, theme.bg2, theme.felt, theme.accent, theme.ink, ...Object.values(theme.suit)].map((c) => `<span style="width:22px;height:22px;border-radius:6px;background:${c};border:1px solid var(--line)"></span>`).join("")}</div>
+      <p class="note left">${esc(theme.name || ORIGINAL.name)}</p>
+      <div class="row"><button class="btn primary" data-act="shuffle">Shuffle colors</button><button class="btn" data-act="original">Original</button></div></div>
     <button class="btn" data-act="leave">Leave this table</button>`;
 }
 
@@ -267,6 +285,8 @@ $app.addEventListener("click", async (e) => {
       toast("Sent. Real cards come from the dealer about every " + ((profile.prefs?.everyMins || 120) / 60) + " h.");
       return;
     }
+    case "shuffle": applyTheme(randomTheme()); return render();
+    case "original": applyTheme(ORIGINAL); return render();
     case "leave": unsub?.(); profile = { ...profile, room: null }; S.saveProfile(profile); state = null; render(); return;
   }
 });
