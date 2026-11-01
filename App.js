@@ -215,6 +215,15 @@ function Game({ profile, setProfile }) {
     await S.saveProfile(p);
     setProfile(p);
   };
+  const leaveTable = async (r) => {
+    const left = rooms.filter((x) => x !== r);
+    if (r === room) await N.cancelKind("deal");
+    const p = { ...profile, room: r === room ? left[0] || null : room, rooms: left };
+    await S.saveProfile(p);
+    if (!left.length) setSwitcher(false);
+    setProfile(p);
+    say("Left " + r);
+  };
   const addTable = async (raw) => {
     const r = raw.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
     if (r.length < 3) throw new Error("Table names need at least 3 letters.");
@@ -273,21 +282,14 @@ function Game({ profile, setProfile }) {
             <Text style={st.undoIcon}>↶</Text>
           </Pressable>
         )}
-        <Pressable onPress={() => setSwitcher(true)} style={st.tableBar} accessibilityRole="button" accessibilityLabel={"Table " + room + ". Switch tables"}>
-          <View style={{ flex: 1 }}>
-            <Text style={st.tableBarLbl}>TABLE{rooms.length > 1 ? " · " + (rooms.indexOf(room) + 1) + " OF " + rooms.length : ""}</Text>
-            <Text style={st.tableBarName} numberOfLines={1}>{room}</Text>
-          </View>
-          <Text style={st.tableBarCaret}>▾</Text>
-        </Pressable>
       </View>
       {section !== "play" && <View style={st.header}><Text style={st.h2}>{SECTIONS.find((x) => x[0] === section)[1]}</Text></View>}
       {!cardMode && (
       <ScrollView scrollEnabled={!boardTouch} contentContainerStyle={{ padding: 16, paddingBottom: section === "play" ? 48 + WHEEL_H + 24 : 48, gap: 18 }}>
         {section === "play" && tab === "hand" && <HandView ctx={ctx} state={state} room={room} me={me} act={act} focusHand={focusHand} />}
-        {section === "play" && tab === "table" && <TableTab ctx={ctx} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
+        {section === "play" && tab === "table" && <TableTab ctx={ctx} onPickTable={switchTo} openTables={() => setSwitcher(true)} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
         {section === "decks" && <DeckView state={state} room={room} me={me} act={act} />}
-        {section === "me" && <MeView part="me" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} openSwitcher={() => setSwitcher(true)} />}
+        {section === "me" && <MeView part="me" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} openSwitcher={() => setSwitcher(true)} onLeave={() => leaveTable(room)} />}
         {section === "settings" && <MeView part="settings" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
       </ScrollView>)}
       {section === "play" && <ModeWheel mode={tab} onPick={setTab} handN={hereN} handMore={groups.length - hereN} />}
@@ -299,7 +301,7 @@ function Game({ profile, setProfile }) {
           )}
         </View>
       )}
-      <TableSwitcher open={switcher} ctx={ctx} onClose={() => setSwitcher(false)} onPick={switchTo} onAdd={addTable} />
+      <TableSwitcher open={switcher} ctx={ctx} onClose={() => setSwitcher(false)} onPick={switchTo} onAdd={addTable} onLeave={leaveTable} />
       <Drawer open={drawer} setOpen={setDrawer} section={section} name={me.name} room={room}
         onPick={(k) => { setDrawer(false); setSection(k); }} />
     </SafeAreaView>
@@ -646,7 +648,7 @@ function LaterSheet({ open, label, onClose, onPick }) {
 
 /* ---------------- table ---------------- */
 /* ---------------- table: players + maps ---------------- */
-function TableTab({ ctx, state, room, me, act, say, setBoardTouch }) {
+function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, setBoardTouch }) {
   const maps = (state.maps || []).filter((m) => m.owner === me.id);
   const [selId, setSel] = useState(null);
   const [lib, setLib] = useState(false);
@@ -654,6 +656,19 @@ function TableTab({ ctx, state, room, me, act, say, setBoardTouch }) {
   const have = new Set(maps.map((m) => m.key));
   return (
     <>
+      <View style={st.tablePick}>
+        <Text style={st.label}>TABLE</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, alignItems: "center" }}>
+          {ctx.rooms.map((r) => (
+            <Pressable key={r} onPress={() => onPickTable(r)} style={[st.tableChip, r === room && st.tableChipOn]} accessibilityRole="tab" accessibilityState={{ selected: r === room }}>
+              <Text style={[st.tableChipTxt, r === room && { color: C.ink }]}>{r}</Text>
+            </Pressable>
+          ))}
+          <Pressable onPress={openTables} style={st.tableChip} accessibilityRole="button" accessibilityLabel="Join or leave tables">
+            <Text style={st.tableChipTxt}>+ Join · Leave</Text>
+          </Pressable>
+        </ScrollView>
+      </View>
       <View style={st.chips}>
         <Chip label="Players" on={!cur} onPress={() => setSel("players")} />
         {maps.map((m) => <Chip key={m.id} label={(m.active === false ? "○ " : "") + m.name} on={cur?.id === m.id} onPress={() => setSel(m.id)} />)}
@@ -1113,7 +1128,7 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
 }
 
 /* ---------------- me / settings ---------------- */
-function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitcher }) {
+function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitcher, onLeave }) {
   const [plan, setPlan] = useState([]);
   useEffect(() => {
     Notifications.getAllScheduledNotificationsAsync().then((all) => {
@@ -1127,13 +1142,6 @@ function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitc
     await S.saveProfile(p);
     setProfile(p);
   };
-  const leave = async () => {
-    await N.cancelKind("deal");
-    const left = rooms.filter((r) => r !== profile.room);
-    const p = { ...profile, room: left[0] || null, rooms: left };
-    await S.saveProfile(p);
-    setProfile(p);
-  };
   if (part === "me") return (
     <>
       <View style={st.panel}>
@@ -1143,7 +1151,7 @@ function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitc
         <Text style={[st.note, { textAlign: "left" }]}>Friends join a table by entering the same table name.</Text>
         <Btn label="Switch or add tables" onPress={openSwitcher} />
       </View>
-      <Btn label={"Leave “" + profile.room + "”"} onPress={leave} />
+      <Btn label={"Leave “" + profile.room + "”"} onPress={onLeave} />
     </>
   );
   return (
@@ -1231,7 +1239,8 @@ function Drawer({ open, setOpen, section, name, room, onPick }) {
 
 /* ---------------- table switcher ---------------- */
 // Your tables, each with what's waiting there. Add another by name; a friend who types the same name sits with you.
-function TableSwitcher({ open, ctx, onClose, onPick, onAdd }) {
+function TableSwitcher({ open, ctx, onClose, onPick, onAdd, onLeave }) {
+  const [arm, setArm] = useState(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -1243,7 +1252,7 @@ function TableSwitcher({ open, ctx, onClose, onPick, onAdd }) {
     <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={st.scrim} onPress={onClose} />
       <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]} keyboardShouldPersistTaps="handled">
-        <Text style={st.h2}>Your tables</Text>
+        <Text style={st.h2}>Tables</Text>
         <Text style={[st.note, { textAlign: "left" }]}>Each table runs on its own. Your top card counts at every table it applies to.</Text>
         {ctx.rooms.map((r) => {
           const s1 = ctx.states[r], on = r === ctx.room;
@@ -1259,6 +1268,9 @@ function TableSwitcher({ open, ctx, onClose, onPick, onAdd }) {
                 </Text>
               </View>
               {on && <View style={st.check}><Text style={st.checkTxt}>✓</Text></View>}
+              <Pressable onPress={() => { if (arm === r) { setArm(null); onLeave(r); } else setArm(r); }} hitSlop={8} style={[st.leaveBtn, arm === r && { borderColor: C.hot }]} accessibilityRole="button" accessibilityLabel={"Leave " + r}>
+                <Text style={[st.leaveTxt, arm === r && { color: C.hot }]}>{arm === r ? "Tap to leave" : "Leave"}</Text>
+              </Pressable>
             </Pressable>
           );
         })}
@@ -1429,6 +1441,12 @@ function makeStyles() { return StyleSheet.create({
   tableBarCaret: { fontSize: 16, color: C.ink },
   tableRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 12, backgroundColor: C.bg2, borderWidth: 2, borderColor: "transparent", minHeight: 56 },
   tableRowOn: { borderColor: C.accent },
+  leaveBtn: { minHeight: 36, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1.5, borderColor: C.line, justifyContent: "center" },
+  leaveTxt: { fontSize: 13, fontWeight: "700", color: C.muted },
+  tablePick: { gap: 6 },
+  tableChip: { minHeight: 40, paddingHorizontal: 14, borderRadius: 999, backgroundColor: C.bg2, justifyContent: "center", borderWidth: 2, borderColor: "transparent" },
+  tableChipOn: { backgroundColor: C.accent, borderColor: C.ink },
+  tableChipTxt: { fontSize: 15, fontWeight: "700", color: C.muted },
   countsAt: { backgroundColor: C.bg2, borderRadius: 999, paddingVertical: 5, paddingHorizontal: 12, maxWidth: "85%" },
   countsAtOff: { borderWidth: 1, borderColor: C.warm, borderStyle: "dashed" },
   countsAtTxt: { fontSize: 12, fontWeight: "600", color: C.muted, textAlign: "center" },
