@@ -11,7 +11,7 @@ import * as S from "./src/store";
 import * as N from "./src/notify";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, randomTheme } from "./src/theme";
-import { myChaos, myDeck, stackPlays, lastMove } from "./src/model";
+import { myChaos, myDeck, stackPlays, lastMove, drawable } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
@@ -148,6 +148,7 @@ function Game({ profile, setProfile }) {
       if (!ok) say("Notifications are off. Turn them on in Android settings to get cards.");
       const last = Notifications.getLastNotificationResponse();
       if (last) await onResponse(last);
+      await S.ensureDeck(room, me).catch(() => {});
       await N.claimDeliveredDeal(room, me).catch(() => {});
       refresh();
     })();
@@ -202,7 +203,7 @@ function Game({ profile, setProfile }) {
         </View>
         <Text style={st.handCount}>HAND <Text style={st.handN}>{myHand.length}</Text></Text>
       </View>
-      {tab === "card" ? <CardView state={state} room={room} me={me} act={act} /> : (
+      {tab === "card" ? <CardView state={state} room={room} me={me} act={act} goTo={setTab} /> : (
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 18 }}>
         {tab === "hand" && <HandView state={state} room={room} me={me} act={act} focusHand={focusHand} />}
         {tab === "table" && <TableView state={state} me={me} />}
@@ -216,7 +217,7 @@ function Game({ profile, setProfile }) {
 
 /* ---------------- card (home) ---------------- */
 // Just the card in front of you. Tap to pull one, then play it or hold it.
-function CardView({ state, room, me, act }) {
+function CardView({ state, room, me, act, goTo }) {
   const t = state.tables[me.id];
   const top = t && !t.empty ? t : null;
   const [later, setLater] = useState(false);
@@ -238,6 +239,15 @@ function CardView({ state, room, me, act }) {
           </View>
           <Pressable onPress={() => setLater(true)} hitSlop={10}><Text style={st.link}>Remind me later</Text></Pressable>
         </>
+      ) : !drawable(state.cards, state.players, state.hands, state.tables, me.id).length ? (
+        <View style={{ alignItems: "center", gap: 12, maxWidth: 300 }}>
+          <Text style={[st.h2, { textAlign: "center" }]}>Nothing left to pull</Text>
+          <Text style={st.note}>{state.hands.some((h) => h.seat === me.id) ? "Every card in your deck is in your hand. Play or discard some to put them back in the deck." : "Your deck is empty or switched off. Add a card in the Deck tab."}</Text>
+          <View style={st.row}>
+            <Btn flex primary label="Open hand" onPress={() => goTo("hand")} />
+            <Btn flex label="Add a card" onPress={() => goTo("deck")} />
+          </View>
+        </View>
       ) : (
         <Pressable onPress={() => act(() => S.draw(room, me))} style={st.deckStack} accessibilityRole="button" accessibilityLabel="Tap to pull a card">
           <View style={[st.back, { transform: [{ rotate: "-4deg" }], opacity: 0.6 }]} />

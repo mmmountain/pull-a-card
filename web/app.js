@@ -1,6 +1,6 @@
 import * as S from "./store.js";
 import { ORIGINAL, randomTheme } from "./theme.js";
-import { myChaos, myDeck, stackPlays, lastMove } from "./model.js";
+import { myChaos, myDeck, stackPlays, lastMove, drawable } from "./model.js";
 import { SUIT, SUITS, ago, fmtTime, heat, newId, parseLater } from "./model.js";
 
 const $app = document.getElementById("app");
@@ -70,6 +70,8 @@ function cardView() {
   const me = profile.me, t = state.tables[me.id], top = t && !t.empty ? t : null;
   return `<section class="stage home">${top
       ? `${bigCard(top)}<div class="row actions"><button class="btn primary" data-act="play">Play</button><button class="btn" data-act="hold">Hold</button></div><button class="link" data-act="later-top">Remind me later</button>`
+      : !drawable(state.cards, state.players, state.hands, state.tables, me.id).length
+      ? `<h2 style="text-align:center">Nothing left to pull</h2><p class="note" style="max-width:300px">${state.hands.some((h) => h.seat === me.id) ? "Every card in your deck is in your hand. Play or discard some to put them back in the deck." : "Your deck is empty or switched off. Add a card in the Deck tab."}</p><div class="row actions"><button class="btn primary" data-tab="hand">Open hand</button><button class="btn" data-tab="deck">Add a card</button></div>`
       : `<button class="deck" data-act="draw" aria-label="Tap to pull a card"><span class="back"></span><span class="back"></span><span class="back"></span><span class="pull">Tap to pull a card</span></button>`}
     </section>`;
 }
@@ -323,7 +325,7 @@ function readEdit() {
 function start() {
   unsub?.();
   render();
-  refresh();
+  S.ensureDeck(profile.room, profile.me).catch(() => {}).finally(refresh);
   loadPush().then(() => tab === "me" && render());
   unsub = S.subscribeRoom(profile.room, () => { clearTimeout(refreshT); refreshT = setTimeout(refresh, 250); });
 }
