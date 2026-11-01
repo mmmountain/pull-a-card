@@ -85,6 +85,30 @@ export function subscribeRoom(room, onChange) {
   };
 }
 
+/* ---------- undo ---------- */
+// Snapshot every doc at your tables before a move and after it; undo puts back only the docs that move changed,
+// so a friend's moves in between are left alone.
+export async function snapshot(rooms) {
+  const { data, error } = await supabase.from("docs").select("room,coll,id,data").in("room", rooms);
+  if (error) throw new Error(error.message);
+  const m = new Map();
+  for (const r of data || []) m.set(r.room + "\u0000" + r.coll + "\u0000" + r.id, JSON.stringify(r.data));
+  return m;
+}
+/** The docs a move changed: [{ key, before }] where before is null for docs the move created. */
+export function diffSnap(before, after) {
+  const out = [];
+  for (const k of new Set([...before.keys(), ...after.keys()])) if (before.get(k) !== after.get(k)) out.push({ key: k, before: before.has(k) ? before.get(k) : null });
+  return out;
+}
+export async function restore(changes) {
+  for (const { key, before } of changes) {
+    const [room, coll, id] = key.split("\u0000");
+    if (before == null) await remove(room, coll, id);
+    else await upsert(room, coll, id, JSON.parse(before));
+  }
+}
+
 /* ---------- joining ---------- */
 export async function joinRoom(room, me) {
   const p = await getDoc(room, "players", me.id);

@@ -226,9 +226,31 @@ function Game({ profile, setProfile }) {
     setProfile(p);
   };
 
+  // Every move can be undone: the last 10 are kept. Undo restores only the docs that move changed.
+  const [undos, setUndos] = useState([]);
+  const [undoing, setUndoing] = useState(false);
   const act = async (fn, ok) => {
-    try { await fn(); if (ok) say(ok); } catch (e) { say("Couldn't save: " + (e.message || e)); }
+    let before = null;
+    try { before = await S.snapshot(rooms); } catch {}
+    try {
+      await fn();
+      if (before) {
+        try {
+          const changes = S.diffSnap(before, await S.snapshot(rooms));
+          if (changes.length) setUndos((u) => [...u.slice(-9), { label: ok || "last move", changes }]);
+        } catch {}
+      }
+      if (ok) say(ok);
+    } catch (e) { say("Couldn't save: " + (e.message || e)); }
     refresh();
+  };
+  const undo = async () => {
+    const last = undos[undos.length - 1];
+    if (!last || undoing) return;
+    setUndoing(true);
+    try { await S.restore(last.changes); setUndos((u) => u.slice(0, -1)); say("Undid: " + last.label); }
+    catch (e) { say("Couldn't undo: " + (e.message || e)); }
+    finally { setUndoing(false); refresh(); }
   };
 
   if (!state) {
@@ -244,6 +266,11 @@ function Game({ profile, setProfile }) {
         <Pressable onPress={() => setDrawer(true)} style={st.menuBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Open menu">
           <View style={st.menuLine} /><View style={st.menuLine} /><View style={st.menuLine} />
         </Pressable>
+        {!!undos.length && (
+          <Pressable onPress={undo} disabled={undoing} style={st.undoBtn} hitSlop={6} accessibilityRole="button" accessibilityLabel={"Undo " + undos[undos.length - 1].label}>
+            <Text style={st.undoIcon}>↶</Text>
+          </Pressable>
+        )}
         <Pressable onPress={() => setSwitcher(true)} style={st.tableBar} accessibilityRole="button" accessibilityLabel={"Table " + room + ". Switch tables"}>
           <Text style={st.tableBarLbl}>TABLE</Text>
           <Text style={st.tableBarName} numberOfLines={1}>{room}</Text>
@@ -273,7 +300,14 @@ function Game({ profile, setProfile }) {
         {section === "me" && <MeView part="me" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} openSwitcher={() => setSwitcher(true)} />}
         {section === "settings" && <MeView part="settings" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
       </ScrollView>)}
-      {!!msg && <View style={st.toast}><Text style={st.toastTxt}>{msg}</Text></View>}
+      {!!msg && (
+        <View style={[st.toast, st.row, { alignItems: "center" }]}>
+          <Text style={[st.toastTxt, { flex: 1 }]}>{msg}</Text>
+          {!!undos.length && !msg.startsWith("Undid") && !msg.startsWith("Couldn't") && (
+            <Pressable onPress={undo} disabled={undoing} hitSlop={10} accessibilityRole="button"><Text style={st.toastUndo}>UNDO</Text></Pressable>
+          )}
+        </View>
+      )}
       <TableSwitcher open={switcher} ctx={ctx} onClose={() => setSwitcher(false)} onPick={switchTo} onAdd={addTable} />
       <Drawer open={drawer} setOpen={setDrawer} section={section} name={me.name} room={room}
         onPick={(k) => { setDrawer(false); setSection(k); }} />
@@ -1342,5 +1376,8 @@ function makeStyles() { return StyleSheet.create({
   swipeHint: { fontSize: 12, color: C.muted, textAlign: "center" },
   toast: { position: "absolute", left: 16, right: 16, bottom: 24, backgroundColor: C.ink, borderRadius: 12, padding: 12 },
   toastTxt: { color: C.bg, textAlign: "center", fontWeight: "600" },
+  toastUndo: { color: C.accent, fontWeight: "800", letterSpacing: 1, paddingHorizontal: 8 },
+  undoBtn: { width: 44, height: 44, borderRadius: 12, backgroundColor: C.bg2, alignItems: "center", justifyContent: "center" },
+  undoIcon: { fontSize: 24, fontWeight: "800", color: C.ink, marginTop: -2 },
 }); }
 let st = makeStyles();
