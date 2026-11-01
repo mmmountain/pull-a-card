@@ -81,7 +81,7 @@ export async function rescheduleDeals(room, me, prefs, state) {
   if (!prefs.notify || !state) return [];
   const chaos = myChaos(state.players, me.id, state.config?.chaos ?? 30);
   const win = { startHour: prefs.startHour, endHour: prefs.endHour, onlyDue: true, plays: state.plays, meId: me.id };
-  const cards = myDeck(state.cards, state.players, me.id, state.decks || []).map((c) => ({ ...c }));
+  const cards = myDeck(state.cards, state.players, me.id, state.decks || [], state.maps || []).map((c) => ({ ...c }));
   await scheduleTakeovers(cards, prefs);
   const up = state.tables[me.id];
   if (up && !up.empty) return []; // a card is already face up; deal again once it's played or held

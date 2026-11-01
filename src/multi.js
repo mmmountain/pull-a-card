@@ -14,12 +14,8 @@ const baseOf = (t) => norm(t.base || t.label);
 export function applies(state, meId, t) {
   if (!state || !t) return null;
   const want = baseOf(t);
-  const decks = myDecks(state.decks, meId);
-  const deckOn = (c) => decks.find((d) => d.id === deckOf(c, meId))?.active !== false;
-  const onMap = (c) => (state.maps || []).some((m) => m.owner === meId && m.active !== false &&
-    Object.values(m.spots || {}).some((sp) => sp.accepts === "card:" + c.id));
-  return myDeck(state.cards, state.players, meId)
-    .find((c) => norm(c.label) === want && c.active !== false && (deckOn(c) || onMap(c))) || null;
+  return myDeck(state.cards, state.players, meId, state.decks || [], state.maps || [])
+    .find((c) => norm(c.label) === want && c.active !== false) || null;
 }
 
 const topAt = (state, meId) => { const t = state?.tables?.[meId]; return t && !t.empty ? t : null; };

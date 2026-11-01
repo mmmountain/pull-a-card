@@ -14,7 +14,7 @@ import * as M from "./src/multi";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, randomTheme } from "./src/theme";
 import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./src/model";
-import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
+import { periodStart, myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 import { DECK_LIBRARY, deckOf, everydayId, myDecks, deckEmoji, cardEmojis } from "./src/model";
 import { SUIT_NAMES, MAP_LIBRARY, PER_NAMES, amountText, canPlayAt, describeAccepts, fitsSpots, jitter, live, parseWhen, shapeEdges, shortWhen, spotPos, spotState } from "./src/maps";
@@ -372,7 +372,7 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
   const wait = top && bufferBlock(card, fromState.plays, me.id);
   const blocked = top && (!canPlay(locks, [top.cardId]) || !!wait);
   const padTop = 64, padBottom = ins.bottom + WHEEL_H + 44;
-  const canPull = drawable(state.cards, state.players, state.hands, state.tables, me.id, state.decks).length > 0;
+  const canPull = drawable(state.cards, state.players, state.hands, state.tables, me.id, state.decks, state.maps).length > 0;
   return (
     <View style={StyleSheet.absoluteFill}>
       {top ? (
@@ -737,46 +737,91 @@ function LaterSheet({ open, label, onClose, onPick }) {
 
 /* ---------------- table ---------------- */
 /* ---------------- table: players + maps ---------------- */
+// Table mode, top to bottom: which table (dropdown), which map (dropdown, one at a time), which decks this
+// table deals from, then the map itself, or the plain stack when no map is in play.
+const STACK_PERS = [["day", "Daily"], ["week", "Weekly"], ["month", "Monthly"]];
 function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, setBoardTouch }) {
   const maps = (state.maps || []).filter((m) => m.owner === me.id);
-  const [selId, setSel] = useState(null);
   const [lib, setLib] = useState(false);
-  const cur = selId === "players" ? null : maps.find((m) => m.id === selId) || (selId == null ? maps.find((m) => m.active !== false) || null : null);
+  const [mapMenu, setMapMenu] = useState(false);
+  const cur = maps.find((m) => m.active !== false) || null;
+  const meP = state.players.find((p) => p.id === me.id) || {};
+  const per = meP.stackPer || "day";
   const have = new Set(maps.map((m) => m.key));
+  const libSt = ctx.states[M.libRoom(me.id)];
+  const decks = myDecks(libSt?.decks || state.decks, me.id);
+  const use = Array.isArray(meP.useDecks) ? meP.useDecks : null;
+  const usesDeck = (d) => !use || use.includes(d.id);
+  const toggleDeck = (d) => {
+    const ids = decks.map((x) => x.id);
+    const next = usesDeck(d) ? (use || ids).filter((x) => x !== d.id) : [...(use || []), d.id];
+    act(() => S.setUseDecks(room, me, next.length === ids.length ? null : next), (usesDeck(d) ? "Not dealing " : "Dealing ") + d.name + " here");
+  };
+  const mapName = cur ? cur.name : STACK_PERS.find((x) => x[0] === per)[1] + " stack";
+  // Tables from before "one map at a time" may have several running; keep the first, save the rest.
+  const nActive = maps.filter((m) => m.active !== false).length;
+  useEffect(() => { if (nActive > 1 && cur) S.useMap(room, me, cur.id).catch(() => {}); }, [room, nActive]);
+  const filled = (m) => { const lm = live(m); const sp = Object.values(lm.spots || {}).filter((x) => !x.auto); return sp.length ? `${sp.filter((x) => x.filled).length}/${sp.length} spots` : ""; };
   return (
     <>
-      <View style={st.tablePick}>
-        <Text style={st.label}>TABLE</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, alignItems: "center" }}>
-          {ctx.rooms.map((r) => (
-            <Pressable key={r} onPress={() => onPickTable(r)} style={[st.tableChip, r === room && st.tableChipOn]} accessibilityRole="tab" accessibilityState={{ selected: r === room }}>
-              <Text style={[st.tableChipTxt, r === room && { color: C.ink }]}>{ctx.paused.includes(r) ? "○ " : ""}{r}</Text>
+      <View style={{ alignItems: "center", gap: 10 }}>
+        <Pressable onPress={openTables} style={st.dropTable} accessibilityRole="button" accessibilityLabel={"Table " + room + ". Change table"}>
+          <Text style={st.dropKicker}>TABLE</Text>
+          <Text style={st.dropTableTxt} numberOfLines={1}>{ctx.paused.includes(room) ? "○ " : ""}{room} ▾</Text>
+        </Pressable>
+        <Pressable onPress={() => setMapMenu(true)} style={st.dropMap} accessibilityRole="button" accessibilityLabel={"Map " + mapName + ". Change map"}>
+          <Text style={st.dropKicker}>MAP</Text>
+          <Text style={st.dropMapTxt} numberOfLines={1}>◇ {mapName} ▾</Text>
+        </Pressable>
+      </View>
+      <View style={{ gap: 6 }}>
+        <Text style={[st.label, { textAlign: "center" }]}>DECKS AT THIS TABLE{cur ? " · PLUS WHAT THE MAP NEEDS" : ""}</Text>
+        <View style={[st.chips, { justifyContent: "center" }]}>
+          {decks.map((d) => <Chip key={d.id} label={(deckEmoji(d) ? deckEmoji(d) + " " : "") + d.name + (d.active ? "" : " (off)")} on={usesDeck(d) && d.active} onPress={() => toggleDeck(d)} />)}
+        </View>
+      </View>
+      {cur ? <MapTable key={cur.id} ctx={ctx} m0={cur} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} onRemoved={() => {}} />
+        : <TableView state={state} me={me} per={per} />}
+      <Modal visible={mapMenu} transparent animationType="slide" onRequestClose={() => setMapMenu(false)}>
+        <Pressable style={st.scrim} onPress={() => setMapMenu(false)} />
+        <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]}>
+          <Text style={st.h2}>Map at {room}</Text>
+          <Text style={[st.note, { textAlign: "left" }]}>One map at a time. Switching keeps each map where you left it.</Text>
+          <Text style={st.label}>PLAIN STACK · PLAYS PILE UP BY CARD</Text>
+          <View style={st.row}>
+            {STACK_PERS.map(([k, l]) => (
+              <Pressable key={k} onPress={() => { setMapMenu(false); act(async () => { await S.useMap(room, me, null); await S.setStackPer(room, me, k); }, l + " stack"); }}
+                style={[st.tableRow, { flex: 1, justifyContent: "center" }, !cur && per === k && st.tableRowOn]} accessibilityRole="button" accessibilityState={{ selected: !cur && per === k }}>
+                <Text style={st.h3}>{l}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {!!maps.length && <Text style={st.label}>YOUR MAPS HERE</Text>}
+          {maps.map((m) => (
+            <Pressable key={m.id} onPress={() => { setMapMenu(false); act(() => S.useMap(room, me, m.id), "Playing " + m.name); }} style={[st.tableRow, cur?.id === m.id && st.tableRowOn]} accessibilityRole="button" accessibilityState={{ selected: cur?.id === m.id }}>
+              <View style={{ flex: 1 }}>
+                <Text style={st.h3}>◇ {m.name}</Text>
+                <Text style={[st.note, { textAlign: "left" }]}>{PER_NAMES[m.per]}{filled(m) ? " · " + filled(m) : ""}{cur?.id === m.id ? " · playing" : " · saved"}</Text>
+              </View>
+              {cur?.id === m.id && <View style={st.check}><Text style={st.checkTxt}>✓</Text></View>}
             </Pressable>
           ))}
-          <Pressable onPress={openTables} style={st.tableChip} accessibilityRole="button" accessibilityLabel="Join or leave tables">
-            <Text style={st.tableChipTxt}>+ Join · Leave</Text>
-          </Pressable>
+          <Btn label="+ Add a map" onPress={() => { setMapMenu(false); setLib(true); }} />
         </ScrollView>
-      </View>
-      <View style={st.chips}>
-        <Chip label="Players" on={!cur} onPress={() => setSel("players")} />
-        {maps.map((m) => <Chip key={m.id} label={(m.active === false ? "○ " : "") + m.name} on={cur?.id === m.id} onPress={() => setSel(m.id)} />)}
-        <Chip label="+ Map" on={false} onPress={() => setLib(true)} />
-      </View>
-      {cur ? <MapTable key={cur.id} ctx={ctx} m0={cur} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} onRemoved={() => setSel(null)} /> : <TableView state={state} me={me} />}
+      </Modal>
       <Modal visible={lib} transparent animationType="slide" onRequestClose={() => setLib(false)}>
         <Pressable style={st.scrim} onPress={() => setLib(false)} />
         <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]}>
           <Text style={st.h2}>Add a map</Text>
-          <Text style={[st.note, { textAlign: "left" }]}>Maps run side by side. Cards you play land on the right spot by themselves; a missed spot gets an X and sends its card to your hand.</Text>
+          <Text style={[st.note, { textAlign: "left" }]}>Cards you play land on the right spot by themselves; a missed spot gets an X and sends its card to your hand. The new map becomes this table's map.</Text>
           {MAP_LIBRARY.map((t) => (
             <View key={t.key} style={st.panel}>
               <Text style={st.h3}>{t.name} · {PER_NAMES[t.per].toLowerCase()}</Text>
               <Text style={[st.note, { textAlign: "left" }]}>{t.about}</Text>
               {t.deckKey !== "everyday" && <Text style={[st.note, { textAlign: "left" }]}>Adds the {DECK_LIBRARY.find((d) => d.key === t.deckKey)?.name} deck if you don't have it.</Text>}
               <Btn primary={!have.has(t.key)} disabled={have.has(t.key)} label={have.has(t.key) ? "Added" : "Add " + t.name} onPress={() => {
-                setLib(false); setSel(me.id + ":" + t.key);
-                act(() => S.addLibraryMap(room, me, t.key), "Added " + t.name);
+                setLib(false);
+                act(async () => { const id = await S.addLibraryMap(room, me, t.key); await S.useMap(room, me, id); }, "Playing " + t.name);
               }} />
             </View>
           ))}
@@ -1003,17 +1048,18 @@ function PlacedCard({ e, x, y, rot, meta, badge }) {
   );
 }
 
-function TableView({ state, me }) {
+function TableView({ state, me, per = null }) {
+  const since = per ? periodStart(per) : 0;
   const players = [...state.players].sort((a, b) => (a.joined || "").localeCompare(b.joined || ""));
   const others = players.filter((p) => p.id !== me.id);
   const mine = players.find((p) => p.id === me.id);
   const lastPlay = state.plays.reduce((a, p) => (!a || p.at > a.at ? p : a), null);
   const topDis = state.discards.reduce((a, d) => (!a || d.at > a.at ? d : a), null);
-  const drawN = Math.max(0, myDeck(state.cards, state.players, me.id, state.decks).filter((c) => c.active !== false).length - state.hands.filter((h) => h.seat === me.id).length);
+  const drawN = Math.max(0, myDeck(state.cards, state.players, me.id, state.decks, state.maps).filter((c) => c.active !== false).length - state.hands.filter((h) => h.seat === me.id).length);
   const active = players.find((p) => p.id === state.game.active);
   const Side = ({ p }) => {
     if (!p) return <View style={st.side}><Text style={[st.h3, { color: C.muted }]}>Open seat</Text><Text style={st.note}>Give a friend your table name so they can sit here.</Text></View>;
-    const plays = state.plays.filter((x) => x.seat === p.id).sort((a, b) => a.at.localeCompare(b.at));
+    const plays = state.plays.filter((x) => x.seat === p.id && (!since || Date.parse(x.at) >= since)).sort((a, b) => a.at.localeCompare(b.at));
     const held = state.hands.filter((h) => h.seat === p.id).length;
     const isTurn = state.game.active === p.id;
     return (
@@ -1567,6 +1613,11 @@ function makeStyles() { return StyleSheet.create({
   leaveBtn: { minHeight: 36, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1.5, borderColor: C.line, justifyContent: "center" },
   leaveTxt: { fontSize: 13, fontWeight: "700", color: C.muted },
   tablePick: { gap: 6 },
+  dropTable: { alignItems: "center", paddingVertical: 8, paddingHorizontal: 20, borderRadius: 14, backgroundColor: C.bg2, minWidth: 200, maxWidth: "90%" },
+  dropTableTxt: { fontSize: 22, fontWeight: "800", color: C.ink },
+  dropMap: { alignItems: "center", paddingVertical: 6, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1.5, borderColor: C.line, minWidth: 180, maxWidth: "90%" },
+  dropMapTxt: { fontSize: 17, fontWeight: "700", color: C.ink },
+  dropKicker: { fontSize: 10, fontWeight: "800", letterSpacing: 1.5, color: C.muted },
   tableChip: { minHeight: 40, paddingHorizontal: 14, borderRadius: 999, backgroundColor: C.bg2, justifyContent: "center", borderWidth: 2, borderColor: "transparent" },
   tableChipOn: { backgroundColor: C.accent, borderColor: C.ink },
   tableChipTxt: { fontSize: 15, fontWeight: "700", color: C.muted },

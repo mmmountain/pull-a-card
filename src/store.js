@@ -138,10 +138,10 @@ async function advance(room, me) {
 }
 
 export async function draw(room, me, win = {}) {
-  const [cards, hands, tables, players, plays, decks] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), listColl(room, "players"), listColl(room, "plays"), listColl(room, "decks")]);
+  const [cards, hands, tables, players, plays, decks, maps] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), listColl(room, "players"), listColl(room, "plays"), listColl(room, "decks"), listColl(room, "maps")]);
   const up = tables.find((t) => t.id === me.id);
   const busy = up && !up.empty ? [up.cardId] : [];
-  const k = pickCard(myDeck(cards, players, me.id, decks), busy, myChaos(players, me.id), Date.now(), Math.random, { ...win, plays, meId: me.id });
+  const k = pickCard(myDeck(cards, players, me.id, decks, maps), busy, myChaos(players, me.id), Date.now(), Math.random, { ...win, plays, meId: me.id });
   if (!k) return null;
   const t = dealFrom(k, Date.now(), Math.random, win);
   await upsert(room, "tables", me.id, t);
@@ -221,6 +221,33 @@ export async function addLibraryMap(room, me, key) {
   await upsert(room, "maps", id, installMap(tpl, me.id, deckId, resolve));
   return id;
 }
+/**
+ * One map at a time per table. Picking a map switches the others off but keeps their spots (a save state).
+ * Spots it missed while it was off are marked handled, so coming back doesn't flood your hand.
+ * Pass null to play on the plain stack instead.
+ */
+export async function useMap(room, me, mapId) {
+  const now = Date.now();
+  for (const m0 of (await listColl(room, "maps")).filter((m) => m.owner === me.id)) {
+    const on = m0.id === mapId;
+    const { id, ...data } = m0;
+    if (!on) { if (m0.active !== false) await upsert(room, "maps", id, { ...data, active: false }); continue; }
+    const m = live(data, now), miss = new Set(newlyMissed(m, now).map((sp) => sp.id));
+    const spots = { ...m.spots };
+    for (const sid of miss) spots[sid] = { ...spots[sid], dealtMiss: true };
+    const { fresh, ...rest } = m;
+    await upsert(room, "maps", id, { ...rest, spots, active: true });
+  }
+}
+async function patchMe(room, me, patch) {
+  const p = (await getDoc(room, "players", me.id)) || { name: me.name, joined: new Date().toISOString() };
+  await upsert(room, "players", me.id, { ...p, ...patch });
+}
+/** The plain stack: plays pile up by card for the day, week or month. */
+export const setStackPer = (room, me, per) => patchMe(room, me, { stackPer: per });
+/** Which of your decks this table deals from (null = all of them). */
+export const setUseDecks = (room, me, ids) => patchMe(room, me, { useDecks: ids });
+
 export async function setMapActive(room, me, mapId, active) {
   const m = await getDoc(room, "maps", mapId);
   if (m) await upsert(room, "maps", mapId, { ...m, active });
@@ -389,9 +416,9 @@ export async function swipeTop(room, me, t, it, handId = newId()) {
 
 /** If a takeover card is due and nothing is face up, put it on the table. */
 export async function claimTakeover(room, me, win = {}) {
-  const [cards, players, table, decks] = await Promise.all([listColl(room, "cards"), listColl(room, "players"), getDoc(room, "tables", me.id), listColl(room, "decks")]);
+  const [cards, players, table, decks, maps] = await Promise.all([listColl(room, "cards"), listColl(room, "players"), getDoc(room, "tables", me.id), listColl(room, "decks"), listColl(room, "maps")]);
   if (table && !table.empty) return null;
-  if (!myDeck(cards, players, me.id, decks).some((c) => takeoverActive(c, Date.now(), win))) return null;
+  if (!myDeck(cards, players, me.id, decks, maps).some((c) => takeoverActive(c, Date.now(), win))) return null;
   return draw(room, me, win);
 }
 
