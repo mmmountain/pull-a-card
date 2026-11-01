@@ -180,3 +180,9 @@ export function lastMove(plays) {
   if (!last) return [];
   return last.combo ? plays.filter((p) => p.combo === last.combo) : [last];
 }
+
+/** Cards you could pull right now: your active cards not already in a hand or face up. */
+export function drawable(cards, players, hands, tables, meId) {
+  const busy = new Set([...hands.map((h) => h.cardId), ...Object.values(tables || {}).filter((t) => t && !t.empty).map((t) => t.cardId)]);
+  return myDeck(cards, players, meId).filter((c) => c.active !== false && !busy.has(c.id));
+}

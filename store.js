@@ -161,3 +161,14 @@ export async function playCombo(room, me, handIds) {
   }
   await advance(room, me);
 }
+
+/** Give a player starter cards if they have no deck of their own yet. */
+export async function ensureDeck(room, me) {
+  const [cards, players] = await Promise.all([listColl(room, "cards"), listColl(room, "players")]);
+  if (!players.some((p) => p.id === me.id) || myDeck(cards, players, me.id).length) return false;
+  for (const c of SEED_CARDS) {
+    const { id, ...data } = c;
+    await upsert(room, "cards", me.id + "-" + id, { ...data, owner: me.id });
+  }
+  return true;
+}
