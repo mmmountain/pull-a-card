@@ -4,6 +4,8 @@ import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDa
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./model.js";
 import { SUIT, SUITS, ago, fmtTime, heat, newId, parseLater } from "./model.js";
 import { DECK_LIBRARY, deckOf, everydayId, myDecks } from "./model.js";
+import { MAP_LIBRARY, PER_NAMES, canPlayAt, describeAccepts, fitsSpots, live, parseWhen, spotState } from "./maps.js";
+import { boardSvg } from "./mapview.js";
 
 const $app = document.getElementById("app");
 
@@ -113,7 +115,115 @@ function stackHtml(sk, fresh) {
     <div class="pc top${fresh ? " fresh" : ""}" style="top:${edges * 6}px;border-top-color:${c}"><div class="t"><span style="color:${c}">${SUIT[sk.suit]}</span>${n > 1 ? `<b class="n">×${n}</b>` : ""}</div><div class="l">${esc(sk.total ? amountLabel(sk.label, sk.total) : sk.label)}</div><div class="t"><span>${ago(top.at)}</span></div></div></div>`;
 }
 
+/* ---------------- table: players + maps ---------------- */
+let tableSel = null, mSelCard = null, mSelSpot = null, mScale = null, mScroll = null, mArm = false, justPlayed = null, mMoved = false;
+const myMaps = () => (state.maps || []).filter((m) => m.owner === profile.me.id);
+function curMap() {
+  if (tableSel === "players") return null;
+  const maps = myMaps();
+  return maps.find((m) => m.id === tableSel) || (tableSel == null ? maps.find((m) => m.active !== false) || null : null);
+}
 function tableView() {
+  const maps = myMaps(), cur = curMap();
+  return `<div class="chips tchips"><button class="chip" aria-pressed="${!cur}" data-tsel="players">Players</button>${maps.map((m) => `<button class="chip" aria-pressed="${cur?.id === m.id}" data-tsel="${esc(m.id)}">${m.active === false ? "○ " : ""}${esc(m.name)}</button>`).join("")}<button class="chip" data-act="maplib">+ Map</button></div>`
+    + (cur ? mapView(cur) : playersView());
+}
+function myHand() { return state.hands.filter((h) => h.seat === profile.me.id).sort((a, b) => (a.heldAt || "").localeCompare(b.heldAt || "")); }
+function mapView(m0) {
+  const me = profile.me, now = Date.now(), m = live({ ...m0, active: true }, now);
+  const cards = myDeck(state.cards, state.players, me.id), hand = myHand();
+  const selH = hand.find((h) => h.id === mSelCard), selS = mSelSpot && m.spots[mSelSpot];
+  const paused = m0.active === false;
+  const hl = new Set(selH && !paused ? fitsSpots([m], selH, now).map((f) => f.spot.id) : []);
+  const open = Object.values(m.spots).filter((sp) => !sp.auto && spotState(m, sp, now) === "open").length;
+  let info;
+  if (paused) info = "This map is paused. Cards you play won't land on it.";
+  else if (selH) info = hl.size ? `${hl.size} spot${hl.size === 1 ? "" : "s"} lit up for <b>${esc(selH.label)}</b>. Tap one to play it there.` : `No open spot on this map for <b>${esc(selH.label)}</b> right now. Hold it, play it from the Hand tab, or discard it.`;
+  else if (selS) {
+    const st = spotState(m, selS, now), n = hand.filter((h) => canPlayAt(m, selS, h, now)).length;
+    const what = { missed: "Missed.", filled: "Played" + (selS.filled ? ": " + esc(selS.filled.label) : "") + ".", full: "Full.", skipped: "This was before you added the map.", waiting: "Waiting for the spots before it.", future: "Not open yet." }[st]
+      || (n ? `${n} card${n === 1 ? "" : "s"} in your hand fit. Tap one to play it here.` : "Open. Nothing in your hand fits.");
+    info = `<b>${esc(describeAccepts(selS, cards))}</b> · ${esc(parseWhen(selS.when).label)} · ${what}`;
+  } else info = `${PER_NAMES[m.per]} map · ${open} spot${open === 1 ? "" : "s"} open now. Tap a card to light up its spots, or tap a spot.`;
+  const minis = hand.map((h) => {
+    const cls = selS ? (canPlayAt(m, selS, h, now) ? "fits" : "dim") : "";
+    return `<button class="mini mcard ${cls}" aria-pressed="${mSelCard === h.id}" data-mcard="${h.id}"><span class="a" style="color:${SUITC[h.suit]}">${SUIT[h.suit] || "●"}${h.fromMap ? " missed" : ""}</span><span class="l">${esc(h.label)}</span><span class="a"></span></button>`;
+  }).join("");
+  const out = `<div class="mapwrap"><div class="vpw"><div class="vp" id="vp"><div class="sizer" id="sizer">${boardSvg(m, { cards, hl, sel: mSelSpot, justPlayed, now })}</div></div>
+      <div class="zoom"><button data-zoom="in" aria-label="Zoom in">+</button><button data-zoom="out" aria-label="Zoom out">−</button><button data-zoom="fit" aria-label="Fit">⤢</button></div></div>
+    <p class="note left minfo">${info}</p>
+    ${selH ? `<div class="row"><button class="btn primary" data-act="mbest" ${hl.size ? "" : "disabled"}>Play to ${hl.size === 1 ? "its spot" : "the best spot"}</button><button class="btn auto" data-act="mclear">Cancel</button></div>` : ""}
+    <h3>Your hand · ${hand.length}</h3>
+    <div class="mhand">${minis || `<p class="note left">Your hand is empty. Cards you hold, and cards from missed spots, show up here.</p>`}</div>
+    <div class="row mfoot"><button class="btn" data-act="mtoggle">${paused ? "Turn this map on" : "Pause map"}</button><button class="btn" data-act="mdel">${mArm ? "Tap again to remove" : "Remove map"}</button></div></div>`;
+  justPlayed = null;
+  return out;
+}
+
+/** Size, zoom and pinch for the board, re-attached after every render. */
+function setupBoard() {
+  const vp = document.getElementById("vp"), sizer = document.getElementById("sizer"), svg = document.getElementById("board");
+  if (!vp || !svg) return;
+  const W = +svg.getAttribute("width"), H = +svg.getAttribute("height");
+  const fit = () => (vp.clientWidth - 2) / W;
+  vp.style.height = Math.min(H * fit() + 2, innerHeight * 0.66) + "px";
+  let scale = mScale ?? fit();
+  const apply = () => { svg.style.transform = `scale(${scale})`; sizer.style.width = W * scale + "px"; sizer.style.height = H * scale + "px"; mScale = scale; };
+  const zoomAt = (next, cx, cy) => {
+    next = Math.max(fit() * 0.9, Math.min(2.5, next));
+    const r = vp.getBoundingClientRect(), px = (vp.scrollLeft + cx - r.left) / scale, py = (vp.scrollTop + cy - r.top) / scale;
+    scale = next; apply(); vp.scrollLeft = px * scale - (cx - r.left); vp.scrollTop = py * scale - (cy - r.top);
+  };
+  apply();
+  if (mScroll) { vp.scrollLeft = mScroll[0]; vp.scrollTop = mScroll[1]; }
+  vp.addEventListener("scroll", () => { mScroll = [vp.scrollLeft, vp.scrollTop]; });
+  const mid = () => { const r = vp.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  document.querySelectorAll("[data-zoom]").forEach((b) => (b.onclick = (e) => {
+    e.stopPropagation();
+    if (b.dataset.zoom === "fit") { scale = fit(); apply(); vp.scrollTo(0, 0); return; }
+    zoomAt(scale * (b.dataset.zoom === "in" ? 1.35 : 1 / 1.35), ...mid());
+  }));
+  vp.addEventListener("wheel", (e) => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); zoomAt(scale * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY); }, { passive: false });
+  vp.addEventListener("touchmove", (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  const pts = new Map(); let pinch = null, pan = null;
+  vp.addEventListener("pointerdown", (e) => {
+    pts.set(e.pointerId, [e.clientX, e.clientY]); mMoved = false;
+    if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), s: scale }; pan = null; return; }
+    if (e.pointerType === "mouse") pan = { x: e.clientX, y: e.clientY, l: vp.scrollLeft, t: vp.scrollTop };
+  });
+  vp.addEventListener("pointermove", (e) => {
+    if (!pts.has(e.pointerId)) return;
+    const prev = pts.get(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (Math.hypot(e.clientX - prev[0], e.clientY - prev[1]) > 2) mMoved = true;
+    if (pinch && pts.size === 2) { const [a, b] = [...pts.values()]; zoomAt(pinch.s * Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch.d, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2); return; }
+    if (pan) { vp.scrollLeft = pan.l - (e.clientX - pan.x); vp.scrollTop = pan.t - (e.clientY - pan.y); }
+  });
+  const up = (e) => { pts.delete(e.pointerId); if (pts.size < 2) pinch = null; if (!pts.size) pan = null; };
+  vp.addEventListener("pointerup", up); vp.addEventListener("pointercancel", up);
+}
+
+function playOnSpot(h, m, spotId) {
+  const sh = m.shapes.find((x) => x.spots.includes(spotId));
+  mSelCard = null; mSelSpot = null; justPlayed = spotId;
+  return act(() => S.playToSpot(profile.room, profile.me, h.id, m.id, spotId), `Played ${h.label} on ${sh?.label || m.name}`);
+}
+function tapSpot(sid) {
+  const m0 = curMap(); if (!m0) return;
+  const m = live(m0), h = myHand().find((x) => x.id === mSelCard);
+  if (h) {
+    if (m0.active !== false && canPlayAt(m, m.spots[sid], h)) return playOnSpot(h, m0, sid);
+    toast(`${h.label} can't go there right now.`); mSelCard = null;
+  }
+  mSelSpot = mSelSpot === sid ? null : sid; render();
+}
+function tapMapCard(hid) {
+  const m0 = curMap(); if (!m0) return;
+  const m = live(m0), h = myHand().find((x) => x.id === hid);
+  if (h && mSelSpot && m0.active !== false && canPlayAt(m, m.spots[mSelSpot], h)) return playOnSpot(h, m0, mSelSpot);
+  mSelCard = mSelCard === hid ? null : hid; mSelSpot = null; render();
+}
+
+function playersView() {
   const me = profile.me;
   const players = [...state.players].sort((a, b) => (a.joined || "").localeCompare(b.joined || ""));
   const lastPlay = state.plays.reduce((a, p) => (!a || p.at > a.at ? p : a), null);
@@ -192,6 +302,15 @@ function meView() {
     <button class="btn" data-act="leave">Leave this table</button>`;
 }
 
+function mapLibSheet() {
+  const have = new Set(myMaps().map((m) => m.key));
+  return `<div class="scrim" data-act="close"></div><div class="sheet" role="dialog" aria-label="Add a map"><h2>Add a map</h2>
+    <p class="note left">Maps run side by side. Cards you play land on the right spot by themselves; a missed spot gets an X and sends its card to your hand.</p>
+    ${MAP_LIBRARY.map((t) => `<div class="panel"><b>${esc(t.name)} · ${PER_NAMES[t.per].toLowerCase()}</b><p class="note left">${esc(t.about)}</p>
+      ${t.deckKey !== "everyday" ? `<p class="note left">Adds the ${esc(DECK_LIBRARY.find((d) => d.key === t.deckKey)?.name || "")} deck if you don't have it.</p>` : ""}
+      <button class="btn${have.has(t.key) ? "" : " primary"}" ${have.has(t.key) ? "disabled" : `data-mapadd="${t.key}"`}>${have.has(t.key) ? "Added" : "Add " + esc(t.name)}</button></div>`).join("")}</div>`;
+}
+
 function libSheet() {
   const decks = myDecks(state.decks, profile.me.id);
   return `<div class="scrim" data-act="close"></div><div class="sheet" role="dialog" aria-label="Add a deck"><h2>Add a deck</h2>
@@ -245,7 +364,8 @@ function render() {
   if (!state) { $app.innerHTML = header() + `<p class="note">Loading the table…</p>`; return; }
   const scroll = scrollY;
   const body = { card: cardView, hand: handView, table: tableView, deck: deckView, me: meView }[tab] || cardView;
-  $app.innerHTML = header() + body() + (sheet ? (sheet.type === "later" ? laterSheet() : sheet.type === "lib" ? libSheet() : editSheet()) : "");
+  $app.innerHTML = header() + body() + (sheet ? (sheet.type === "later" ? laterSheet() : sheet.type === "lib" ? libSheet() : sheet.type === "maplib" ? mapLibSheet() : editSheet()) : "");
+  if (tab === "table") setupBoard();
   scrollTo(0, scroll);
 }
 
@@ -319,11 +439,17 @@ async function setLater(at) {
 }
 
 $app.addEventListener("click", async (e) => {
+  const spEl = e.target.closest("[data-spot]");
+  if (spEl) { if (!mMoved) tapSpot(spEl.dataset.spot); return; }
+  if (e.target.closest("#vp")) { if (!mMoved && (mSelCard || mSelSpot)) { mSelCard = mSelSpot = null; render(); } return; }
   const b = e.target.closest("button, .scrim"); if (!b) return;
   const d = b.dataset, room = profile?.room, me = profile?.me;
   if (d.tab) { tab = d.tab; sheet = null; if (tab === "me") await loadPush(); render(); return; }
   if (d.sel) { sel = sel.includes(d.sel) ? sel.filter((x) => x !== d.sel) : [...sel, d.sel]; render(); return; }
   if (d.chaos) return act(() => S.setChaos(room, me, +d.chaos));
+  if (d.tsel) { tableSel = d.tsel; mSelCard = mSelSpot = null; mScale = mScroll = null; mArm = false; render(); return; }
+  if (d.mcard) return tapMapCard(d.mcard);
+  if (d.mapadd) { const t = MAP_LIBRARY.find((x) => x.key === d.mapadd); sheet = null; tableSel = me.id + ":" + t.key; mScale = mScroll = null; return act(() => S.addLibraryMap(room, me, t.key), "Added " + t.name); }
   if (d.deck) { deckSel = d.deck; deckArm = false; render(); return; }
   if (d.libadd) { const t = DECK_LIBRARY.find((x) => x.key === d.libadd); sheet = null; deckSel = me.id + ":" + t.key; return act(() => S.addLibraryDeck(room, me, t.key), "Added " + t.name); }
   if (d.edit) { const c0 = state.cards.find((c) => c.id === d.edit); sheet = { type: "edit", card: { ...c0, quota: { ...(c0.quota || effectiveQuota({ ...c0, tempo: 1 }, profile.prefs || {})) } } }; render(); return; }
@@ -373,6 +499,20 @@ $app.addEventListener("click", async (e) => {
     case "tempo-reset": readEdit(); sheet.card.tempo = 1; return render();
     case "newcard": sheet = { type: "edit", card: { label: "", suit: "body", imm: 3, active: true, plays: 0, quota: { n: 1, per: "day" }, deck: curDeck().id } }; return render();
     case "decklib": sheet = { type: "lib" }; return render();
+    case "maplib": sheet = { type: "maplib" }; return render();
+    case "mclear": mSelCard = mSelSpot = null; return render();
+    case "mbest": {
+      const m0 = curMap(), h = myHand().find((x) => x.id === mSelCard);
+      const f = m0 && h && fitsSpots([live(m0)], h)[0];
+      if (f) return playOnSpot(h, m0, f.spot.id);
+      return;
+    }
+    case "mtoggle": { const m0 = curMap(); return act(() => S.setMapActive(room, me, m0.id, m0.active === false), m0.active === false ? "Map on" : "Map paused"); }
+    case "mdel": {
+      if (!mArm) { mArm = true; return render(); }
+      const m0 = curMap(); mArm = false; tableSel = null;
+      return act(() => S.deleteMap(room, me, m0.id), "Removed " + m0.name);
+    }
     case "decktoggle": { const dk = curDeck(); return act(() => S.setDeckActive(room, me, dk, !dk.active), (dk.active ? "Paused " : "Dealing from ") + dk.name); }
     case "deckdel": {
       if (!deckArm) { deckArm = true; return render(); }
@@ -428,12 +568,15 @@ function readEdit() {
 function start() {
   unsub?.();
   render();
-  S.ensureDeck(profile.room, profile.me).catch(() => {}).then(() => S.claimTakeover(profile.room, profile.me, profile.prefs || {})).catch(() => {}).finally(refresh);
+  S.ensureDeck(profile.room, profile.me).catch(() => {}).then(() => S.claimTakeover(profile.room, profile.me, profile.prefs || {})).catch(() => {}).then(syncMaps).finally(refresh);
   loadPush().then(() => tab === "me" && render());
   unsub = S.subscribeRoom(profile.room, () => { clearTimeout(refreshT); refreshT = setTimeout(refresh, 250); });
 }
 
 if ("serviceWorker" in navigator) swReg().catch(() => {});
-document.addEventListener("visibilitychange", () => { if (!document.hidden && profile?.room) S.claimTakeover(profile.room, profile.me, profile.prefs || {}).catch(() => {}).finally(refresh); });
-setInterval(() => { if (profile?.room && state && !sheet && !document.hidden && tab !== "me") render(); }, 60000);
+async function syncMaps() {
+  try { const n = await S.syncMaps(profile.room, profile.me); if (n) toast(n === 1 ? "You missed a map spot. Its card is in your hand." : `You missed ${n} map spots. Their cards are in your hand.`); } catch {}
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && profile?.room) S.claimTakeover(profile.room, profile.me, profile.prefs || {}).catch(() => {}).then(syncMaps).finally(refresh); });
+setInterval(() => { if (profile?.room && state && !sheet && !document.hidden && tab !== "me") { if (myMaps().length) syncMaps().then(refresh); else render(); } }, 60000);
 if (profile?.room) start(); else render();
