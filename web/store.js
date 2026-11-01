@@ -95,10 +95,10 @@ export async function draw(room, me) {
   return t;
 }
 
-async function logPlay(room, me, t) {
+async function logPlay(room, me, t, combo = null) {
   const now = new Date().toISOString();
   const game = (await getDoc(room, "game", "main")) || { turn: 1 };
-  await upsert(room, "plays", newId(), { seat: me.id, cardId: t.cardId, label: t.label, variant: t.variant || "", suit: t.suit, imm: t.imm, turn: game.turn || 1, at: now });
+  await upsert(room, "plays", newId(), { seat: me.id, cardId: t.cardId, label: t.label, variant: t.variant || "", suit: t.suit, imm: t.imm, turn: game.turn || 1, at: now, combo });
   const card = await getDoc(room, "cards", t.cardId);
   if (card) await upsert(room, "cards", t.cardId, { ...card, lastPlayed: now, plays: (card.plays || 0) + 1 });
 }
@@ -149,3 +149,15 @@ export async function savePush(room, me, sub, prefs) {
 }
 export const removePush = (room, me) => remove(room, "push", me.id);
 export const getPush = (room, me) => getDoc(room, "push", me.id);
+
+/** Play several held cards at once, as one move. */
+export async function playCombo(room, me, handIds) {
+  const combo = handIds.length > 1 ? newId() : null;
+  for (const id of handIds) {
+    const h = await getDoc(room, "hands", id);
+    if (!h) continue;
+    await remove(room, "hands", id);
+    await logPlay(room, me, h, combo);
+  }
+  await advance(room, me);
+}

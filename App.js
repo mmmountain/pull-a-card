@@ -11,7 +11,7 @@ import * as S from "./src/store";
 import * as N from "./src/notify";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, randomTheme } from "./src/theme";
-import { myChaos, myDeck } from "./src/model";
+import { myChaos, myDeck, stackPlays, lastMove } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
@@ -135,7 +135,7 @@ function Game({ profile, setProfile }) {
   const { room, me } = profile;
   const prefs = { ...S.DEFAULT_PREFS, ...(profile.prefs || {}) };
   const { state, error, refresh } = useRoom(room);
-  const [tab, setTab] = useState("play");
+  const [tab, setTab] = useState("card");
   const [focusHand, setFocusHand] = useState(null);
   const [msg, setMsg] = useState("");
   const say = (t) => { setMsg(t); setTimeout(() => setMsg((m) => (m === t ? "" : m)), 4000); };
@@ -161,8 +161,8 @@ function Game({ profile, setProfile }) {
   async function onResponse(r) {
     try {
       const focus = await N.handleResponse(r);
-      if (focus?.tab) setTab(focus.tab);
-      if (focus?.handId) setFocusHand(focus.handId);
+      if (focus?.handId) { setTab("hand"); setFocusHand(focus.handId); }
+      else if (focus?.tab) setTab("card");
       Notifications.clearLastNotificationResponse?.();
     } catch (e) { say("Couldn't save that: " + (e.message || e)); }
     refresh();
@@ -194,7 +194,7 @@ function Game({ profile, setProfile }) {
       <StatusBar style="dark" />
       <View style={st.header}>
         <View style={st.tabs}>
-          {[["play", "Play"], ["table", "Table"], ["deck", "Deck"], ["me", "Me"]].map(([k, l]) => (
+          {[["card", "Card"], ["hand", "Hand"], ["table", "Table"], ["deck", "Deck"], ["me", "Me"]].map(([k, l]) => (
             <Pressable key={k} onPress={() => setTab(k)} style={[st.tab, tab === k && st.tabOn]} accessibilityRole="tab" accessibilityState={{ selected: tab === k }}>
               <Text style={[st.tabTxt, tab === k && st.tabTxtOn]}>{l}</Text>
             </Pressable>
@@ -202,95 +202,127 @@ function Game({ profile, setProfile }) {
         </View>
         <Text style={st.handCount}>HAND <Text style={st.handN}>{myHand.length}</Text></Text>
       </View>
+      {tab === "card" ? <CardView state={state} room={room} me={me} act={act} /> : (
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 18 }}>
-        {tab === "play" && <PlayView state={state} room={room} me={me} act={act} focusHand={focusHand} setFocusHand={setFocusHand} />}
+        {tab === "hand" && <HandView state={state} room={room} me={me} act={act} focusHand={focusHand} />}
         {tab === "table" && <TableView state={state} me={me} />}
         {tab === "deck" && <DeckView state={state} room={room} me={me} act={act} />}
         {tab === "me" && <MeView profile={profile} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
-      </ScrollView>
+      </ScrollView>)}
       {!!msg && <View style={st.toast}><Text style={st.toastTxt}>{msg}</Text></View>}
     </SafeAreaView>
   );
 }
 
-/* ---------------- play ---------------- */
-function PlayView({ state, room, me, act, focusHand, setFocusHand }) {
+/* ---------------- card (home) ---------------- */
+// Just the card in front of you. Tap to pull one, then play it or hold it.
+function CardView({ state, room, me, act }) {
   const t = state.tables[me.id];
   const top = t && !t.empty ? t : null;
-  const myHand = state.hands.filter((h) => h.seat === me.id).sort((a, b) => (a.heldAt || "").localeCompare(b.heldAt || ""));
-  const [later, setLater] = useState(null); // {kind:'table'} | {kind:'hand', h}
-  const sel = myHand.find((h) => h.id === focusHand);
-  const left = myDeck(state.cards, state.players, me.id).filter((c) => c.active !== false).length - myHand.length;
-  const myTurn = state.game.active === me.id;
-
+  const [later, setLater] = useState(false);
   const setReminder = async (at) => {
-    const target = later; setLater(null);
-    if (target.kind === "table") {
-      await act(async () => {
-        const handId = await S.holdCard(room, me, top, at);
-        await N.scheduleReminder(room, handId, top, at);
-      }, "Held. Reminder at " + fmtTime(at));
-    } else {
-      await act(async () => {
-        await S.setRemind(room, target.h.id, at);
-        await N.scheduleReminder(room, target.h.id, target.h, at);
-      }, "Reminder at " + fmtTime(at));
-    }
+    setLater(false);
+    await act(async () => {
+      const handId = await S.holdCard(room, me, top, at);
+      await N.scheduleReminder(room, handId, top, at);
+    }, "Held. Reminder at " + fmtTime(at));
   };
+  return (
+    <View style={st.home}>
+      {top ? (
+        <>
+          <BigCard t={top} />
+          <View style={[st.row, { width: 280, maxWidth: "80%" }]}>
+            <Btn primary flex label="Play" onPress={() => act(() => S.playCard(room, me, top), "Played: " + top.label)} />
+            <Btn flex label="Hold" onPress={() => act(() => S.holdCard(room, me, top), "Held: " + top.label)} />
+          </View>
+          <Pressable onPress={() => setLater(true)} hitSlop={10}><Text style={st.link}>Remind me later</Text></Pressable>
+        </>
+      ) : (
+        <Pressable onPress={() => act(() => S.draw(room, me))} style={st.deckStack} accessibilityRole="button" accessibilityLabel="Tap to pull a card">
+          <View style={[st.back, { transform: [{ rotate: "-4deg" }], opacity: 0.6 }]} />
+          <View style={[st.back, { transform: [{ rotate: "3deg" }], opacity: 0.8 }]} />
+          <View style={st.back} />
+          <View style={st.drawBtn}><Text style={st.drawTxt}>Tap to pull a card</Text></View>
+        </Pressable>
+      )}
+      <LaterSheet open={later} label={top?.label} onClose={() => setLater(false)} onPick={setReminder} />
+    </View>
+  );
+}
 
+/* ---------------- hand ---------------- */
+// Select one card to play, remind or discard; select several to play them together.
+function HandView({ state, room, me, act, focusHand }) {
+  const hand = state.hands.filter((h) => h.seat === me.id).sort((a, b) => (a.heldAt || "").localeCompare(b.heldAt || ""));
+  const [sel, setSel] = useState(focusHand ? [focusHand] : []);
+  const [later, setLater] = useState(null);
+  useEffect(() => { if (focusHand) setSel([focusHand]); }, [focusHand]);
+  const picked = hand.filter((h) => sel.includes(h.id));
+  const toggle = (id) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const myTurn = state.game.active === me.id;
+  const setReminder = async (at) => {
+    const h = later; setLater(null);
+    await act(async () => { await S.setRemind(room, h.id, at); await N.scheduleReminder(room, h.id, h, at); }, "Reminder at " + fmtTime(at));
+  };
+  if (!hand.length) return <View style={{ paddingTop: 60, gap: 8 }}><Text style={st.h2}>Empty hand.</Text><Text style={[st.note, { textAlign: "left" }]}>Cards you hold show up here.</Text></View>;
   return (
     <>
-      <View style={{ alignItems: "center", gap: 14 }}>
-        {top ? (
-          <>
-            <BigCard t={top} />
-            <View style={st.row}>
-              <Btn primary flex label="Play" onPress={() => act(() => S.playCard(room, me, top), "Played: " + top.label)} />
-              <Btn flex label="Hold" onPress={() => act(() => S.holdCard(room, me, top), "Held: " + top.label)} />
-              <Btn flex label="Later" onPress={() => setLater({ kind: "table" })} />
-            </View>
-          </>
-        ) : (
-          <>
-            <Pressable onPress={() => act(() => S.draw(room, me))} style={st.deckStack} accessibilityRole="button" accessibilityLabel="Pull a card">
-              <View style={[st.back, { transform: [{ rotate: "-4deg" }], opacity: 0.6 }]} />
-              <View style={[st.back, { transform: [{ rotate: "3deg" }], opacity: 0.8 }]} />
-              <View style={st.back} />
-              <View style={st.drawBtn}><Text style={st.drawTxt}>Pull a card</Text></View>
+      <Text style={st.label}>{hand.length} HELD · TAP TO SELECT{picked.length > 1 ? " · " + picked.length + " SELECTED" : ""}</Text>
+      <View style={st.handGrid}>
+        {hand.map((h) => {
+          const hot = heat(h), on = sel.includes(h.id);
+          const remind = h.remindAt && Date.parse(h.remindAt) > Date.now();
+          return (
+            <Pressable key={h.id} onPress={() => toggle(h.id)} accessibilityState={{ selected: on }}
+              style={[st.mini, st.miniGrid, hot === "warm" && { borderColor: C.warm }, hot === "hot" && { borderColor: C.hot }, on && st.miniSel]}>
+              <View style={[st.row, { justifyContent: "space-between" }]}>
+                <Text style={[st.miniMeta, { color: C.suit[h.suit] }]}>{SUIT[h.suit]} <Text style={st.miniMeta}>{h.imm}</Text></Text>
+                {on && <View style={st.check}><Text style={st.checkTxt}>✓</Text></View>}
+              </View>
+              <Text style={st.miniLabel}>{h.label}</Text>
+              {!!h.variant && <Text style={st.miniMeta} numberOfLines={2}>{h.variant}</Text>}
+              <Text style={st.miniMeta}>{remind ? "⏰ " + fmtTime(h.remindAt) : "held " + ago(h.heldAt)}</Text>
             </Pressable>
-            <Text style={st.note}>{Math.max(0, left)} in the deck · {myTurn ? "your turn" : "not your turn, but you can still pull"}</Text>
-          </>
-        )}
+          );
+        })}
       </View>
-
-      <View style={{ gap: 8 }}>
-        <Text style={st.label}>YOUR HAND</Text>
-        {myHand.length ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 4 }}>
-            {myHand.map((h) => {
-              const hot = heat(h);
-              const remind = h.remindAt && Date.parse(h.remindAt) > Date.now();
-              return (
-                <Pressable key={h.id} onPress={() => setFocusHand(focusHand === h.id ? null : h.id)}
-                  style={[st.mini, hot === "warm" && { borderColor: C.warm }, hot === "hot" && { borderColor: C.hot }, focusHand === h.id && st.miniSel]}>
-                  <Text style={st.miniMeta}>{SUIT[h.suit]} {h.imm}</Text>
-                  <Text style={st.miniLabel}>{h.label}</Text>
-                  <Text style={st.miniMeta}>{remind ? "⏰ " + fmtTime(h.remindAt) : "held " + ago(h.heldAt)}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        ) : <Text style={st.note}>Empty hand. Nice.</Text>}
-        {sel && (
+      {picked.length === 1 && (
+        <View style={st.row}>
+          <Btn primary flex label="Play it" onPress={() => { setSel([]); act(() => S.playCombo(room, me, [picked[0].id]), "Played: " + picked[0].label); }} />
+          <Btn flex label="Remind" onPress={() => setLater(picked[0])} />
+          <Btn flex label="Discard" onPress={() => { setSel([]); act(() => S.discardFromHand(room, me, picked[0].id), "Discarded: " + picked[0].label); }} />
+        </View>
+      )}
+      {picked.length > 1 && (
+        <View style={{ gap: 8 }}>
+          <Text style={[st.note, { textAlign: "left" }]}>{picked.map((h) => h.label).join(" + ")}</Text>
           <View style={st.row}>
-            <Btn primary flex label="Play it" onPress={() => { setFocusHand(null); act(() => S.playFromHand(room, me, sel.id), "Played: " + sel.label); }} />
-            <Btn flex label="Remind" onPress={() => setLater({ kind: "hand", h: sel })} />
-            <Btn flex label="Discard" onPress={() => { setFocusHand(null); act(() => S.discardFromHand(room, me, sel.id), "Discarded: " + sel.label); }} />
+            <Btn primary flex label={"Play " + picked.length + " together"} onPress={() => { const ids = picked.map((h) => h.id); setSel([]); act(() => S.playCombo(room, me, ids), "Played together"); }} />
+            <Btn flex label="Clear" onPress={() => setSel([])} />
           </View>
-        )}
-      </View>
-      <LaterSheet open={!!later} label={later?.kind === "table" ? top?.label : later?.h?.label} onClose={() => setLater(null)} onPick={setReminder} />
+          {!myTurn && <Text style={[st.note, { textAlign: "left" }]}>It's not your turn, but you can still play.</Text>}
+        </View>
+      )}
+      <LaterSheet open={!!later} label={later?.label} onClose={() => setLater(null)} onPick={setReminder} />
     </>
+  );
+}
+
+/* Solitaire-style stack: one edge per card underneath, the newest card face up on top. */
+function Stack({ s, fresh }) {
+  const n = s.cards.length, edges = Math.min(n - 1, 11), top = s.cards[n - 1];
+  return (
+    <View style={{ width: 72, height: 100 + edges * 6 }}>
+      {Array.from({ length: edges }).map((_, i) => (
+        <View key={i} style={[st.stackEdge, { top: i * 6, borderTopColor: C.suit[s.suit] }]} />
+      ))}
+      <View style={[st.pc, st.stackTop, { top: edges * 6, borderTopColor: C.suit[s.suit] }, fresh && st.fresh]}>
+        <View style={[st.row, { justifyContent: "space-between" }]}><Text style={[st.pcMeta, { color: C.suit[s.suit] }]}>{SUIT[s.suit]}</Text>{n > 1 && <Text style={st.stackN}>×{n}</Text>}</View>
+        <Text style={st.pcLabel} numberOfLines={3}>{s.label}</Text>
+        <Text style={st.pcMeta}>{ago(top.at)}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -363,15 +395,11 @@ function TableView({ state, me }) {
             {isTurn && <View style={st.turnTag}><Text style={st.turnTagTxt}>TO PLAY</Text></View>}
           </View>
         </View>
+        {(() => { const mv = lastMove(plays); return mv.length > 1 ? <Text style={[st.note, { textAlign: "left" }]}>Last: {mv.map((x) => x.label).join(" + ")} · played together</Text> : null; })()}
         <View style={[st.row, { alignItems: "stretch", gap: 10 }]}>
-          <ScrollView horizontal style={st.played} contentContainerStyle={{ alignItems: "center", padding: 8, paddingLeft: 18 }}>
-            {plays.length ? plays.slice(-8).map((x, i) => (
-              <View key={x.id} style={[st.pc, { transform: [{ rotate: i % 2 ? "2deg" : "-2deg" }] }, lastPlay?.id === x.id && st.fresh]}>
-                <View style={[st.row, { justifyContent: "space-between" }]}><Text style={st.pcMeta}>{SUIT[x.suit]} {x.imm}</Text><Text style={st.pcMeta}>T{x.turn}</Text></View>
-                <Text style={st.pcLabel}>{x.label}</Text>
-                <Text style={st.pcMeta}>{ago(x.at)}</Text>
-              </View>
-            )) : <Text style={st.note}>{isTurn ? "Fresh. Ready for turn " + state.game.turn : "Nothing played yet"}</Text>}
+          <ScrollView horizontal style={st.played} contentContainerStyle={{ alignItems: "flex-start", padding: 10, gap: 8 }}>
+            {plays.length ? stackPlays(plays).map((sk) => <Stack key={sk.key} s={sk} fresh={sk.cards.some((c) => c.id === lastPlay?.id)} />)
+              : <Text style={[st.note, { alignSelf: "center" }]}>{isTurn ? "Fresh. Ready for turn " + state.game.turn : "Nothing played yet"}</Text>}
           </ScrollView>
           <View style={st.cubes}>
             <Text style={st.pcMeta}>CUBES · {plays.length}</Text>
@@ -602,6 +630,15 @@ function makeStyles() { return StyleSheet.create({
   turnBig: { fontSize: 28, fontWeight: "800", color: C.ink },
   deckRow: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: C.bg2, borderRadius: 10, padding: 12 },
   planRow: { fontSize: 14, color: C.ink, fontVariant: ["tabular-nums"] },
+  home: { flex: 1, alignItems: "center", justifyContent: "center", gap: 18, padding: 16 },
+  link: { color: C.muted, fontSize: 14, textDecorationLine: "underline" },
+  handGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  miniGrid: { width: "31%", aspectRatio: undefined, minHeight: 150 },
+  check: { width: 20, height: 20, borderRadius: 10, backgroundColor: C.accent, alignItems: "center", justifyContent: "center" },
+  checkTxt: { fontSize: 12, fontWeight: "800", color: C.ink },
+  stackEdge: { position: "absolute", left: 0, width: 72, height: 100, borderRadius: 8, backgroundColor: C.paper, borderWidth: 1, borderColor: C.line, borderTopWidth: 3, elevation: 1 },
+  stackTop: { position: "absolute", left: 0, marginLeft: 0, width: 72, height: 100, borderTopWidth: 3, borderWidth: 1, borderColor: C.line },
+  stackN: { fontSize: 11, fontWeight: "800", color: C.ink },
   toast: { position: "absolute", left: 16, right: 16, bottom: 24, backgroundColor: C.ink, borderRadius: 12, padding: 12 },
   toastTxt: { color: C.bg, textAlign: "center", fontWeight: "600" },
 }); }

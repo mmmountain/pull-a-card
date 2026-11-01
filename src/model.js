@@ -157,3 +157,26 @@ export function myChaos(players, meId, fallback = 30) {
   const p = (players || []).find((x) => x.id === meId);
   return typeof p?.chaos === "number" ? p.chaos : fallback;
 }
+
+/* ---------- table stacks ---------- */
+// Plays of the same card (any variation) stack together, Solitaire-style.
+// Stacks are grouped by suit, then ordered by label.
+export function stackPlays(plays) {
+  const by = new Map();
+  for (const p of [...plays].sort((a, b) => (a.at || "").localeCompare(b.at || ""))) {
+    const key = p.cardId || (p.label || "").toLowerCase();
+    if (!by.has(key)) by.set(key, { key, label: p.label, suit: p.suit || "body", cards: [] });
+    const s = by.get(key);
+    s.cards.push(p);
+    s.label = p.label;
+    s.imm = p.imm;
+  }
+  return [...by.values()].sort((a, b) => SUITS.indexOf(a.suit) - SUITS.indexOf(b.suit) || a.label.localeCompare(b.label));
+}
+
+/** The most recent move: one play, or every card played together with it. */
+export function lastMove(plays) {
+  const last = plays.reduce((a, p) => (!a || p.at > a.at ? p : a), null);
+  if (!last) return [];
+  return last.combo ? plays.filter((p) => p.combo === last.combo) : [last];
+}
