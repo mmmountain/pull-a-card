@@ -1,7 +1,8 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { cardLine, fmtTime, parseLater, pickCard, planDealTimes, dealFrom, hoursSince, markDrawn, myChaos, myDeck } from "./model";
+import { cardLine, fmtTime, parseLater, pickCard, planChecks, dealFrom, hoursSince, markDrawn, myChaos, myDeck } from "./model";
+const C_ACCENT = "#ff7eb6";
 import * as S from "./store";
 
 export const DEAL_CAT = "deal";
@@ -72,20 +73,22 @@ export async function cancelKind(kind, match) {
 }
 
 /** Replace this device's upcoming deals with a fresh plan from the current room state. */
+/** Replace this phone's upcoming deals: check every 20 minutes and deal only when a card is behind its target. */
 export async function rescheduleDeals(room, me, prefs, state) {
   await cancelKind("deal");
   if (!prefs.notify || !state) return [];
   const chaos = myChaos(state.players, me.id, state.config?.chaos ?? 30);
-  const times = planDealTimes({ everyMins: prefs.everyMins, chaos, startHour: prefs.startHour, endHour: prefs.endHour });
+  const win = { startHour: prefs.startHour, endHour: prefs.endHour, onlyDue: true };
   const cards = myDeck(state.cards, state.players, me.id).map((c) => ({ ...c }));
   const up = state.tables[me.id];
-  const busy = up && !up.empty ? [up.cardId] : [];
+  if (up && !up.empty) return []; // a card is already face up; deal again once it's played or held
   const out = [];
-  for (const when of times) {
-    const k = pickCard(cards, busy, chaos, when.getTime(), Math.random, prefs);
-    if (!k) break;
-    Object.assign(k, markDrawn(k, when.toISOString()));
-    const t = dealFrom(k, when.getTime());
+  for (const when of planChecks({ now: new Date(), stepMins: 20, startHour: prefs.startHour, endHour: prefs.endHour, hours: 24 })) {
+    if (out.length >= 24) break;
+    const k = pickCard(cards, [], chaos, when.getTime(), Math.random, win);
+    if (!k) continue;
+    const t = dealFrom(k, when.getTime(), Math.random, win);
+    Object.assign(k, markDrawn(k, t.drawnAt, t.amount));
     const urgent = (t.imm || 3) >= 4;
     await Notifications.scheduleNotificationAsync({
       content: {
@@ -93,7 +96,7 @@ export async function rescheduleDeals(room, me, prefs, state) {
         body: `Turn ${state.game?.turn || 1} · Play, Hold, or Later`,
         categoryIdentifier: DEAL_CAT,
         data: { kind: "deal", room, card: t },
-        color: "#ff7eb6",
+        color: C_ACCENT,
         priority: urgent ? Notifications.AndroidNotificationPriority.MAX : Notifications.AndroidNotificationPriority.HIGH,
       },
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: when, channelId: urgent ? "urgent" : "deals" },

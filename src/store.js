@@ -112,10 +112,10 @@ export async function draw(room, me, win = {}) {
   const busy = up && !up.empty ? [up.cardId] : [];
   const k = pickCard(myDeck(cards, players, me.id), busy, myChaos(players, me.id), Date.now(), Math.random, win);
   if (!k) return null;
-  const t = dealFrom(k);
+  const t = dealFrom(k, Date.now(), Math.random, win);
   await upsert(room, "tables", me.id, t);
   const { id, ...cd } = k;
-  await upsert(room, "cards", id, { ...cd, ...markDrawn(cd, t.drawnAt) });
+  await upsert(room, "cards", id, { ...cd, ...markDrawn(cd, t.drawnAt, t.amount) });
   return t;
 }
 
@@ -125,7 +125,7 @@ export async function placeOnTable(room, me, t) {
   if (cur && !cur.empty) return cur;
   await upsert(room, "tables", me.id, t);
   const card = await getDoc(room, "cards", t.cardId);
-  if (card) await upsert(room, "cards", t.cardId, { ...card, ...markDrawn(card, t.drawnAt) });
+  if (card) await upsert(room, "cards", t.cardId, { ...card, ...markDrawn(card, t.drawnAt, t.amount) });
   return t;
 }
 
@@ -133,7 +133,7 @@ async function logPlay(room, me, t, combo = null) {
   const now = new Date().toISOString();
   const game = (await getDoc(room, "game", "main")) || { turn: 1 };
   await upsert(room, "plays", newId(), {
-    seat: me.id, cardId: t.cardId, label: t.label, variant: t.variant || "", suit: t.suit, imm: t.imm, turn: game.turn || 1, at: now, combo,
+    seat: me.id, cardId: t.cardId, label: t.label, base: t.base || t.label, amount: t.amount ?? null, variant: t.variant || "", suit: t.suit, imm: t.imm, turn: game.turn || 1, at: now, combo,
   });
   const card = await getDoc(room, "cards", t.cardId);
   if (card) await upsert(room, "cards", t.cardId, { ...card, lastPlayed: now, plays: (card.plays || 0) + 1 });

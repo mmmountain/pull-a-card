@@ -11,7 +11,7 @@ import * as S from "./src/store";
 import * as N from "./src/notify";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, randomTheme } from "./src/theme";
-import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS } from "./src/model";
+import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
@@ -171,7 +171,7 @@ function Game({ profile, setProfile }) {
 
   // Keep this phone's upcoming deals in step with the deck, randomness and your settings.
   const planKey = useMemo(() => state && JSON.stringify([
-    myDeck(state.cards, state.players, me.id).map((c) => [c.id, c.label, c.every, c.imm, c.active, c.variants]),
+    myDeck(state.cards, state.players, me.id).map((c) => [c.id, c.label, c.every, c.imm, c.active, c.quota, c.amounts, (c.drawLog || []).length]),
     myChaos(state.players, me.id, state.config.chaos), prefs, state.hands.length,
   ]), [state, profile.prefs]);
   useEffect(() => {
@@ -339,7 +339,7 @@ function Stack({ s, fresh }) {
       ))}
       <View style={[st.pc, st.stackTop, { top: edges * 6, borderTopColor: C.suit[s.suit] }, fresh && st.fresh]}>
         <View style={[st.row, { justifyContent: "space-between" }]}><Text style={[st.pcMeta, { color: C.suit[s.suit] }]}>{SUIT[s.suit]}</Text>{n > 1 && <Text style={st.stackN}>×{n}</Text>}</View>
-        <Text style={st.pcLabel} numberOfLines={3}>{s.label}</Text>
+        <Text style={st.pcLabel} numberOfLines={3}>{s.total ? amountLabel(s.label, s.total) : s.label}</Text>
         <Text style={st.pcMeta}>{ago(top.at)}</Text>
       </View>
     </View>
@@ -461,10 +461,10 @@ function DeckView({ state, room, me, act }) {
           <Pressable key={c.id} onPress={() => setEdit(c)} style={[st.deckRow, c.active === false && { opacity: 0.5 }]}>
             <Text style={{ color: C.suit[c.suit], fontSize: 18, width: 22 }}>{SUIT[c.suit]}</Text>
             <Text style={[st.h3, { flex: 1 }]} numberOfLines={1}>{c.label}</Text>
-            <Text style={st.miniMeta}>{quotaLabel(c) || "every " + c.every + "h"} · {"●".repeat(c.imm || 3)}</Text>
+            <Text style={st.miniMeta}>{quotaLabel(c)} · {"●".repeat(c.imm || 3)}</Text>
           </Pressable>
         ))}
-        <Btn primary label="New card" onPress={() => setEdit({ label: "", variants: [], suit: "body", every: 4, imm: 3, active: true, plays: 0 })} />
+        <Btn primary label="New card" onPress={() => setEdit({ label: "", suit: "body", imm: 3, active: true, plays: 0, quota: { n: 1, per: "day" } })} />
       </View>
       <CardEditor card={edit} onClose={() => setEdit(null)} onSave={(c) => { setEdit(null); act(() => S.saveCard(room, me, c), "Saved " + c.label); }}
         onDelete={(c) => { setEdit(null); act(() => S.deleteCard(room, c.id), "Deleted " + c.label); }} />
@@ -474,33 +474,47 @@ function DeckView({ state, room, me, act }) {
 
 function CardEditor({ card, onClose, onSave, onDelete }) {
   const [c, setC] = useState(card);
-  const [vars, setVars] = useState("");
+  const [amts, setAmts] = useState("");
   const [arm, setArm] = useState(false);
-  useEffect(() => { setC(card); setVars((card?.variants || []).join("\n")); setArm(false); }, [card]);
+  useEffect(() => {
+    setC(card && { ...card, quota: effectiveQuota(card) });
+    setAmts((card?.amounts || []).join(", "));
+    setArm(false);
+  }, [card]);
   if (!card || !c) return null;
+  const amounts = amts.split(/[ ,]+/).map(Number).filter((x) => x > 0);
+  const n = +c.quota.n || 0;
+  const bump = (d) => setC({ ...c, quota: { ...c.quota, n: Math.max(1, n + d) } });
+  const step = amounts.length ? Math.min(...amounts) : 1;
   const save = () => {
     if (!c.label.trim()) return;
-    onSave({ ...c, quota: c.quota && +c.quota.n > 0 ? { n: +c.quota.n, per: c.quota.per } : null, label: c.label.trim(), every: Math.max(0.25, parseFloat(c.every) || 4), variants: vars.split("\n").map((s) => s.trim()).filter(Boolean) });
+    const { every, variants, ...rest } = c;
+    onSave({ ...rest, label: c.label.trim(), amounts: amounts.length ? amounts : null, quota: { n: Math.max(1, n), per: c.quota.per } });
   };
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={st.scrim} onPress={onClose} />
       <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]} keyboardShouldPersistTaps="handled">
         <Text style={st.h2}>{card.id ? "Edit card" : "New card"}</Text>
-        <Field label="Label" value={c.label} onChangeText={(v) => setC({ ...c, label: v })} placeholder="Drink water" />
-        <Field label="Variations, one per line" value={vars} onChangeText={setVars} multiline placeholder={"a full glass\na whole bottle"} />
+        <Field label="Label" value={c.label} onChangeText={(v) => setC({ ...c, label: v })} placeholder="squats" />
+        <Field label="Amounts (optional)" value={amts} onChangeText={setAmts} placeholder="5, 10, 20" keyboardType="numbers-and-punctuation" />
+        <Text style={[st.note, { textAlign: "left" }]}>{amounts.length ? `Each deal is one of these: "${amountLabel(c.label || "squats", amounts[0])}". Put # in the label to place the number, like "Drink # glasses".` : "Leave empty to count whole cards."}</Text>
+        <Text style={st.label}>HOW OFTEN</Text>
+        <View style={st.chips}>{Object.entries(PERIOD_NAMES).map(([per, l]) => <Chip key={per} label={l} on={c.quota.per === per} onPress={() => setC({ ...c, quota: { ...c.quota, per } })} />)}</View>
+        <Text style={st.label}>TARGET {PERIODS[c.quota.per].toUpperCase()}</Text>
+        <View style={st.row}>
+          <Btn label="−" onPress={() => bump(-step)} />
+          <TextInput value={String(c.quota.n)} onChangeText={(v) => setC({ ...c, quota: { ...c.quota, n: v.replace(/[^0-9]/g, "") } })} keyboardType="number-pad" style={[st.input, { flex: 1, textAlign: "center", fontSize: 22, fontWeight: "800" }]} />
+          <Btn label="+" onPress={() => bump(step)} />
+        </View>
+        <Text style={[st.note, { textAlign: "left" }]}>{amounts.length ? `Deals add up to exactly ${n} ${c.label || ""} ${PERIODS[c.quota.per]}, spread out. Bigger amounts mean fewer deals.` : `Dealt exactly ${n} time${n === 1 ? "" : "s"} ${PERIODS[c.quota.per]}, spread out.`}</Text>
         <Text style={st.label}>SUIT</Text>
         <View style={st.chips}>{SUITS.map((s) => <Chip key={s} label={SUIT[s] + " " + s} on={c.suit === s} onPress={() => setC({ ...c, suit: s })} />)}</View>
-        <Field label="Comes up every (hours)" value={String(c.every)} onChangeText={(v) => setC({ ...c, every: v })} keyboardType="decimal-pad" />
         <Text style={st.label}>IMMEDIACY</Text>
         <View style={st.chips}>{[1, 2, 3, 4, 5].map((i) => <Chip key={i} label={String(i)} on={c.imm === i} onPress={() => setC({ ...c, imm: i })} />)}</View>
         <Text style={[st.note, { textAlign: "left" }]}>4 and 5 ring louder and show over the lock screen.</Text>
-        <Text style={st.label}>HOW MANY</Text>
-        <View style={st.chips}>{[["", "No limit"], ["hour", "Per hour"], ["day", "Per day"], ["week", "Per week"]].map(([per, l]) => <Chip key={l} label={l} on={(c.quota?.per || "") === per} onPress={() => setC({ ...c, quota: per ? { n: c.quota?.n || 1, per } : null })} />)}</View>
-        {!!c.quota && <Field label={"Exactly this many " + PERIODS[c.quota.per]} value={String(c.quota.n ?? "")} onChangeText={(v) => setC({ ...c, quota: { ...c.quota, n: v.replace(/[^0-9]/g, "") } })} keyboardType="number-pad" />}
-        <Text style={[st.note, { textAlign: "left" }]}>{c.quota ? "Dealt exactly this many times, spread through the period. Pulls stop once you hit it. \"Comes up every\" is ignored." : "No limit: it comes up as often as \"Comes up every\" says."}</Text>
         <Text style={st.label}>LOCK WHEN HOLDING</Text>
-        <View style={st.chips}>{[0, 2, 3, 4, 5].map((n) => <Chip key={n} label={n ? n + " held" : "Never"} on={(c.lockAt || 0) === n} onPress={() => setC({ ...c, lockAt: n || null })} />)}</View>
+        <View style={st.chips}>{[0, 2, 3, 4, 5].map((k) => <Chip key={k} label={k ? k + " held" : "Never"} on={(c.lockAt || 0) === k} onPress={() => setC({ ...c, lockAt: k || null })} />)}</View>
         <Text style={[st.note, { textAlign: "left" }]}>While you hold this many, it's the only card you can play.</Text>
         <View style={[st.row, { justifyContent: "space-between" }]}><Text style={st.h3}>In the deck</Text><Switch value={c.active !== false} onValueChange={(v) => setC({ ...c, active: v })} trackColor={{ true: C.accent }} /></View>
         <View style={st.row}>
@@ -543,8 +557,7 @@ function MeView({ profile, prefs, setProfile, act, state }) {
       </View>
       <View style={st.panel}>
         <View style={[st.row, { justifyContent: "space-between" }]}><Text style={st.h3}>Deal me cards</Text><Switch value={prefs.notify} onValueChange={(v) => update({ notify: v })} trackColor={{ true: C.accent }} /></View>
-        <Text style={st.label}>ABOUT EVERY</Text>
-        <View style={st.chips}>{[[45, "45 min"], [60, "1 h"], [90, "1.5 h"], [120, "2 h"], [180, "3 h"], [240, "4 h"]].map(([m, l]) => <Chip key={m} label={l} on={prefs.everyMins === m} onPress={() => update({ everyMins: m })} />)}</View>
+        <Text style={[st.note, { textAlign: "left" }]}>Cards are dealt when they fall behind their targets, checked every 20 minutes while you're awake.</Text>
         <Text style={st.label}>AWAKE FROM</Text>
         <View style={st.chips}>{[6, 7, 8, 9, 10].map((h) => <Chip key={h} label={h + " AM"} on={prefs.startHour === h} onPress={() => update({ startHour: h })} />)}</View>
         <Text style={st.label}>UNTIL</Text>

@@ -15,7 +15,7 @@ const APP_URL = "https://mmmountain.github.io/pull-a-card/";
 type Doc = { room: string; coll: string; id: string; data: Record<string, any> };
 
 // Same picking and quota rules as the apps (CI copies src/model.js next to this file).
-import { hoursSince, markDrawn, pickCard } from "./model.js";
+import { dealFrom, hoursSince, markDrawn, pickCard } from "./model.js";
 
 const line = (t: any) => `${SUIT[t.suit] || "●"} ${t.label}${t.variant ? " — " + t.variant : ""}`;
 
@@ -24,19 +24,6 @@ function localHour(d: Date, tz: string) {
   const h = +(parts.find((p) => p.type === "hour")?.value || 0) % 24;
   const m = +(parts.find((p) => p.type === "minute")?.value || 0);
   return h + m / 60;
-}
-
-/** Next deal time: about everyMins from now, jittered by chaos, moved into the waking window. */
-function nextDealAt(now: Date, prefs: any, chaos: number, tz: string) {
-  const every = prefs?.everyMins || 120, start = prefs?.startHour ?? 8, end = prefs?.endHour ?? 21;
-  const jitter = (chaos / 100) * 0.75;
-  let t = new Date(now.getTime() + Math.max(10, every * (1 + (Math.random() * 2 - 1) * jitter)) * 6e4);
-  for (let i = 0; i < 24 * 6; i++) {
-    const h = localHour(t, tz);
-    if (h >= start && h < end) return t;
-    t = new Date(t.getTime() + 10 * 6e4);
-  }
-  return t;
 }
 
 Deno.serve(async (req) => {
@@ -86,30 +73,28 @@ Deno.serve(async (req) => {
       await upsert(room, "hands", id, { ...rest, reminded: true });
     }
 
-    // Deals.
+    // Deals: check every run, deal only when a card is behind its target.
     if (p.prefs?.notify === false) continue;
-    if (p.nextAt && Date.parse(p.nextAt) > now.getTime()) continue;
     const h = localHour(now, tz);
-    if (h < (p.prefs?.startHour ?? 8) || h >= (p.prefs?.endHour ?? 21)) {
-      await upsert(room, "push", player, { ...p, nextAt: nextDealAt(now, { ...p.prefs, everyMins: 10 }, 0, tz).toISOString() });
-      continue;
-    }
+    if (h < (p.prefs?.startHour ?? 8) || h >= (p.prefs?.endHour ?? 21)) continue;
+    const win = { ...(p.prefs || {}), tz, onlyDue: true };
     const top = tables[player];
     if (top && !top.empty) {
-      await send("Still up: " + line(top), `Turn ${game.turn || 1} · Play, hold, or later`, "deal");
-    } else {
-      const busy: string[] = []; // repeats allowed; this player's table is empty here
-      const k = pickCard(cards, busy, chaos, now.getTime(), Math.random, { ...(p.prefs || {}), tz });
-      if (k) {
-        const vs = (k.variants || []).filter(Boolean);
-        const t = { cardId: k.id, label: k.label, variant: vs.length ? vs[Math.floor(Math.random() * vs.length)] : "", suit: k.suit || "body", imm: k.imm || 3, every: k.every || 4, drawnAt: now.toISOString() };
-        await upsert(room, "tables", player, t);
-        const { id, ...cd } = k;
-        await upsert(room, "cards", id, { ...cd, ...markDrawn(cd, t.drawnAt) });
-        await send(line(t), `Turn ${game.turn || 1} · Play, hold, or later`, "deal");
+      // Something is already face up: nudge at most every 2 hours.
+      if (!p.nextAt || Date.parse(p.nextAt) <= now.getTime()) {
+        await send("Still up: " + line(top), `Turn ${game.turn || 1} · Play, hold, or later`, "deal");
+        await upsert(room, "push", player, { ...p, nextAt: new Date(now.getTime() + 2 * 36e5).toISOString() });
       }
+      continue;
     }
-    await upsert(room, "push", player, { ...p, nextAt: nextDealAt(now, p.prefs, chaos, tz).toISOString() });
+    const k = pickCard(cards, [], chaos, now.getTime(), Math.random, win);
+    if (!k) continue;
+    const t = dealFrom(k, now.getTime(), Math.random, win);
+    await upsert(room, "tables", player, t);
+    const { id, ...cd } = k;
+    await upsert(room, "cards", id, { ...cd, ...markDrawn(cd, t.drawnAt, t.amount) });
+    await send(line(t), `Turn ${game.turn || 1} · Play, hold, or later`, "deal");
+    await upsert(room, "push", player, { ...p, nextAt: new Date(now.getTime() + 2 * 36e5).toISOString() });
   }
 
   return new Response(JSON.stringify({ ok: true, log }), { headers: { "content-type": "application/json" } });

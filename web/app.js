@@ -1,6 +1,6 @@
 import * as S from "./store.js";
 import { ORIGINAL, randomTheme } from "./theme.js";
-import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS } from "./model.js";
+import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./model.js";
 import { SUIT, SUITS, ago, fmtTime, heat, newId, parseLater } from "./model.js";
 
 const $app = document.getElementById("app");
@@ -103,7 +103,7 @@ function handView() {
 function stackHtml(sk, fresh) {
   const n = sk.cards.length, edges = Math.min(n - 1, 11), top = sk.cards[n - 1], c = SUITC[sk.suit];
   return `<div class="stack" style="height:${100 + edges * 6}px">${Array.from({ length: edges }, (_, i) => `<span class="edge" style="top:${i * 6}px;border-top-color:${c}"></span>`).join("")}
-    <div class="pc top${fresh ? " fresh" : ""}" style="top:${edges * 6}px;border-top-color:${c}"><div class="t"><span style="color:${c}">${SUIT[sk.suit]}</span>${n > 1 ? `<b class="n">×${n}</b>` : ""}</div><div class="l">${esc(sk.label)}</div><div class="t"><span>${ago(top.at)}</span></div></div></div>`;
+    <div class="pc top${fresh ? " fresh" : ""}" style="top:${edges * 6}px;border-top-color:${c}"><div class="t"><span style="color:${c}">${SUIT[sk.suit]}</span>${n > 1 ? `<b class="n">×${n}</b>` : ""}</div><div class="l">${esc(sk.total ? amountLabel(sk.label, sk.total) : sk.label)}</div><div class="t"><span>${ago(top.at)}</span></div></div></div>`;
 }
 
 function tableView() {
@@ -141,7 +141,7 @@ function deckView() {
       <div class="chips">${[0, 15, 30, 50, 75, 100].map((v) => `<button class="chip" aria-pressed="${chaos === v}" data-chaos="${v}">${v === 0 ? "Steady" : v === 100 ? "Wild" : v + "%"}</button>`).join("")}</div>
       <p class="note left">Steady deals whatever is most overdue on a regular clock. Wild picks any card at uneven times.</p></div>
     <section style="display:flex;flex-direction:column;gap:8px"><h3>Your deck · only you see it</h3>
-      ${cards.map((c) => `<button class="deckrow${c.active === false ? " off" : ""}" data-edit="${c.id}"><span style="color:${SUITC[c.suit]};width:20px">${SUIT[c.suit]}</span><span class="n">${esc(c.label)}</span><span class="f">${esc(quotaLabel(c) || "every " + c.every + "h")} · ${"●".repeat(c.imm || 3)}</span></button>`).join("")}
+      ${cards.map((c) => `<button class="deckrow${c.active === false ? " off" : ""}" data-edit="${c.id}"><span style="color:${SUITC[c.suit]};width:20px">${SUIT[c.suit]}</span><span class="n">${esc(c.label)}</span><span class="f">${esc(quotaLabel(c, Date.now(), profile.prefs || {}))} · ${"●".repeat(c.imm || 3)}</span></button>`).join("")}
       <button class="btn primary" data-act="newcard">New card</button></section>`;
 }
 
@@ -164,7 +164,7 @@ function meView() {
   const chips = (key, list) => list.map(([v, l]) => `<button class="chip" aria-pressed="${p[key] === v}" data-pref="${key}" data-val="${v}">${l}</button>`).join("");
   return `<div class="panel"><h3>You</h3><span class="nm">${esc(profile.me.name)} · table “${esc(profile.room)}”</span></div>
     <div class="panel"><h3>Notifications</h3>${notif}</div>
-    <div class="panel"><h3>About every</h3><div class="chips">${chips("everyMins", [[45, "45 min"], [60, "1 h"], [90, "1.5 h"], [120, "2 h"], [180, "3 h"], [240, "4 h"]])}</div>
+    <div class="panel"><p class="note left">Cards are dealt when they fall behind their targets, checked every few minutes while you're awake.</p>
       <h3>Awake from</h3><div class="chips">${chips("startHour", [6, 7, 8, 9, 10].map((h) => [h, h + " AM"]))}</div>
       <h3>Until</h3><div class="chips">${chips("endHour", [19, 20, 21, 22, 23].map((h) => [h, h - 12 + " PM"]))}</div></div>
     <div class="panel"><h3>Colors</h3>
@@ -186,18 +186,20 @@ function laterSheet() {
 }
 
 function editSheet() {
-  const c = sheet.card;
+  const c = sheet.card, q = c.quota, amts = c.amounts || [];
+  const n = +q.n || 0;
   return `<div class="scrim" data-act="close"></div><div class="sheet" role="dialog" aria-label="Edit card">
     <h2>${c.id ? "Edit card" : "New card"}</h2>
-    <label><span class="lbl">Label</span><input type="text" id="eLabel" value="${esc(c.label)}" placeholder="Drink water"></label>
-    <label><span class="lbl">Variations, one per line</span><textarea id="eVars" placeholder="a full glass&#10;a whole bottle">${esc((c.variants || []).join("\n"))}</textarea></label>
+    <label><span class="lbl">Label</span><input type="text" id="eLabel" value="${esc(c.label)}" placeholder="squats"></label>
+    <label><span class="lbl">Amounts (optional)</span><input type="text" id="eAmts" value="${esc(amts.join(", "))}" placeholder="5, 10, 20" inputmode="numeric"></label>
+    <p class="note left">${amts.length ? `Each deal is one of these: "${esc(amountLabel(c.label || "squats", amts[0]))}". Put # in the label to place the number, like "Drink # glasses".` : "Leave empty to count whole cards."}</p>
+    <h3>How often</h3><div class="chips">${Object.entries(PERIOD_NAMES).map(([per, l]) => `<button class="chip" aria-pressed="${q.per === per}" data-eper="${per}">${l}</button>`).join("")}</div>
+    <h3>Target ${PERIODS[q.per]}</h3>
+    <div class="row"><button class="btn auto" data-qstep="-1" aria-label="Less">−</button><input type="number" id="eQn" min="1" step="1" value="${esc(q.n)}" style="text-align:center;font:800 22px var(--display)"><button class="btn auto" data-qstep="1" aria-label="More">+</button></div>
+    <p class="note left">${amts.length ? `Deals add up to exactly ${n} ${esc(c.label || "")} ${PERIODS[q.per]}, spread out. Bigger amounts mean fewer deals.` : `Dealt exactly ${n} time${n === 1 ? "" : "s"} ${PERIODS[q.per]}, spread out.`}</p>
     <h3>Suit</h3><div class="chips">${SUITS.map((s) => `<button class="chip" aria-pressed="${c.suit === s}" data-esuit="${s}">${SUIT[s]} ${s}</button>`).join("")}</div>
-    <label><span class="lbl">Comes up every (hours)</span><input type="number" id="eEvery" min="0.25" step="0.25" value="${c.every}"></label>
     <h3>Immediacy</h3><div class="chips">${[1, 2, 3, 4, 5].map((i) => `<button class="chip" aria-pressed="${c.imm === i}" data-eimm="${i}">${i}</button>`).join("")}</div>
-    <h3>How many</h3><div class="chips">${[["", "No limit"], ["hour", "Per hour"], ["day", "Per day"], ["week", "Per week"]].map(([per, l]) => `<button class="chip" aria-pressed="${(c.quota?.per || "") === per}" data-eper="${per}">${l}</button>`).join("")}</div>
-    ${c.quota ? `<label><span class="lbl">Exactly this many ${PERIODS[c.quota.per]}</span><input type="number" id="eQn" min="1" step="1" value="${esc(c.quota.n ?? "")}"></label>` : ""}
-    <p class="note left">${c.quota ? "Dealt exactly this many times, spread through the period. Pulls stop once you hit it. \"Comes up every\" is ignored." : "No limit: it comes up as often as \"Comes up every\" says."}</p>
-    <h3>Lock when holding</h3><div class="chips">${[0, 2, 3, 4, 5].map((n) => `<button class="chip" aria-pressed="${(c.lockAt || 0) === n}" data-elock="${n}">${n ? n + " held" : "Never"}</button>`).join("")}</div>
+    <h3>Lock when holding</h3><div class="chips">${[0, 2, 3, 4, 5].map((k) => `<button class="chip" aria-pressed="${(c.lockAt || 0) === k}" data-elock="${k}">${k ? k + " held" : "Never"}</button>`).join("")}</div>
     <p class="note left">While you hold this many, it's the only card you can play.</p>
     <label class="row" style="flex-direction:row"><input type="checkbox" id="eOn" ${c.active !== false ? "checked" : ""}> <span>In the deck</span></label>
     <div class="row"><button class="btn primary" data-act="esave">Save</button><button class="btn" data-act="close">Cancel</button>${c.id ? `<button class="btn danger" data-act="edel">${sheet.arm ? "Tap again" : "Delete"}</button>` : ""}</div></div>`;
@@ -258,9 +260,10 @@ $app.addEventListener("click", async (e) => {
   if (d.tab) { tab = d.tab; sheet = null; if (tab === "me") await loadPush(); render(); return; }
   if (d.sel) { sel = sel.includes(d.sel) ? sel.filter((x) => x !== d.sel) : [...sel, d.sel]; render(); return; }
   if (d.chaos) return act(() => S.setChaos(room, me, +d.chaos));
-  if (d.edit) { sheet = { type: "edit", card: { ...state.cards.find((c) => c.id === d.edit) } }; render(); return; }
+  if (d.edit) { const c0 = state.cards.find((c) => c.id === d.edit); sheet = { type: "edit", card: { ...c0, quota: { ...effectiveQuota(c0, profile.prefs || {}) } } }; render(); return; }
   if (d.esuit) { readEdit(); sheet.card.suit = d.esuit; render(); return; }
-  if (d.eper !== undefined) { readEdit(); sheet.card.quota = d.eper ? { n: sheet.card.quota?.n || 1, per: d.eper } : null; render(); return; }
+  if (d.eper) { readEdit(); sheet.card.quota = { ...sheet.card.quota, per: d.eper }; render(); return; }
+  if (d.qstep) { readEdit(); const st = sheet.card.amounts?.length ? Math.min(...sheet.card.amounts) : 1; sheet.card.quota.n = Math.max(1, sheet.card.quota.n + +d.qstep * st); render(); return; }
   if (d.elock !== undefined) { readEdit(); sheet.card.lockAt = +d.elock || null; render(); return; }
   if (d.eimm) { readEdit(); sheet.card.imm = +d.eimm; render(); return; }
   if (d.at) return setLater(new Date(d.at));
@@ -300,12 +303,13 @@ $app.addEventListener("click", async (e) => {
       return setLater(at);
     }
     case "close": sheet = null; return render();
-    case "newcard": sheet = { type: "edit", card: { label: "", variants: [], suit: "body", every: 4, imm: 3, active: true, plays: 0 } }; return render();
+    case "newcard": sheet = { type: "edit", card: { label: "", suit: "body", imm: 3, active: true, plays: 0, quota: { n: 1, per: "day" } } }; return render();
     case "esave": {
       readEdit(); const c = sheet.card;
       if (!c.label.trim()) { toast("Give the card a label."); return; }
       sheet = null;
-      return act(() => S.saveCard(room, me, { ...c, label: c.label.trim(), every: Math.max(0.25, parseFloat(c.every) || 4) }), "Saved " + c.label);
+      const { every, variants, ...rest } = c;
+      return act(() => S.saveCard(room, me, { ...rest, label: c.label.trim() }), "Saved " + c.label);
     }
     case "edel": {
       if (!sheet.arm) { readEdit(); sheet.arm = true; return render(); }
@@ -317,7 +321,7 @@ $app.addEventListener("click", async (e) => {
     case "pushtest": {
       const reg = await navigator.serviceWorker.getRegistration();
       await reg?.showNotification("● Test card", { body: "Notifications work on this phone.", icon: "icon-192.png" });
-      toast("Sent. Real cards come from the dealer about every " + ((profile.prefs?.everyMins || 120) / 60) + " h.");
+      toast("Sent. Real cards come when one falls behind its target.");
       return;
     }
     case "shuffle": applyTheme(randomTheme()); return render();
@@ -330,11 +334,10 @@ function readEdit() {
   if (sheet?.type !== "edit") return;
   const c = sheet.card;
   c.label = document.getElementById("eLabel").value;
-  c.variants = document.getElementById("eVars").value.split("\n").map((s) => s.trim()).filter(Boolean);
-  c.every = document.getElementById("eEvery").value;
+  const amts = document.getElementById("eAmts").value.split(/[ ,]+/).map(Number).filter((x) => x > 0);
+  c.amounts = amts.length ? amts : null;
   c.active = document.getElementById("eOn").checked;
-  const qn = document.getElementById("eQn");
-  if (qn && c.quota) c.quota = { ...c.quota, n: +qn.value || 1 };
+  c.quota = { ...c.quota, n: Math.max(1, +document.getElementById("eQn").value || 1) };
 }
 
 function start() {

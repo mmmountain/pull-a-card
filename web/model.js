@@ -4,9 +4,9 @@ export const SUIT = { body: "●", home: "■", mind: "▲", work: "◆" };
 export const SUITS = ["body", "home", "mind", "work"];
 
 export const SEED_CARDS = [
-  { id: "water", label: "Drink water", variants: [], suit: "body", every: 1.5, imm: 5, active: true, plays: 0, lockAt: 3 },
-  { id: "squats", label: "10 squats", variants: [], suit: "body", every: 4, imm: 3, active: true, plays: 0 },
-  { id: "clean", label: "Clean for an hour", variants: [], suit: "home", every: 48, imm: 1, active: true, plays: 0 },
+  { id: "water", label: "Drink water", suit: "body", imm: 5, active: true, plays: 0, lockAt: 3, quota: { n: 8, per: "day" } },
+  { id: "squats", label: "squats", amounts: [5, 10, 20], suit: "body", imm: 3, active: true, plays: 0, quota: { n: 50, per: "day" } },
+  { id: "clean", label: "Clean for an hour", suit: "home", imm: 1, active: true, plays: 0, quota: { n: 3, per: "week" } },
 ];
 
 export const hoursSince = (ts, now = Date.now()) => (ts ? (now - Date.parse(ts)) / 36e5 : 999);
@@ -23,6 +23,8 @@ export function pickCard(cards, excludeIds, chaos, now = Date.now(), rand = Math
   const ex = new Set(excludeIds);
   const pool = cards.filter((c) => c.active !== false && !ex.has(c.id) && quotaState(c, now, win).open);
   if (!pool.length) return null;
+  // Scheduled deals (win.onlyDue) only happen when some card has fallen at least half a deal behind its pace.
+  if (win.onlyDue && !pool.some((k) => isDue(k, now, win))) return null;
   const c = chaos / 100;
   const scored = pool.map((k) => ({ k, d: dueScore(k, now, win) * (1 + ((k.imm || 3) - 1) * 0.2) }));
   if (c < 0.05) return scored.sort((a, b) => b.d - a.d)[0].k;
@@ -38,7 +40,8 @@ export function pickCard(cards, excludeIds, chaos, now = Date.now(), rand = Math
 
 /* ---------- quotas: exactly N per hour / day / week ---------- */
 // card.quota = { n, per: "hour" | "day" | "week" }. Counts how many times the card was dealt.
-export const PERIODS = { hour: "this hour", day: "today", week: "this week" };
+export const PERIODS = { day: "today", week: "this week", month: "this month", hour: "this hour" };
+export const PERIOD_NAMES = { day: "Daily", week: "Weekly", month: "Monthly" };
 
 // Period math runs on the player's clock. Phones use their own time zone;
 // the server dealer passes win.tz (e.g. "America/Chicago").
@@ -58,6 +61,7 @@ export function periodStart(per, now = Date.now(), win = {}) {
   else {
     d.setUTCHours(0, 0, 0, 0);
     if (per === "week") d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // weeks start Monday
+    if (per === "month") d.setUTCDate(1);
   }
   return new Date(d.getTime() - off);
 }
@@ -70,51 +74,105 @@ function periodProgress(per, now, win) {
   const h = t.getUTCHours() + t.getUTCMinutes() / 60;
   const dayFrac = Math.min(1, Math.max(0, (h - start) / Math.max(1, end - start)));
   if (per === "day") return dayFrac;
+  if (per === "month") {
+    const days = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+    return (t.getUTCDate() - 1 + dayFrac) / days;
+  }
   return (((t.getUTCDay() + 6) % 7) + dayFrac) / 7;
 }
 
-export function quotaState(card, now = Date.now(), win = {}) {
+/** Every card has a target. Old cards with only "comes up every N hours" get one worked out from that. */
+export function effectiveQuota(card, win = {}) {
   const q = card.quota;
-  if (!q || !(q.n > 0) || !PERIODS[q.per]) return { open: true, on: false };
-  const since = periodStart(q.per, now, win).getTime();
-  const drawn = (card.drawLog || []).filter((ts) => { const x = Date.parse(ts); return x >= since && x <= now; }).length;
-  const expected = q.n * periodProgress(q.per, now, win);
-  return { on: true, n: q.n, per: q.per, drawn, remaining: Math.max(0, q.n - drawn), expected, open: drawn < q.n };
+  if (q && q.n > 0 && PERIODS[q.per]) return q;
+  const every = card.every || 4;
+  const awake = Math.max(1, (win.endHour ?? 21) - (win.startHour ?? 8));
+  const avg = mean(card.amounts) || 1;
+  if (every <= awake) return { n: Math.max(1, Math.round(awake / every)) * avg, per: "day" };
+  return { n: Math.max(1, Math.round((7 * 24) / every)) * avg, per: "week" };
+}
+const mean = (xs) => { const v = (xs || []).filter((x) => x > 0); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0; };
+
+/** Rough hours between deals, used for how fast a held card "heats up". */
+export function intervalHours(card, win = {}) {
+  const q = effectiveQuota(card, win);
+  const deals = Math.max(1, q.n / (mean(card.amounts) || 1));
+  const awake = Math.max(1, (win.endHour ?? 21) - (win.startHour ?? 8));
+  const hours = { hour: 1, day: awake, week: awake * 7, month: awake * 30 }[q.per] || awake;
+  return Math.max(0.25, hours / deals);
 }
 
-/** How overdue a card is. Quota cards are paced to land exactly N in the period. */
+const logAmount = (e) => (typeof e === "string" ? 1 : e?.n || 1);
+const logTime = (e) => Date.parse(typeof e === "string" ? e : e?.at);
+
+export function quotaState(card, now = Date.now(), win = {}) {
+  const q = effectiveQuota(card, win);
+  const since = periodStart(q.per, now, win).getTime();
+  const dealt = (card.drawLog || []).filter((e) => { const x = logTime(e); return x >= since && x <= now; }).reduce((a, e) => a + logAmount(e), 0);
+  const progress = periodProgress(q.per, now, win);
+  const expected = q.n * progress;
+  const unit = mean(card.amounts) || 1;
+  return { on: true, n: q.n, per: q.per, drawn: dealt, remaining: Math.max(0, q.n - dealt), expected, progress, unit, open: dealt < q.n };
+}
+
+/** How many deals behind its pace a card is (negative = ahead). */
+export function behindBy(k, now = Date.now(), win = {}) {
+  const q = quotaState(k, now, win);
+  return (q.expected - q.drawn) / q.unit;
+}
+export const DUE_AT = 0.5;
+/** Due: half a deal behind pace, or anything still owed in the last stretch of the period. */
+export function isDue(k, now = Date.now(), win = {}) {
+  const q = quotaState(k, now, win);
+  return q.open && ((q.expected - q.drawn) / q.unit >= DUE_AT || q.progress >= 0.9);
+}
+
+/** Weight for picking: cards further behind pace are much more likely. */
 function dueScore(k, now, win) {
   const q = quotaState(k, now, win);
-  if (q.on) {
-    const behind = q.expected - q.drawn; // > 0 means behind pace
-    return Math.max(0.05, Math.min(20, behind >= 0 ? 1 + behind * 3 : Math.exp(behind * 2)));
-  }
-  return Math.max(0.05, hoursSince(k.lastDrawn, now) / (k.every || 4));
+  const b = (q.expected - q.drawn) / q.unit + (q.progress >= 0.9 ? q.remaining / q.unit : 0);
+  return Math.max(0.02, Math.min(20, b >= 0 ? (b + 0.5) ** 2 : Math.exp(b * 3) * 0.25));
 }
 
-/** Fields to save on a card when it's dealt. Keeps about a week of history. */
-export function markDrawn(card, at = new Date().toISOString()) {
-  const cutoff = Date.parse(at) - 8 * 864e5;
-  const log = [...(card.drawLog || []).filter((ts) => Date.parse(ts) >= cutoff), at].slice(-300);
+/** Fields to save on a card when it's dealt. Keeps about five weeks of history (enough for monthly targets). */
+export function markDrawn(card, at = new Date().toISOString(), amount = null) {
+  const cutoff = Date.parse(at) - 35 * 864e5;
+  const log = [...(card.drawLog || []).filter((e) => logTime(e) >= cutoff), { at, n: amount || 1 }].slice(-500);
   return { lastDrawn: at, drawLog: log };
 }
 
 export function quotaLabel(card, now = Date.now(), win = {}) {
   const q = quotaState(card, now, win);
-  return q.on ? `${q.drawn}/${q.n} ${PERIODS[q.per]}` : "";
+  return `${q.drawn}/${q.n} ${PERIODS[q.per]}`;
 }
 
-export function dealFrom(card, now = Date.now(), rand = Math.random) {
+/** Deal a card: pick an amount (if it has amounts) that moves toward its target without overshooting. */
+export function dealFrom(card, now = Date.now(), rand = Math.random, win = {}) {
   const vs = (card.variants || []).filter(Boolean);
+  const amounts = (card.amounts || []).filter((x) => x > 0);
+  let amount = null;
+  if (amounts.length) {
+    const q = quotaState(card, now, win);
+    const fits = q.on ? amounts.filter((x) => x <= q.remaining) : amounts;
+    amount = fits.length ? fits[Math.floor(rand() * fits.length)] : Math.max(1, q.remaining || Math.min(...amounts));
+  }
   return {
     cardId: card.id,
-    label: card.label,
+    base: card.label,
+    label: amountLabel(card.label, amount),
+    amount,
     variant: vs.length ? vs[Math.floor(rand() * vs.length)] : "",
     suit: card.suit || "body",
     imm: card.imm || 3,
-    every: card.every || 4,
+    every: intervalHours(card, win),
     drawnAt: new Date(now).toISOString(),
   };
+}
+
+/** "squats" + 10 → "10 squats"; "Drink # glasses" + 2 → "Drink 2 glasses". */
+export function amountLabel(label, amount) {
+  if (amount == null) return label;
+  return label.includes("#") ? label.replace("#", String(amount)) : `${amount} ${label}`;
 }
 
 export function cardLine(t) {
@@ -180,27 +238,13 @@ export function fmtTime(d) {
   return `${h}:${String(m).padStart(2, "0")} ${ap}`;
 }
 
-/**
- * Plan the next deal times. Base gap = everyMins; chaos widens the jitter
- * (0 = clockwork, 100 = anywhere from 25% to 175% of the gap).
- * Deals only land inside the waking window [startHour, endHour).
- */
-export function planDealTimes({ now = new Date(), everyMins = 120, chaos = 30, startHour = 8, endHour = 21, count = 8, rand = Math.random }) {
+/** Check times for the next stretch: every `stepMins` inside the waking window [startHour, endHour). */
+export function planChecks({ now = new Date(), stepMins = 20, startHour = 8, endHour = 21, hours = 24 }) {
   const out = [];
-  let t = new Date(now);
-  const jitter = (chaos / 100) * 0.75;
-  let guard = 0;
-  while (out.length < count && guard++ < 200) {
-    const gap = everyMins * (1 + (rand() * 2 - 1) * jitter);
-    t = new Date(t.getTime() + Math.max(10, gap) * 6e4);
-    const h = t.getHours() + t.getMinutes() / 60;
-    if (h < startHour) {
-      t.setHours(startHour, Math.floor(rand() * 20), 0, 0);
-    } else if (h >= endHour) {
-      t.setDate(t.getDate() + 1);
-      t.setHours(startHour, Math.floor(rand() * 20), 0, 0);
-    }
-    out.push(new Date(t));
+  const end = now.getTime() + hours * 36e5;
+  for (let t = Math.ceil(now.getTime() / (stepMins * 6e4)) * stepMins * 6e4 + 6e4; t < end; t += stepMins * 6e4) {
+    const d = new Date(t), h = d.getHours() + d.getMinutes() / 60;
+    if (h >= startHour && h < endHour) out.push(d);
   }
   return out;
 }
@@ -230,11 +274,12 @@ export function stackPlays(plays) {
   const by = new Map();
   for (const p of [...plays].sort((a, b) => (a.at || "").localeCompare(b.at || ""))) {
     const key = p.cardId || (p.label || "").toLowerCase();
-    if (!by.has(key)) by.set(key, { key, label: p.label, suit: p.suit || "body", cards: [] });
+    if (!by.has(key)) by.set(key, { key, label: p.base || p.label, suit: p.suit || "body", cards: [], total: 0 });
     const s = by.get(key);
     s.cards.push(p);
-    s.label = p.label;
+    s.label = p.base || p.label;
     s.imm = p.imm;
+    if (p.amount) s.total += p.amount;
   }
   return [...by.values()].sort((a, b) => SUITS.indexOf(a.suit) - SUITS.indexOf(b.suit) || a.label.localeCompare(b.label));
 }
