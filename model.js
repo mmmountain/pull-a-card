@@ -21,7 +21,7 @@ export function ago(ts, now = Date.now()) {
 /** Same weighting as the web page: overdue × immediacy, flattened by chaos. */
 export function pickCard(cards, excludeIds, chaos, now = Date.now(), rand = Math.random, win = {}) {
   const ex = new Set(excludeIds);
-  const pool = cards.filter((c) => c.active !== false && !ex.has(c.id) && quotaState(c, now, win).open);
+  const pool = cards.filter((c) => c.active !== false && !ex.has(c.id) && quotaState(c, now, win).open && !(win.plays && bufferBlock(c, win.plays, win.meId, now)));
   if (!pool.length) return null;
   // Scheduled deals (win.onlyDue) only happen when some card has fallen at least half a deal behind its pace.
   if (win.onlyDue && !pool.some((k) => isDue(k, now, win))) return null;
@@ -315,4 +315,34 @@ export function lockMessage(locks) {
   if (!locks.length) return "";
   const names = locks.map((l) => `${l.count} × ${l.label}`).join(" and ");
   return `Locked: you're holding ${names}. Play ${locks.map((l) => l.label).join(" or ")} first.`;
+}
+
+/* ---------- waits between plays ---------- */
+// card.buffer = { self, suit, any } in minutes. A card can't be played (or dealt) until
+// that long after your last play of: this same card, any card of its suit, or any card at all.
+export const BUFFER_STEPS = [[0, "Off"], [15, "15m"], [30, "30m"], [60, "1h"], [120, "2h"], [180, "3h"], [240, "4h"]];
+const SUIT_WORD = { body: "body", home: "home", mind: "mind", work: "work" };
+export function bufferBlock(card, plays, meId, now = Date.now()) {
+  const b = card?.buffer || {};
+  if (!(b.self > 0 || b.suit > 0 || b.any > 0)) return null;
+  const mine = (plays || []).filter((p) => p.seat === meId && p.at);
+  const lastAt = (pred) => mine.reduce((a, p) => (pred(p) && (!a || p.at > a) ? p.at : a), null);
+  let best = null;
+  for (const [mins, pred, why] of [
+    [b.self, (p) => p.cardId === card.id, `since your last ${card.label}`],
+    [b.suit, (p) => p.suit === card.suit, `since your last ${SUIT[card.suit] || ""} ${SUIT_WORD[card.suit] || ""} card`],
+    [b.any, () => true, "since your last card"],
+  ]) {
+    if (!(mins > 0)) continue;
+    const at = lastAt(pred);
+    if (!at) continue;
+    const until = Date.parse(at) + mins * 6e4;
+    if (until > now && (!best || until > best.until)) best = { until, mins, why };
+  }
+  return best;
+}
+export function bufferMessage(block) {
+  if (!block) return "";
+  const m = block.mins, span = m >= 60 ? `${+(m / 60).toFixed(1)} h` : `${m} min`;
+  return `Ready at ${fmtTime(new Date(block.until))} (${span} ${block.why}).`;
 }

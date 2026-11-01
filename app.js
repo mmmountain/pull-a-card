@@ -1,5 +1,6 @@
 import * as S from "./store.js";
 import { ORIGINAL, randomTheme } from "./theme.js";
+import { bufferBlock, bufferMessage, BUFFER_STEPS } from "./model.js";
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./model.js";
 import { SUIT, SUITS, ago, fmtTime, heat, newId, parseLater } from "./model.js";
 
@@ -70,9 +71,10 @@ const lockBanner = (locks) => (locks.length ? `<div class="lock">🔒 ${esc(lock
 function cardView() {
   const me = profile.me, t = state.tables[me.id], top = t && !t.empty ? t : null;
   const locks = activeLocks(state.cards, state.hands, me.id);
-  const blocked = top && !canPlay(locks, [top.cardId]);
+  const wait = top && bufferBlock(state.cards.find((c) => c.id === top.cardId), state.plays, me.id);
+  const blocked = top && (!canPlay(locks, [top.cardId]) || !!wait);
   return `<section class="stage home">${lockBanner(locks)}${top
-      ? `${bigCard(top, quotaLabel(state.cards.find((c) => c.id === top.cardId) || {}, Date.now(), profile.prefs || {}))}<div class="row actions"><button class="btn primary" data-act="play" ${blocked ? "disabled" : ""}>${blocked ? "Locked" : "Play"}</button><button class="btn" data-act="hold">Hold</button></div><button class="link" data-act="later-top">Remind me later</button>`
+      ? `${bigCard(top, quotaLabel(state.cards.find((c) => c.id === top.cardId) || {}, Date.now(), profile.prefs || {}))}<div class="row actions"><button class="btn primary" data-act="play" ${blocked ? "disabled" : ""}>${wait ? "Wait" : blocked ? "Locked" : "Play"}</button><button class="btn" data-act="hold">Hold</button></div>${wait ? `<p class="note" style="max-width:300px">⏳ ${esc(bufferMessage(wait))}</p>` : ""}<button class="link" data-act="later-top">Remind me later</button>`
       : !drawable(state.cards, state.players, state.hands, state.tables, me.id).length
       ? `<h2 style="text-align:center">Nothing left to pull</h2><p class="note" style="max-width:300px">${state.hands.some((h) => h.seat === me.id) ? "Every card in your deck is in your hand. Play or discard some to put them back in the deck." : "Your deck is empty or switched off. Add a card in the Deck tab."}</p><div class="row actions"><button class="btn primary" data-tab="hand">Open hand</button><button class="btn" data-tab="deck">Add a card</button></div>`
       : `<button class="deck" data-act="draw" aria-label="Tap to pull a card"><span class="back"></span><span class="back"></span><span class="back"></span><span class="pull">Tap to pull a card</span></button>`}
@@ -88,13 +90,16 @@ function handView() {
   const picked = hand.filter((h) => sel.includes(h.id));
   const mine = state.game.active === me.id;
   const locks = activeLocks(state.cards, state.hands, me.id);
-  const blocked = picked.length > 0 && !canPlay(locks, picked.map((h) => h.cardId));
+  const waitOf = (h) => bufferBlock(state.cards.find((c) => c.id === h.cardId), state.plays, me.id);
+  const waiting = picked.map(waitOf).find(Boolean);
+  const blocked = picked.length > 0 && (!canPlay(locks, picked.map((h) => h.cardId)) || !!waiting);
   const dis = blocked ? "disabled" : "";
   return `${lockBanner(locks)}<h3>${hand.length} held · tap to select${picked.length > 1 ? " · " + picked.length + " selected" : ""}</h3>
     <div class="grid">${hand.map((h) => {
       const r = h.remindAt && Date.parse(h.remindAt) > Date.now(), on = sel.includes(h.id);
-      return `<button class="mini ${heat(h)}" aria-pressed="${on}" data-sel="${h.id}"><span class="a"><span style="color:${SUITC[h.suit]}">${SUIT[h.suit]}</span> ${h.imm}${on ? '<span class="ck">✓</span>' : ""}</span><span class="l">${esc(h.label)}</span>${h.variant ? `<span class="a">${esc(h.variant)}</span>` : ""}<span class="a">${r ? "⏰ " + fmtTime(h.remindAt) : "held " + ago(h.heldAt)}</span></button>`;
+      return `<button class="mini ${heat(h)}" aria-pressed="${on}" data-sel="${h.id}"><span class="a"><span style="color:${SUITC[h.suit]}">${SUIT[h.suit]}</span> ${h.imm}${on ? '<span class="ck">✓</span>' : ""}</span><span class="l">${esc(h.label)}</span>${h.variant ? `<span class="a">${esc(h.variant)}</span>` : ""}<span class="a">${waitOf(h) ? "⏳ " + fmtTime(new Date(waitOf(h).until)) : r ? "⏰ " + fmtTime(h.remindAt) : "held " + ago(h.heldAt)}</span></button>`;
     }).join("")}</div>
+    ${waiting ? `<p class="note left">⏳ ${esc(bufferMessage(waiting))}</p>` : ""}
     ${picked.length === 1 ? `<div class="row"><button class="btn primary" data-act="hplay" ${dis}>${blocked ? "Locked" : "Play it"}</button><button class="btn" data-act="later-hand">Remind</button><button class="btn" data-act="hdiscard">Discard</button></div>` : ""}
     ${picked.length > 1 ? `<p class="note left">${picked.map((h) => esc(h.label)).join(" + ")}</p><div class="row"><button class="btn primary" data-act="hcombo" ${dis}>${blocked ? "Locked" : "Play " + picked.length + " together"}</button><button class="btn" data-act="hclear">Clear</button></div>${mine ? "" : `<p class="note left">It's not your turn, but you can still play.</p>`}` : ""}`;
 }
@@ -199,6 +204,9 @@ function editSheet() {
     <p class="note left">${amts.length ? `Deals add up to exactly ${n} ${esc(c.label || "")} ${PERIODS[q.per]}, spread out. Bigger amounts mean fewer deals.` : `Dealt exactly ${n} time${n === 1 ? "" : "s"} ${PERIODS[q.per]}, spread out.`}</p>
     <h3>Suit</h3><div class="chips">${SUITS.map((s) => `<button class="chip" aria-pressed="${c.suit === s}" data-esuit="${s}">${SUIT[s]} ${s}</button>`).join("")}</div>
     <h3>Immediacy</h3><div class="chips">${[1, 2, 3, 4, 5].map((i) => `<button class="chip" aria-pressed="${c.imm === i}" data-eimm="${i}">${i}</button>`).join("")}</div>
+    <h3>Wait between plays</h3>
+    ${[["self", "After this same card"], ["suit", `After any ${SUIT[c.suit]} ${c.suit} card`], ["any", "After any card"]].map(([k, l]) => `<p class="note left" style="color:var(--ink)">${l}</p><div class="chips">${BUFFER_STEPS.map(([m, ml]) => `<button class="chip" aria-pressed="${(c.buffer?.[k] || 0) === m}" data-ebuf="${k}:${m}">${ml}</button>`).join("")}</div>`).join("")}
+    <p class="note left">It can still be held, but it can't be played or dealt until the wait is over.</p>
     <h3>Lock when holding</h3><div class="chips">${[0, 2, 3, 4, 5].map((k) => `<button class="chip" aria-pressed="${(c.lockAt || 0) === k}" data-elock="${k}">${k ? k + " held" : "Never"}</button>`).join("")}</div>
     <p class="note left">While you hold this many, it's the only card you can play.</p>
     <label class="row" style="flex-direction:row"><input type="checkbox" id="eOn" ${c.active !== false ? "checked" : ""}> <span>In the deck</span></label>
@@ -264,6 +272,7 @@ $app.addEventListener("click", async (e) => {
   if (d.esuit) { readEdit(); sheet.card.suit = d.esuit; render(); return; }
   if (d.eper) { readEdit(); sheet.card.quota = { ...sheet.card.quota, per: d.eper }; render(); return; }
   if (d.qstep) { readEdit(); const st = sheet.card.amounts?.length ? Math.min(...sheet.card.amounts) : 1; sheet.card.quota.n = Math.max(1, sheet.card.quota.n + +d.qstep * st); render(); return; }
+  if (d.ebuf) { readEdit(); const [k, m] = d.ebuf.split(":"); sheet.card.buffer = { ...(sheet.card.buffer || {}), [k]: +m || null }; render(); return; }
   if (d.elock !== undefined) { readEdit(); sheet.card.lockAt = +d.elock || null; render(); return; }
   if (d.eimm) { readEdit(); sheet.card.imm = +d.eimm; render(); return; }
   if (d.at) return setLater(new Date(d.at));
