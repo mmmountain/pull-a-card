@@ -280,17 +280,17 @@ function Game({ profile, setProfile }) {
           </View>
           <Text style={st.tableBarCaret}>▾</Text>
         </Pressable>
-        <ModeTriangle mode={section === "play" ? tab : null} onPick={setTab} handN={hereN} handMore={groups.length - hereN} />
       </View>
       {section !== "play" && <View style={st.header}><Text style={st.h2}>{SECTIONS.find((x) => x[0] === section)[1]}</Text></View>}
       {!cardMode && (
-      <ScrollView scrollEnabled={!boardTouch} contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 18 }}>
+      <ScrollView scrollEnabled={!boardTouch} contentContainerStyle={{ padding: 16, paddingBottom: section === "play" ? 48 + WHEEL_H + 24 : 48, gap: 18 }}>
         {section === "play" && tab === "hand" && <HandView ctx={ctx} state={state} room={room} me={me} act={act} focusHand={focusHand} />}
         {section === "play" && tab === "table" && <TableTab ctx={ctx} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
         {section === "decks" && <DeckView state={state} room={room} me={me} act={act} />}
         {section === "me" && <MeView part="me" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} openSwitcher={() => setSwitcher(true)} />}
         {section === "settings" && <MeView part="settings" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
       </ScrollView>)}
+      {section === "play" && <ModeWheel mode={tab} onPick={setTab} handN={hereN} handMore={groups.length - hereN} />}
       {!!msg && (
         <View style={[st.toast, st.row, { alignItems: "center" }]}>
           <Text style={[st.toastTxt, { flex: 1 }]}>{msg}</Text>
@@ -335,7 +335,7 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say }) {
   const locks = activeLocks(fromState.cards, fromState.hands, me.id);
   const wait = top && bufferBlock(card, fromState.plays, me.id);
   const blocked = top && (!canPlay(locks, [top.cardId]) || !!wait);
-  const padTop = 112, padBottom = ins.bottom + 16;
+  const padTop = 64, padBottom = ins.bottom + WHEEL_H + 18;
   const canPull = drawable(state.cards, state.players, state.hands, state.tables, me.id, state.decks).length > 0;
   return (
     <View style={StyleSheet.absoluteFill}>
@@ -553,49 +553,62 @@ function SwipeCard({ t, blockedMsg, onSwipe, say, children }) {
   );
 }
 
-/* ---------------- play-mode triangle ---------------- */
-// Table, Card and Hand sit on a triangle. The one you're in turns to the top; there's no first or last.
+/* ---------------- play-mode wheel ---------------- */
+// Table, Card and Hand ride a huge wheel along the bottom; you only see a sliver of its rim, so the words
+// drift past each other in a wide, slow arc. It loops forever: no first view, no last.
 const MODES = [["table", "Table"], ["card", "Card"], ["hand", "Hand"]];
-const TRI = 92, TRI_R = 30;
-function ModeTriangle({ mode, onPick, handN, handMore }) {
-  const idx = Math.max(0, MODES.findIndex((m) => m[0] === mode));
-  const deg = useRef(-idx * 120);
-  const spin = useRef(new Animated.Value(deg.current)).current;
+const WHEEL_H = 64;
+const mod3 = (n) => ((n % 3) + 3) % 3;
+function ModeWheel({ mode, onPick, handN, handMore }) {
+  const ins = useSafeAreaInsets();
+  const W = Dimensions.get("window").width;
+  const step = W * 0.36;                     // distance between words along the rim
+  const want = Math.max(0, MODES.findIndex((m) => m[0] === mode));
+  const [cur, setCur] = useState(want);      // unbounded, so the wheel always turns the short way
+  const p = useRef(new Animated.Value(want)).current;
   useEffect(() => {
-    let target = -idx * 120;
-    while (target - deg.current > 180) target -= 360;
-    while (target - deg.current < -180) target += 360;
-    deg.current = target;
-    Animated.spring(spin, { toValue: target, useNativeDriver: true, bounciness: 6, speed: 12 }).start();
-  }, [idx]);
-  const rot = spin.interpolate({ inputRange: [-3600, 3600], outputRange: ["-3600deg", "3600deg"] });
-  const counter = spin.interpolate({ inputRange: [-3600, 3600], outputRange: ["3600deg", "-3600deg"] });
+    if (mod3(cur) === want) return;
+    const d = mod3(want - cur);
+    setCur(cur + (d === 2 ? -1 : d));
+  }, [want]);
+  useEffect(() => { Animated.spring(p, { toValue: cur, useNativeDriver: true, bounciness: 4, speed: 10 }).start(); }, [cur]);
+  const go = (n) => { const next = cur + n; setCur(next); onPick(MODES[mod3(next)][0]); };
+  const swipe = useRef(PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy),
+    onPanResponderRelease: (_, g) => { if (Math.abs(g.dx) > 40) live.current(g.dx < 0 ? 1 : -1); },
+  })).current;
+  const live = useRef(go); live.current = go;
+  const slots = [cur - 2, cur - 1, cur, cur + 1, cur + 2];
   return (
-    <View style={{ width: TRI, height: TRI }} accessibilityRole="tablist">
-      <Animated.View style={{ width: TRI, height: TRI, transform: [{ rotate: rot }] }}>
-        <View pointerEvents="none" style={st.triLines}>
-          {[0, 1, 2].map((i) => {
-            const a1 = (-90 + i * 120) * Math.PI / 180, a2 = (-90 + (i + 1) * 120) * Math.PI / 180;
-            const x1 = TRI / 2 + TRI_R * Math.cos(a1), y1 = TRI / 2 + TRI_R * Math.sin(a1), x2 = TRI / 2 + TRI_R * Math.cos(a2), y2 = TRI / 2 + TRI_R * Math.sin(a2);
-            const len = Math.hypot(x2 - x1, y2 - y1), ang = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
-            return <View key={i} style={[st.triEdge, { width: len, left: (x1 + x2) / 2 - len / 2, top: (y1 + y2) / 2 - 1, transform: [{ rotate: ang + "deg" }] }]} />;
-          })}
-        </View>
-        {MODES.map(([k, l], i) => {
-          const a = (-90 + i * 120) * Math.PI / 180, on = mode === k;
-          const size = on ? 40 : 30;
+    <View style={[st.wheel, { paddingBottom: ins.bottom + 6 }]} {...swipe.panHandlers}>
+      <Pressable onPress={() => go(-1)} hitSlop={12} style={st.wheelArrow} accessibilityRole="button" accessibilityLabel={"Previous: " + MODES[mod3(cur - 1)][1]}>
+        <Text style={st.wheelArrowTxt}>‹</Text>
+      </Pressable>
+      <View style={{ flex: 1, height: WHEEL_H }} pointerEvents="box-none">
+        {slots.map((j) => {
+          const [k, l] = MODES[mod3(j)];
+          const r = [j - 2, j - 1, j, j + 1, j + 2];
+          // A big rim: words slide sideways, dip a few pixels and tilt a few degrees as they move off-center.
+          const x = p.interpolate({ inputRange: r, outputRange: [2 * step, step, 0, -step, -2 * step], extrapolate: "clamp" });
+          const y = p.interpolate({ inputRange: r, outputRange: [14, 4, 0, 4, 14], extrapolate: "clamp" });
+          const tilt = p.interpolate({ inputRange: r, outputRange: ["9deg", "4deg", "0deg", "-4deg", "-9deg"], extrapolate: "clamp" });
+          const sc = p.interpolate({ inputRange: r, outputRange: [0.6, 0.78, 1, 0.78, 0.6], extrapolate: "clamp" });
+          const op = p.interpolate({ inputRange: r, outputRange: [0, 0.45, 1, 0.45, 0], extrapolate: "clamp" });
+          const on = j === cur;
           return (
-            <Animated.View key={k} style={{ position: "absolute", left: TRI / 2 + TRI_R * Math.cos(a) - size / 2, top: TRI / 2 + TRI_R * Math.sin(a) - size / 2, transform: [{ rotate: counter }] }}>
-              <Pressable onPress={() => onPick(k)} hitSlop={6} accessibilityRole="tab" accessibilityLabel={l} accessibilityState={{ selected: on }}
-                style={[st.triNode, { width: size, height: size, borderRadius: size / 2 }, on && st.triNodeOn]}>
-                <Text style={[st.triTxt, on && st.triTxtOn]}>{k === "table" ? "◇" : k === "card" ? "▮" : String(handN)}</Text>
+            <Animated.View key={j} style={[st.wheelSlot, { opacity: op, transform: [{ translateX: x }, { translateY: y }, { rotate: tilt }, { scale: sc }] }]}>
+              <Pressable onPress={() => j !== cur && go(j - cur)} hitSlop={8} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={l}>
+                <Text style={[st.wheelTxt, on && st.wheelTxtOn]}>
+                  {l}{k === "hand" ? <Text style={st.wheelCount}> {handN}{handMore > 0 ? "+" + handMore : ""}</Text> : null}
+                </Text>
               </Pressable>
-              {k === "hand" && handMore > 0 && <View pointerEvents="none" style={st.triBadge}><Text style={st.triBadgeTxt}>+{handMore}</Text></View>}
             </Animated.View>
           );
         })}
-      </Animated.View>
-      <Text pointerEvents="none" style={st.triLabel}>{mode ? MODES[idx][1].toUpperCase() : ""}</Text>
+      </View>
+      <Pressable onPress={() => go(1)} hitSlop={12} style={st.wheelArrow} accessibilityRole="button" accessibilityLabel={"Next: " + MODES[mod3(cur + 1)][1]}>
+        <Text style={st.wheelArrowTxt}>›</Text>
+      </Pressable>
     </View>
   );
 }
@@ -1443,15 +1456,13 @@ function makeStyles() { return StyleSheet.create({
   fullBack: { position: "absolute", left: 6, right: 6, bottom: 6, borderRadius: 24, backgroundColor: C.paper, padding: 8, elevation: 6 },
   fullBackInner: { flex: 1, borderRadius: 18, backgroundColor: C.accent, alignItems: "center", justifyContent: "center" },
   miniBeef: { fontSize: 18, fontWeight: "800", color: C.ink },
-  triLines: { position: "absolute", left: 0, top: 0, width: TRI, height: TRI },
-  triEdge: { position: "absolute", height: 2, backgroundColor: C.line },
-  triNode: { backgroundColor: C.bg2, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: C.line },
-  triNodeOn: { backgroundColor: C.accent, borderColor: C.ink },
-  triTxt: { fontSize: 14, fontWeight: "800", color: C.muted },
-  triTxtOn: { fontSize: 17, color: C.ink },
-  triBadge: { position: "absolute", right: -8, bottom: -4, backgroundColor: C.ink, borderRadius: 8, paddingHorizontal: 4 },
-  triBadgeTxt: { fontSize: 10, fontWeight: "800", color: C.bg },
-  triLabel: { position: "absolute", bottom: -12, left: 0, right: 0, textAlign: "center", fontSize: 10, fontWeight: "800", letterSpacing: 1.2, color: C.ink },
+  wheel: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", alignItems: "center", paddingHorizontal: 8, paddingTop: 4 },
+  wheelArrow: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 22, backgroundColor: C.bg2 },
+  wheelArrowTxt: { fontSize: 28, fontWeight: "800", color: C.ink, marginTop: -3 },
+  wheelSlot: { position: "absolute", left: 0, right: 0, top: 10, alignItems: "center" },
+  wheelTxt: { fontSize: 22, fontWeight: "700", color: C.muted, letterSpacing: 0.5 },
+  wheelTxtOn: { fontSize: 26, fontWeight: "800", color: C.ink },
+  wheelCount: { fontSize: 15, fontWeight: "800", color: C.accent },
   swipeHint: { fontSize: 12, color: C.muted, textAlign: "center" },
   toast: { position: "absolute", left: 16, right: 16, bottom: 24, backgroundColor: C.ink, borderRadius: 12, padding: 12 },
   toastTxt: { color: C.bg, textAlign: "center", fontWeight: "600" },
