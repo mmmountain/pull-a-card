@@ -2,7 +2,7 @@ import "react-native-url-polyfill/auto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config";
-import { SEED_CARDS, bufferBlock, bufferMessage, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
+import { SEED_CARDS, nudgedTempo, holdReminder, bufferBlock, bufferMessage, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -237,4 +237,31 @@ export async function ensureDeck(room, me) {
     await upsert(room, "cards", me.id + "-" + id, { ...data, owner: me.id });
   }
   return true;
+}
+
+/** Act on a swipe of the top card. Returns { handId, remindAt } for holds so the app can set a reminder. */
+export async function swipeTop(room, me, t, it) {
+  const card = await getDoc(room, "cards", t.cardId);
+  const saveCard = async (patch) => { if (card) await upsert(room, "cards", t.cardId, { ...card, ...patch }); };
+  // Undo the deal in the card's count, so "not now" doesn't eat into today's target.
+  const unDeal = () => {
+    const log = [...(card?.drawLog || [])];
+    const i = log.map((e) => (typeof e === "string" ? e : e.at)).lastIndexOf(t.drawnAt);
+    if (i >= 0) log.splice(i, 1);
+    return { drawLog: log };
+  };
+  if (it.kind === "play") {
+    await playCard(room, me, t);
+    if (it.tilt) { const fresh = await getDoc(room, "cards", t.cardId); if (fresh) await upsert(room, "cards", t.cardId, { ...fresh, tempo: nudgedTempo(fresh.tempo, it) }); }
+    return {};
+  }
+  if (it.kind === "hold") {
+    const remindAt = holdReminder(it);
+    const handId = await holdCard(room, me, t, remindAt);
+    return { handId, remindAt };
+  }
+  await upsert(room, "tables", me.id, { empty: true });
+  if (it.kind === "soon") await saveCard({ ...unDeal(), dueAt: new Date(Date.now() + 30 * 6e4).toISOString() });
+  if (it.kind === "later") await saveCard({ ...unDeal(), tempo: nudgedTempo(card?.tempo, it), dueAt: null });
+  return {};
 }

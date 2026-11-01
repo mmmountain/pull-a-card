@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator, Alert, AppState, KeyboardAvoidingView, Modal, Platform, Pressable,
   ScrollView, StyleSheet, Switch, Text, TextInput, View,
+  Animated, PanResponder, Vibration,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
@@ -11,7 +12,7 @@ import * as S from "./src/store";
 import * as N from "./src/notify";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, randomTheme } from "./src/theme";
-import { bufferBlock, bufferMessage, BUFFER_STEPS } from "./src/model";
+import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel } from "./src/model";
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 
@@ -204,7 +205,7 @@ function Game({ profile, setProfile }) {
         </View>
         <Text style={st.handCount}>HAND <Text style={st.handN}>{myHand.length}</Text></Text>
       </View>
-      {tab === "card" ? <CardView state={state} room={room} me={me} act={act} goTo={setTab} prefs={prefs} /> : (
+      {tab === "card" ? <CardView state={state} room={room} me={me} act={act} goTo={setTab} prefs={prefs} say={say} /> : (
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 18 }}>
         {tab === "hand" && <HandView state={state} room={room} me={me} act={act} focusHand={focusHand} />}
         {tab === "table" && <TableView state={state} me={me} />}
@@ -218,7 +219,7 @@ function Game({ profile, setProfile }) {
 
 /* ---------------- card (home) ---------------- */
 // Just the card in front of you. Tap to pull one, then play it or hold it.
-function CardView({ state, room, me, act, goTo, prefs }) {
+function CardView({ state, room, me, act, goTo, prefs, say }) {
   const t = state.tables[me.id];
   const top = t && !t.empty ? t : null;
   const [later, setLater] = useState(false);
@@ -237,7 +238,12 @@ function CardView({ state, room, me, act, goTo, prefs }) {
       {!!locks.length && <LockBanner locks={locks} />}
       {top ? (
         <>
-          <BigCard t={top} quota={quotaLabel(state.cards.find((c) => c.id === top.cardId) || {}, Date.now(), prefs)} />
+          <SwipeCard key={top.drawnAt} t={top} say={say} quota={quotaLabel(state.cards.find((c) => c.id === top.cardId) || {}, Date.now(), prefs)}
+            blockedMsg={wait ? "Not yet. " + bufferMessage(wait) : blocked ? lockMessage(locks) : ""}
+            onSwipe={(it) => act(async () => {
+              const r = await S.swipeTop(room, me, top, it);
+              if (r.handId && r.remindAt) await N.scheduleReminder(room, r.handId, top, r.remindAt);
+            }, swipeLabel(it) + ": " + top.label)} />
           <View style={[st.row, { width: 280, maxWidth: "80%" }]}>
             <Btn primary flex label={wait ? "Wait" : blocked ? "Locked" : "Play"} disabled={blocked} onPress={() => act(() => S.playCard(room, me, top), "Played: " + top.label)} />
             <Btn flex label="Hold" onPress={() => act(() => S.holdCard(room, me, top), "Held: " + top.label)} />
@@ -348,6 +354,51 @@ function Stack({ s, fresh }) {
         <Text style={st.pcLabel} numberOfLines={3}>{s.total ? amountLabel(s.label, s.total) : s.label}</Text>
         <Text style={st.pcMeta}>{ago(top.at)}</Text>
       </View>
+    </View>
+  );
+}
+
+/* The top card, swipeable: up play · down hold · lean right "sooner/more" · lean left "later/less". */
+function SwipeCard({ t, quota, blockedMsg, onSwipe, say }) {
+  const pos = useRef(new Animated.ValueXY()).current;
+  const [intent, setIntent] = useState(null);
+  const live = useRef({});
+  live.current = { blockedMsg, onSwipe, say };
+  const lastKind = useRef(null);
+  const pr = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) + Math.abs(g.dy) > 6,
+    onPanResponderMove: (_, g) => {
+      pos.setValue({ x: g.dx, y: g.dy });
+      const it = swipeIntent(g.dx, g.dy);
+      const key = it ? it.kind + Math.sign(it.tilt) + (Math.abs(it.tilt) > 0.55 ? "!" : "") : null;
+      if (key !== lastKind.current) { lastKind.current = key; if (it) Vibration.vibrate(8); }
+      setIntent(it);
+    },
+    onPanResponderRelease: (_, g) => {
+      const it = swipeIntent(g.dx, g.dy);
+      lastKind.current = null;
+      const back = () => { Animated.spring(pos, { toValue: { x: 0, y: 0 }, friction: 6, useNativeDriver: false }).start(); setIntent(null); };
+      if (!it) return back();
+      if (it.kind === "play" && live.current.blockedMsg) { back(); return live.current.say(live.current.blockedMsg); }
+      const d = Math.hypot(g.dx, g.dy) || 1;
+      Animated.timing(pos, { toValue: { x: (g.dx / d) * 700, y: (g.dy / d) * 900 }, duration: 230, useNativeDriver: false }).start(() => live.current.onSwipe(it));
+    },
+    onPanResponderTerminate: () => { Animated.spring(pos, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start(); setIntent(null); },
+  }), []);
+  const rotate = pos.x.interpolate({ inputRange: [-240, 0, 240], outputRange: ["-16deg", "0deg", "16deg"] });
+  const tone = !intent ? null : intent.kind === "play" ? C.accent : intent.kind === "hold" ? C.suit.home : intent.kind === "soon" ? C.warm : C.muted;
+  return (
+    <View style={{ alignItems: "center", gap: 10 }}>
+      <Animated.View {...pr.panHandlers} style={{ transform: [{ translateX: pos.x }, { translateY: pos.y }, { rotate }] }}>
+        <BigCard t={t} quota={quota} />
+        {!!intent && (
+          <View pointerEvents="none" style={[st.swipeTag, { borderColor: tone }]}>
+            <Text style={[st.swipeTagTxt, { color: C.ink }]}>{swipeLabel(intent)}</Text>
+          </View>
+        )}
+      </Animated.View>
+      <Text style={st.swipeHint}>↑ play · ↓ hold · ← too soon · → not now · lean to adjust</Text>
     </View>
   );
 }
@@ -483,7 +534,7 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
   const [amts, setAmts] = useState("");
   const [arm, setArm] = useState(false);
   useEffect(() => {
-    setC(card && { ...card, quota: effectiveQuota(card) });
+    setC(card && { ...card, quota: card.quota || effectiveQuota({ ...card, tempo: 1 }) });
     setAmts((card?.amounts || []).join(", "));
     setArm(false);
   }, [card]);
@@ -513,6 +564,12 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
           <TextInput value={String(c.quota.n)} onChangeText={(v) => setC({ ...c, quota: { ...c.quota, n: v.replace(/[^0-9]/g, "") } })} keyboardType="number-pad" style={[st.input, { flex: 1, textAlign: "center", fontSize: 22, fontWeight: "800" }]} />
           <Btn label="+" onPress={() => bump(step)} />
         </View>
+        {!!c.tempo && c.tempo !== 1 && (
+          <View style={[st.row, { justifyContent: "space-between" }]}>
+            <Text style={[st.note, { textAlign: "left", color: C.ink, flex: 1 }]}>Your swipes adjusted this to {Math.max(1, Math.round(n * c.tempo))} {PERIODS[c.quota.per]} ({c.tempo > 1 ? "+" : ""}{Math.round((c.tempo - 1) * 100)}%).</Text>
+            <Btn label="Reset" onPress={() => setC({ ...c, tempo: 1 })} />
+          </View>
+        )}
         <Text style={[st.note, { textAlign: "left" }]}>{amounts.length ? `Deals add up to exactly ${n} ${c.label || ""} ${PERIODS[c.quota.per]}, spread out. Bigger amounts mean fewer deals.` : `Dealt exactly ${n} time${n === 1 ? "" : "s"} ${PERIODS[c.quota.per]}, spread out.`}</Text>
         <Text style={st.label}>SUIT</Text>
         <View style={st.chips}>{SUITS.map((s) => <Chip key={s} label={SUIT[s] + " " + s} on={c.suit === s} onPress={() => setC({ ...c, suit: s })} />)}</View>
@@ -696,6 +753,9 @@ function makeStyles() { return StyleSheet.create({
   stackN: { fontSize: 11, fontWeight: "800", color: C.ink },
   lock: { alignSelf: "stretch", backgroundColor: C.paper, borderRadius: 12, borderWidth: 2, borderColor: C.hot, padding: 12 },
   lockTxt: { color: C.ink, fontWeight: "600", fontSize: 14 },
+  swipeTag: { position: "absolute", top: 18, alignSelf: "center", backgroundColor: C.paper, borderWidth: 3, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6, elevation: 8 },
+  swipeTagTxt: { fontSize: 16, fontWeight: "800" },
+  swipeHint: { fontSize: 12, color: C.muted, textAlign: "center" },
   toast: { position: "absolute", left: 16, right: 16, bottom: 24, backgroundColor: C.ink, borderRadius: 12, padding: 12 },
   toastTxt: { color: C.bg, textAlign: "center", fontWeight: "600" },
 }); }

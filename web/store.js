@@ -1,6 +1,6 @@
 // Same document store the Android app uses: one Supabase table, docs(room, coll, id, data).
 import { createClient } from "./supabase.js";
-import { SEED_CARDS, bufferBlock, bufferMessage, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model.js";
+import { SEED_CARDS, nudgedTempo, holdReminder, bufferBlock, bufferMessage, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model.js";
 
 export const SUPABASE_URL = "https://znhbphohxomvldyvewyj.supabase.co";
 export const SUPABASE_KEY = "sb_publishable_B9UMRmmdVo9HSRwVuUEEhw_hEOyGToB";
@@ -120,9 +120,11 @@ async function clearTable(room, me) { await upsert(room, "tables", me.id, { empt
 export async function playCard(room, me, t) { await guardLock(room, me, [t.cardId]); await logPlay(room, me, t); await clearTable(room, me); await advance(room, me); }
 export async function holdCard(room, me, t, remindAt = null) {
   const { empty, id, ...card } = t;
-  await upsert(room, "hands", newId(), { ...card, seat: me.id, heldAt: new Date().toISOString(), remindAt: remindAt ? remindAt.toISOString() : null });
+  const handId = newId();
+  await upsert(room, "hands", handId, { ...card, seat: me.id, heldAt: new Date().toISOString(), remindAt: remindAt ? remindAt.toISOString() : null });
   await clearTable(room, me);
   await advance(room, me);
+  return handId;
 }
 export async function playFromHand(room, me, handId) {
   const h = await getDoc(room, "hands", handId);
@@ -193,4 +195,31 @@ export async function ensureDeck(room, me) {
     await upsert(room, "cards", me.id + "-" + id, { ...data, owner: me.id });
   }
   return true;
+}
+
+/** Act on a swipe of the top card. Returns { handId, remindAt } for holds so the app can set a reminder. */
+export async function swipeTop(room, me, t, it) {
+  const card = await getDoc(room, "cards", t.cardId);
+  const saveCard = async (patch) => { if (card) await upsert(room, "cards", t.cardId, { ...card, ...patch }); };
+  // Undo the deal in the card's count, so "not now" doesn't eat into today's target.
+  const unDeal = () => {
+    const log = [...(card?.drawLog || [])];
+    const i = log.map((e) => (typeof e === "string" ? e : e.at)).lastIndexOf(t.drawnAt);
+    if (i >= 0) log.splice(i, 1);
+    return { drawLog: log };
+  };
+  if (it.kind === "play") {
+    await playCard(room, me, t);
+    if (it.tilt) { const fresh = await getDoc(room, "cards", t.cardId); if (fresh) await upsert(room, "cards", t.cardId, { ...fresh, tempo: nudgedTempo(fresh.tempo, it) }); }
+    return {};
+  }
+  if (it.kind === "hold") {
+    const remindAt = holdReminder(it);
+    const handId = await holdCard(room, me, t, remindAt);
+    return { handId, remindAt };
+  }
+  await upsert(room, "tables", me.id, { empty: true });
+  if (it.kind === "soon") await saveCard({ ...unDeal(), dueAt: new Date(Date.now() + 30 * 6e4).toISOString() });
+  if (it.kind === "later") await saveCard({ ...unDeal(), tempo: nudgedTempo(card?.tempo, it), dueAt: null });
+  return {};
 }
