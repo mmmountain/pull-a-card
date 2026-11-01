@@ -5,7 +5,7 @@ import {
   Animated, PanResponder, Vibration,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Notifications from "expo-notifications";
 import * as Updates from "expo-updates";
 import * as S from "./src/store";
@@ -259,10 +259,12 @@ function Game({ profile, setProfile }) {
   const groups = M.handGroups(ctx);
   const hereN = groups.filter((g) => g.here).length;
 
+  const cardMode = section === "play" && tab === "card";
   return (
     <SafeAreaView style={st.screen} edges={["top", "left", "right"]}>
       <StatusBar style="dark" />
-      <View style={st.topRow}>
+      {cardMode && <CardView ctx={ctx} state={state} room={room} me={me} act={act} goTo={(t) => (t === "deck" ? setSection("decks") : setTab(t))} prefs={prefs} say={say} />}
+      <View style={st.topRow} pointerEvents="box-none">
         <Pressable onPress={() => setDrawer(true)} style={st.menuBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Open menu">
           <View style={st.menuLine} /><View style={st.menuLine} /><View style={st.menuLine} />
         </Pressable>
@@ -272,27 +274,16 @@ function Game({ profile, setProfile }) {
           </Pressable>
         )}
         <Pressable onPress={() => setSwitcher(true)} style={st.tableBar} accessibilityRole="button" accessibilityLabel={"Table " + room + ". Switch tables"}>
-          <Text style={st.tableBarLbl}>TABLE</Text>
-          <Text style={st.tableBarName} numberOfLines={1}>{room}</Text>
-          {rooms.length > 1 && <Text style={st.tableBarLbl}>{rooms.indexOf(room) + 1} of {rooms.length}</Text>}
+          <View style={{ flex: 1 }}>
+            <Text style={st.tableBarLbl}>TABLE{rooms.length > 1 ? " · " + (rooms.indexOf(room) + 1) + " OF " + rooms.length : ""}</Text>
+            <Text style={st.tableBarName} numberOfLines={1}>{room}</Text>
+          </View>
           <Text style={st.tableBarCaret}>▾</Text>
         </Pressable>
+        <ModeTriangle mode={section === "play" ? tab : null} onPick={setTab} handN={hereN} handMore={groups.length - hereN} />
       </View>
-      {section === "play" ? (
-        <View style={st.header}>
-          <View style={st.tabs}>
-            {[["table", "Table"], ["card", "Card"], ["hand", "Hand"]].map(([k, l]) => (
-              <Pressable key={k} onPress={() => setTab(k)} style={[st.tab, tab === k && st.tabOn]} accessibilityRole="tab" accessibilityState={{ selected: tab === k }}>
-                <Text style={[st.tabTxt, tab === k && st.tabTxtOn]}>{l}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <Text style={st.handCount}>HAND <Text style={st.handN}>{hereN}</Text>{groups.length > hereN ? <Text style={st.handCount}> +{groups.length - hereN}</Text> : null}</Text>
-        </View>
-      ) : (
-        <View style={st.header}><Text style={st.h2}>{SECTIONS.find((x) => x[0] === section)[1]}</Text></View>
-      )}
-      {section === "play" && tab === "card" ? <CardView ctx={ctx} state={state} room={room} me={me} act={act} goTo={(t) => (t === "deck" ? setSection("decks") : setTab(t))} prefs={prefs} say={say} /> : (
+      {section !== "play" && <View style={st.header}><Text style={st.h2}>{SECTIONS.find((x) => x[0] === section)[1]}</Text></View>}
+      {!cardMode && (
       <ScrollView scrollEnabled={!boardTouch} contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 18 }}>
         {section === "play" && tab === "hand" && <HandView ctx={ctx} state={state} room={room} me={me} act={act} focusHand={focusHand} />}
         {section === "play" && tab === "table" && <TableTab ctx={ctx} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
@@ -317,13 +308,22 @@ function Game({ profile, setProfile }) {
 
 /* ---------------- card (home) ---------------- */
 // Just the card in front of you. Tap to pull one, then play it or hold it.
+// The card is the whole screen. Everything else sits on top of it.
 function CardView({ ctx, state, room, me, act, goTo, prefs, say }) {
-  // One top card across all your tables. It may have come from another table and not count here.
+  const ins = useSafeAreaInsets();
   const found = M.findTop(ctx);
   const top = found?.t || null, from = found?.room || room;
   const fromState = ctx.states[from] || state;
   const counts = top ? M.topTables(ctx, from, top) : [];
   const countsHere = counts.includes(room);
+  const card = top && fromState.cards.find((c) => c.id === top.cardId);
+  const beef = top ? (top.beef ?? card?.beef ?? null) : null;
+  // Where it lands: each table it counts at, and the maps there with an open spot for it.
+  const where = counts.map((r) => {
+    const s1 = ctx.states[r], tr = s1?.tables[me.id];
+    const maps = tr ? [...new Set(fitsSpots((s1.maps || []).filter((m) => m.owner === me.id && m.active !== false), tr).map((f) => f.map.name))] : [];
+    return { room: r, maps };
+  });
   const [later, setLater] = useState(false);
   const setReminder = async (at) => {
     setLater(false);
@@ -333,47 +333,66 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say }) {
     }, "Held. Reminder at " + fmtTime(at));
   };
   const locks = activeLocks(fromState.cards, fromState.hands, me.id);
-  const wait = top && bufferBlock(fromState.cards.find((c) => c.id === top.cardId), fromState.plays, me.id);
+  const wait = top && bufferBlock(card, fromState.plays, me.id);
   const blocked = top && (!canPlay(locks, [top.cardId]) || !!wait);
+  const padTop = 112, padBottom = ins.bottom + 16;
+  const canPull = drawable(state.cards, state.players, state.hands, state.tables, me.id, state.decks).length > 0;
   return (
-    <View style={st.home}>
-      {!!locks.length && <LockBanner locks={locks} />}
+    <View style={StyleSheet.absoluteFill}>
       {top ? (
         <>
-          <SwipeCard key={top.drawnAt} t={top} say={say} quota={quotaLabel(fromState.cards.find((c) => c.id === top.cardId) || {}, Date.now(), prefs)}
-            blockedMsg={wait ? "Not yet. " + bufferMessage(wait) : blocked ? lockMessage(locks) : ""}
+          <SwipeCard key={top.drawnAt} t={top} say={say} blockedMsg={wait ? "Not yet. " + bufferMessage(wait) : blocked ? lockMessage(locks) : ""}
             onSwipe={(it) => act(async () => {
               const r = await M.swipeAll(ctx, from, top, it);
               if (r?.handId && r.remindAt) await N.scheduleReminder(from, r.handId, top, r.remindAt);
-            }, swipeLabel(it) + ": " + top.label)} />
-          {ctx.rooms.length > 1 && (
-            <View style={[st.countsAt, !countsHere && st.countsAtOff]}>
-              <Text style={st.countsAtTxt}>{countsHere ? "Counts at " + counts.join(" · ") : "Pulled at " + from + " · doesn't count here"}</Text>
+            }, swipeLabel(it) + ": " + top.label)}>
+            <View style={[st.fullCardBody, { paddingTop: ins.top + padTop, paddingBottom: padBottom + 150 }]}>
+              <View style={st.fullCorner}>
+                <Text style={[st.fullSuit, { color: C.suit[top.suit] }]}>{SUIT[top.suit]}</Text>
+                {!!beef && <Text style={st.fullBeef}>{beef}</Text>}
+              </View>
+              <View style={{ flex: 1, justifyContent: "center", alignItems: "center", gap: 12 }}>
+                <Text style={st.fullTitle}>{top.label}</Text>
+                {!!top.variant && <Text style={st.fullVar}>{top.variant}</Text>}
+                {!!card && !!quotaLabel(card, Date.now(), prefs) && <Text style={[st.fullVar, { fontSize: 14 }]}>{quotaLabel(card, Date.now(), prefs)}</Text>}
+                {!!locks.length && <Text style={[st.fullVar, { color: C.hot }]}>🔒 {lockMessage(locks)}</Text>}
+                {!!wait && <Text style={[st.fullVar, { color: C.hot }]}>⏳ {bufferMessage(wait)}</Text>}
+              </View>
+              <View style={{ gap: 6, alignItems: "center" }}>
+                <Text style={st.label}>{countsHere || ctx.rooms.length === 1 ? "GOES TO" : "PULLED AT " + from.toUpperCase() + " · DOESN'T COUNT HERE"}</Text>
+                <View style={[st.chips, { justifyContent: "center" }]}>
+                  {where.map((w) => (
+                    <View key={w.room} style={[st.whereChip, w.room === room && st.whereChipHere]}>
+                      <Text style={st.whereTable}>{w.room}</Text>
+                      {w.maps.map((m) => <Text key={m} style={st.whereMap}>◇ {m}</Text>)}
+                    </View>
+                  ))}
+                </View>
+              </View>
             </View>
-          )}
-          <View style={[st.row, { width: 280, maxWidth: "80%" }]}>
-            <Btn primary flex label={wait ? "Wait" : blocked ? "Locked" : "Play"} disabled={blocked} onPress={() => act(() => M.playTop(ctx, from, top), "Played: " + top.label)} />
-            <Btn flex label="Hold" onPress={() => act(() => M.holdTop(ctx, from, top), "Held: " + top.label)} />
+          </SwipeCard>
+          <View pointerEvents="box-none" style={[st.cardControls, { paddingBottom: padBottom }]}>
+            <View style={[st.row, { width: "100%" }]}>
+              <Btn primary flex label={wait ? "Wait" : blocked ? "Locked" : "Play"} disabled={blocked} onPress={() => act(() => M.playTop(ctx, from, top), "Played: " + top.label)} />
+              <Btn flex label="Hold" onPress={() => act(() => M.holdTop(ctx, from, top), "Held: " + top.label)} />
+            </View>
+            <Pressable onPress={() => setLater(true)} hitSlop={10}><Text style={st.link}>Remind me later</Text></Pressable>
+            <Text style={st.swipeHint}>↑ play · ↓ hold · ← too soon · → not now</Text>
           </View>
-          {!!wait && <Text style={[st.note, { maxWidth: 300 }]}>⏳ {bufferMessage(wait)}</Text>}
-          <Pressable onPress={() => setLater(true)} hitSlop={10}><Text style={st.link}>Remind me later</Text></Pressable>
         </>
-      ) : !drawable(state.cards, state.players, state.hands, state.tables, me.id, state.decks).length ? (
-        <View style={{ alignItems: "center", gap: 12, maxWidth: 300 }}>
+      ) : canPull ? (
+        <Pressable onPress={() => act(() => M.drawAll(ctx, prefs))} style={[st.fullBack, { top: ins.top + 6 }]} accessibilityRole="button" accessibilityLabel="Tap to pull a card">
+          <View style={st.fullBackInner}><View style={st.drawBtn}><Text style={st.drawTxt}>Tap to pull a card</Text></View></View>
+        </Pressable>
+      ) : (
+        <View style={[st.home, { paddingTop: ins.top + padTop }]}>
           <Text style={[st.h2, { textAlign: "center" }]}>Nothing left to pull</Text>
-          <Text style={st.note}>{state.hands.some((h) => h.seat === me.id) ? "Every card in your deck is in your hand. Play or discard some to put them back in the deck." : "Your deck at this table is empty or switched off. Add a card in the Deck tab."}</Text>
-          <View style={st.row}>
+          <Text style={[st.note, { maxWidth: 300 }]}>{state.hands.some((h) => h.seat === me.id) ? "Every card in your deck is in your hand. Play or discard some to put them back in the deck." : "Your deck at this table is empty or switched off. Add a card in My decks."}</Text>
+          <View style={[st.row, { width: 300, maxWidth: "90%" }]}>
             <Btn flex primary label="Open hand" onPress={() => goTo("hand")} />
             <Btn flex label="Add a card" onPress={() => goTo("deck")} />
           </View>
         </View>
-      ) : (
-        <Pressable onPress={() => act(() => M.drawAll(ctx, prefs))} style={st.deckStack} accessibilityRole="button" accessibilityLabel="Tap to pull a card">
-          <View style={[st.back, { transform: [{ rotate: "-4deg" }], opacity: 0.6 }]} />
-          <View style={[st.back, { transform: [{ rotate: "3deg" }], opacity: 0.8 }]} />
-          <View style={st.back} />
-          <View style={st.drawBtn}><Text style={st.drawTxt}>Tap to pull a card</Text></View>
-        </Pressable>
       )}
       <LaterSheet open={later} label={top?.label} onClose={() => setLater(false)} onPick={setReminder} />
     </View>
@@ -407,6 +426,7 @@ function HandView({ ctx, state, room, me, act, focusHand }) {
     await act(async () => { await S.setRemind(p.room, p.h.id, at); await N.scheduleReminder(p.room, p.h.id, p.h, at); }, "Reminder at " + fmtTime(at));
   };
   if (!groups.length) return <View style={{ paddingTop: 60, gap: 8 }}><Text style={st.h2}>Empty hand.</Text><Text style={[st.note, { textAlign: "left" }]}>Cards you hold show up here.</Text></View>;
+  const cardOf = (g) => ctx.states[g.places[0].room]?.cards.find((c) => c.id === g.places[0].h.cardId);
   const tile = (g) => {
     const h = g.h, hot = heat(h), on = sel.includes(g.key), w = waitOf(g);
     const remind = h.remindAt && Date.parse(h.remindAt) > Date.now();
@@ -416,7 +436,7 @@ function HandView({ ctx, state, room, me, act, focusHand }) {
         accessibilityLabel={h.label + (g.here ? "" : ", held at " + elsewhere.join(" and "))}
         style={[st.mini, g.here ? st.miniGrid : st.miniAway, hot === "warm" && { borderColor: C.warm }, hot === "hot" && { borderColor: C.hot }, on && st.miniSel]}>
         <View style={[st.row, { justifyContent: "space-between" }]}>
-          <Text style={[st.miniMeta, { color: C.suit[h.suit] }]}>{SUIT[h.suit]} <Text style={st.miniMeta}>{h.imm}</Text></Text>
+          <Text style={[st.miniMeta, { color: C.suit[h.suit], fontSize: 15 }]}>{SUIT[h.suit]}{(h.beef ?? cardOf(g)?.beef) ? <Text style={st.miniBeef}> {h.beef ?? cardOf(g)?.beef}</Text> : null}</Text>
           {on && <View style={st.check}><Text style={st.checkTxt}>✓</Text></View>}
         </View>
         <Text style={g.here ? st.miniLabel : st.miniLabelAway} numberOfLines={g.here ? 3 : 2}>{h.label}</Text>
@@ -491,14 +511,15 @@ function Stack({ s, fresh }) {
 }
 
 /* The top card, swipeable: up play · down hold · lean right "sooner/more" · lean left "later/less". */
-function SwipeCard({ t, quota, blockedMsg, onSwipe, say }) {
+function SwipeCard({ t, blockedMsg, onSwipe, say, children }) {
+  const ins = useSafeAreaInsets();
   const pos = useRef(new Animated.ValueXY()).current;
   const [intent, setIntent] = useState(null);
   const live = useRef({});
   live.current = { blockedMsg, onSwipe, say };
   const lastKind = useRef(null);
   const pr = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) + Math.abs(g.dy) > 6,
     onPanResponderMove: (_, g) => {
       pos.setValue({ x: g.dx, y: g.dy });
@@ -514,36 +535,67 @@ function SwipeCard({ t, quota, blockedMsg, onSwipe, say }) {
       if (!it) return back();
       if (it.kind === "play" && live.current.blockedMsg) { back(); return live.current.say(live.current.blockedMsg); }
       const d = Math.hypot(g.dx, g.dy) || 1;
-      Animated.timing(pos, { toValue: { x: (g.dx / d) * 700, y: (g.dy / d) * 900 }, duration: 230, useNativeDriver: false }).start(() => live.current.onSwipe(it));
+      Animated.timing(pos, { toValue: { x: (g.dx / d) * 900, y: (g.dy / d) * 1200 }, duration: 230, useNativeDriver: false }).start(() => live.current.onSwipe(it));
     },
     onPanResponderTerminate: () => { Animated.spring(pos, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start(); setIntent(null); },
   }), []);
-  const rotate = pos.x.interpolate({ inputRange: [-240, 0, 240], outputRange: ["-16deg", "0deg", "16deg"] });
+  const rotate = pos.x.interpolate({ inputRange: [-300, 0, 300], outputRange: ["-8deg", "0deg", "8deg"] });
   const tone = !intent ? null : intent.kind === "play" ? C.accent : intent.kind === "hold" ? C.suit.home : intent.kind === "soon" ? C.warm : C.muted;
   return (
-    <View style={{ alignItems: "center", gap: 10 }}>
-      <Animated.View {...pr.panHandlers} style={{ transform: [{ translateX: pos.x }, { translateY: pos.y }, { rotate }] }}>
-        <BigCard t={t} quota={quota} />
-        {!!intent && (
-          <View pointerEvents="none" style={[st.swipeTag, { borderColor: tone }]}>
-            <Text style={[st.swipeTagTxt, { color: C.ink }]}>{swipeLabel(intent)}</Text>
-          </View>
-        )}
-      </Animated.View>
-      <Text style={st.swipeHint}>↑ play · ↓ hold · ← too soon · → not now · lean to adjust</Text>
-    </View>
+    <Animated.View {...pr.panHandlers} style={[st.fullCard, { transform: [{ translateX: pos.x }, { translateY: pos.y }, { rotate }] }]}>
+      {children}
+      {!!intent && (
+        <View pointerEvents="none" style={[st.swipeTag, { top: ins.top + 100, borderColor: tone }]}>
+          <Text style={[st.swipeTagTxt, { color: C.ink }]}>{swipeLabel(intent)}</Text>
+        </View>
+      )}
+    </Animated.View>
   );
 }
 
-function BigCard({ t, quota }) {
+/* ---------------- play-mode triangle ---------------- */
+// Table, Card and Hand sit on a triangle. The one you're in turns to the top; there's no first or last.
+const MODES = [["table", "Table"], ["card", "Card"], ["hand", "Hand"]];
+const TRI = 92, TRI_R = 30;
+function ModeTriangle({ mode, onPick, handN, handMore }) {
+  const idx = Math.max(0, MODES.findIndex((m) => m[0] === mode));
+  const deg = useRef(-idx * 120);
+  const spin = useRef(new Animated.Value(deg.current)).current;
+  useEffect(() => {
+    let target = -idx * 120;
+    while (target - deg.current > 180) target -= 360;
+    while (target - deg.current < -180) target += 360;
+    deg.current = target;
+    Animated.spring(spin, { toValue: target, useNativeDriver: true, bounciness: 6, speed: 12 }).start();
+  }, [idx]);
+  const rot = spin.interpolate({ inputRange: [-3600, 3600], outputRange: ["-3600deg", "3600deg"] });
+  const counter = spin.interpolate({ inputRange: [-3600, 3600], outputRange: ["3600deg", "-3600deg"] });
   return (
-    <View style={st.card}>
-      <View style={[st.idx, { top: 12, left: 12 }]}><Text style={st.idxR}>{t.imm}</Text><Text style={[st.idxS, { color: C.suit[t.suit] }]}>{SUIT[t.suit]}</Text></View>
-      <Text style={st.cardTitle}>{t.label}</Text>
-      {!!t.variant && <Text style={st.cardVar}>{t.variant}</Text>}
-      {!!quota && <Text style={[st.cardVar, { fontSize: 13 }]}>{quota}</Text>}
-      <View style={st.pips}>{[1, 2, 3, 4, 5].map((i) => <View key={i} style={[st.pip, i <= t.imm && { backgroundColor: C.hot }]} />)}</View>
-      <View style={[st.idx, { bottom: 12, right: 12, transform: [{ rotate: "180deg" }] }]}><Text style={st.idxR}>{t.imm}</Text><Text style={[st.idxS, { color: C.suit[t.suit] }]}>{SUIT[t.suit]}</Text></View>
+    <View style={{ width: TRI, height: TRI }} accessibilityRole="tablist">
+      <Animated.View style={{ width: TRI, height: TRI, transform: [{ rotate: rot }] }}>
+        <View pointerEvents="none" style={st.triLines}>
+          {[0, 1, 2].map((i) => {
+            const a1 = (-90 + i * 120) * Math.PI / 180, a2 = (-90 + (i + 1) * 120) * Math.PI / 180;
+            const x1 = TRI / 2 + TRI_R * Math.cos(a1), y1 = TRI / 2 + TRI_R * Math.sin(a1), x2 = TRI / 2 + TRI_R * Math.cos(a2), y2 = TRI / 2 + TRI_R * Math.sin(a2);
+            const len = Math.hypot(x2 - x1, y2 - y1), ang = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+            return <View key={i} style={[st.triEdge, { width: len, left: (x1 + x2) / 2 - len / 2, top: (y1 + y2) / 2 - 1, transform: [{ rotate: ang + "deg" }] }]} />;
+          })}
+        </View>
+        {MODES.map(([k, l], i) => {
+          const a = (-90 + i * 120) * Math.PI / 180, on = mode === k;
+          const size = on ? 40 : 30;
+          return (
+            <Animated.View key={k} style={{ position: "absolute", left: TRI / 2 + TRI_R * Math.cos(a) - size / 2, top: TRI / 2 + TRI_R * Math.sin(a) - size / 2, transform: [{ rotate: counter }] }}>
+              <Pressable onPress={() => onPick(k)} hitSlop={6} accessibilityRole="tab" accessibilityLabel={l} accessibilityState={{ selected: on }}
+                style={[st.triNode, { width: size, height: size, borderRadius: size / 2 }, on && st.triNodeOn]}>
+                <Text style={[st.triTxt, on && st.triTxtOn]}>{k === "table" ? "◇" : k === "card" ? "▮" : String(handN)}</Text>
+              </Pressable>
+              {k === "hand" && handMore > 0 && <View pointerEvents="none" style={st.triBadge}><Text style={st.triBadgeTxt}>+{handMore}</Text></View>}
+            </Animated.View>
+          );
+        })}
+      </Animated.View>
+      <Text pointerEvents="none" style={st.triLabel}>{mode ? MODES[idx][1].toUpperCase() : ""}</Text>
     </View>
   );
 }
@@ -933,7 +985,7 @@ function DeckView({ state, room, me, act }) {
           <Pressable key={c.id} onPress={() => setEdit(c)} style={[st.deckRow, c.active === false && { opacity: 0.5 }]}>
             <Text style={{ color: C.suit[c.suit], fontSize: 18, width: 22 }}>{SUIT[c.suit]}</Text>
             <Text style={[st.h3, { flex: 1 }]} numberOfLines={1}>{c.label}</Text>
-            <Text style={st.miniMeta}>{quotaLabel(c)} · {"●".repeat(c.imm || 3)}</Text>
+            <Text style={st.miniMeta}>{quotaLabel(c)}{c.beef ? " · " + c.beef : ""}</Text>
           </Pressable>
         ))}
         <Btn primary label="New card" onPress={() => setEdit({ label: "", suit: "body", imm: 3, active: true, plays: 0, quota: { n: 1, per: "day" }, deck: deck.id })} />
@@ -1015,6 +1067,9 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
         <Text style={[st.note, { textAlign: "left" }]}>{amounts.length ? `Deals add up to exactly ${n} ${c.label || ""} ${PERIODS[c.quota.per]}, spread out. Bigger amounts mean fewer deals.` : `Dealt exactly ${n} time${n === 1 ? "" : "s"} ${PERIODS[c.quota.per]}, spread out.`}</Text>
         <Text style={st.label}>SUIT</Text>
         <View style={st.chips}>{SUITS.map((s) => <Chip key={s} label={SUIT[s] + " " + s} on={c.suit === s} onPress={() => setC({ ...c, suit: s })} />)}</View>
+        <Text style={st.label}>BEEFINESS</Text>
+        <View style={st.chips}>{[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <Chip key={i} label={i ? String(i) : "None"} on={(c.beef || 0) === i} onPress={() => setC({ ...c, beef: i || null })} />)}</View>
+        <Text style={[st.note, { textAlign: "left" }]}>How big a lift it is, 1–7. Shows as the big number on the card; leave it at None for no number.</Text>
         <Text style={st.label}>IMMEDIACY</Text>
         <View style={st.chips}>{[1, 2, 3, 4, 5].map((i) => <Chip key={i} label={String(i)} on={c.imm === i} onPress={() => setC({ ...c, imm: i })} />)}</View>
         <Text style={[st.note, { textAlign: "left" }]}>4 and 5 ring louder and show over the lock screen.</Text>
@@ -1340,7 +1395,7 @@ function makeStyles() { return StyleSheet.create({
   miniLabelAway: { fontSize: 12, fontWeight: "700", color: C.ink },
   awayTag: { alignSelf: "flex-start", maxWidth: "100%", backgroundColor: C.bg2, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 },
   awayTagTxt: { fontSize: 10, fontWeight: "700", color: C.muted },
-  topRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 10, paddingRight: 16, marginTop: 6 },
+  topRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 10, paddingRight: 8, paddingTop: 4, paddingBottom: 10 },
   menuBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center", gap: 4 },
   menuLine: { width: 20, height: 2.5, borderRadius: 2, backgroundColor: C.ink },
   edgeZone: { position: "absolute", left: 0, top: 0, bottom: 0, width: 22 },
@@ -1373,6 +1428,30 @@ function makeStyles() { return StyleSheet.create({
   lockTxt: { color: C.ink, fontWeight: "600", fontSize: 14 },
   swipeTag: { position: "absolute", top: 18, alignSelf: "center", backgroundColor: C.paper, borderWidth: 3, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6, elevation: 8 },
   swipeTagTxt: { fontSize: 16, fontWeight: "800" },
+  fullCard: { position: "absolute", left: 6, right: 6, top: 6, bottom: 6, backgroundColor: C.paper, borderRadius: 24, elevation: 6, overflow: "hidden" },
+  fullCardBody: { flex: 1, paddingHorizontal: 22 },
+  fullCorner: { flexDirection: "row", alignItems: "baseline", gap: 10 },
+  fullSuit: { fontSize: 34 },
+  fullBeef: { fontSize: 64, fontWeight: "800", color: C.ink, lineHeight: 70 },
+  fullTitle: { fontSize: 44, fontWeight: "800", color: C.ink, textAlign: "center" },
+  fullVar: { fontSize: 18, color: C.muted, textAlign: "center", maxWidth: 320 },
+  whereChip: { backgroundColor: C.bg2, borderRadius: 12, paddingVertical: 6, paddingHorizontal: 10, alignItems: "center" },
+  whereChipHere: { borderWidth: 2, borderColor: C.accent },
+  whereTable: { fontSize: 13, fontWeight: "800", color: C.ink },
+  whereMap: { fontSize: 12, color: C.muted },
+  cardControls: { position: "absolute", left: 22, right: 22, bottom: 6, alignItems: "center", gap: 10 },
+  fullBack: { position: "absolute", left: 6, right: 6, bottom: 6, borderRadius: 24, backgroundColor: C.paper, padding: 8, elevation: 6 },
+  fullBackInner: { flex: 1, borderRadius: 18, backgroundColor: C.accent, alignItems: "center", justifyContent: "center" },
+  miniBeef: { fontSize: 18, fontWeight: "800", color: C.ink },
+  triLines: { position: "absolute", left: 0, top: 0, width: TRI, height: TRI },
+  triEdge: { position: "absolute", height: 2, backgroundColor: C.line },
+  triNode: { backgroundColor: C.bg2, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: C.line },
+  triNodeOn: { backgroundColor: C.accent, borderColor: C.ink },
+  triTxt: { fontSize: 14, fontWeight: "800", color: C.muted },
+  triTxtOn: { fontSize: 17, color: C.ink },
+  triBadge: { position: "absolute", right: -8, bottom: -4, backgroundColor: C.ink, borderRadius: 8, paddingHorizontal: 4 },
+  triBadgeTxt: { fontSize: 10, fontWeight: "800", color: C.bg },
+  triLabel: { position: "absolute", bottom: -12, left: 0, right: 0, textAlign: "center", fontSize: 10, fontWeight: "800", letterSpacing: 1.2, color: C.ink },
   swipeHint: { fontSize: 12, color: C.muted, textAlign: "center" },
   toast: { position: "absolute", left: 16, right: 16, bottom: 24, backgroundColor: C.ink, borderRadius: 12, padding: 12 },
   toastTxt: { color: C.bg, textAlign: "center", fontWeight: "600" },
