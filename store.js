@@ -1,6 +1,6 @@
 // Same document store the Android app uses: one Supabase table, docs(room, coll, id, data).
 import { createClient } from "./supabase.js";
-import { SEED_CARDS, activeLocks, canPlay, dealFrom, lockMessage, myChaos, myDeck, newId, nextTurn, pickCard } from "./model.js";
+import { SEED_CARDS, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model.js";
 
 export const SUPABASE_URL = "https://znhbphohxomvldyvewyj.supabase.co";
 export const SUPABASE_KEY = "sb_publishable_B9UMRmmdVo9HSRwVuUEEhw_hEOyGToB";
@@ -83,16 +83,16 @@ async function advance(room, me) {
   await upsert(room, "game", "main", nextTurn(players, g, me.id));
 }
 
-export async function draw(room, me) {
+export async function draw(room, me, win = {}) {
   const [cards, hands, tables, players] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), listColl(room, "players")]);
   const up = tables.find((t) => t.id === me.id);
   const busy = up && !up.empty ? [up.cardId] : [];
-  const k = pickCard(myDeck(cards, players, me.id), busy, myChaos(players, me.id));
+  const k = pickCard(myDeck(cards, players, me.id), busy, myChaos(players, me.id), Date.now(), Math.random, win);
   if (!k) return null;
   const t = dealFrom(k);
   await upsert(room, "tables", me.id, t);
   const { id, ...cd } = k;
-  await upsert(room, "cards", id, { ...cd, lastDrawn: t.drawnAt });
+  await upsert(room, "cards", id, { ...cd, ...markDrawn(cd, t.drawnAt) });
   return t;
 }
 

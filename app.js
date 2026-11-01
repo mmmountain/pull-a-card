@@ -1,6 +1,6 @@
 import * as S from "./store.js";
 import { ORIGINAL, randomTheme } from "./theme.js";
-import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage } from "./model.js";
+import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS } from "./model.js";
 import { SUIT, SUITS, ago, fmtTime, heat, newId, parseLater } from "./model.js";
 
 const $app = document.getElementById("app");
@@ -60,9 +60,9 @@ function header() {
     <div class="handcount">HAND<b>${n}</b></div></header>`;
 }
 
-function bigCard(t) {
+function bigCard(t, quota = "") {
   const s = `<span style="color:${SUITC[t.suit]}">${SUIT[t.suit] || "●"}</span>`;
-  return `<div class="card"><div class="idx tl"><span class="r">${t.imm}</span>${s}</div><h2>${esc(t.label)}</h2>${t.variant ? `<div class="var">${esc(t.variant)}</div>` : ""}${pips(t.imm)}<div class="idx br"><span class="r">${t.imm}</span>${s}</div></div>`;
+  return `<div class="card"><div class="idx tl"><span class="r">${t.imm}</span>${s}</div><h2>${esc(t.label)}</h2>${t.variant ? `<div class="var">${esc(t.variant)}</div>` : ""}${quota ? `<div class="var" style="font-size:13px">${esc(quota)}</div>` : ""}${pips(t.imm)}<div class="idx br"><span class="r">${t.imm}</span>${s}</div></div>`;
 }
 
 // Home: just the card in front of you.
@@ -72,7 +72,7 @@ function cardView() {
   const locks = activeLocks(state.cards, state.hands, me.id);
   const blocked = top && !canPlay(locks, [top.cardId]);
   return `<section class="stage home">${lockBanner(locks)}${top
-      ? `${bigCard(top)}<div class="row actions"><button class="btn primary" data-act="play" ${blocked ? "disabled" : ""}>${blocked ? "Locked" : "Play"}</button><button class="btn" data-act="hold">Hold</button></div><button class="link" data-act="later-top">Remind me later</button>`
+      ? `${bigCard(top, quotaLabel(state.cards.find((c) => c.id === top.cardId) || {}, Date.now(), profile.prefs || {}))}<div class="row actions"><button class="btn primary" data-act="play" ${blocked ? "disabled" : ""}>${blocked ? "Locked" : "Play"}</button><button class="btn" data-act="hold">Hold</button></div><button class="link" data-act="later-top">Remind me later</button>`
       : !drawable(state.cards, state.players, state.hands, state.tables, me.id).length
       ? `<h2 style="text-align:center">Nothing left to pull</h2><p class="note" style="max-width:300px">${state.hands.some((h) => h.seat === me.id) ? "Every card in your deck is in your hand. Play or discard some to put them back in the deck." : "Your deck is empty or switched off. Add a card in the Deck tab."}</p><div class="row actions"><button class="btn primary" data-tab="hand">Open hand</button><button class="btn" data-tab="deck">Add a card</button></div>`
       : `<button class="deck" data-act="draw" aria-label="Tap to pull a card"><span class="back"></span><span class="back"></span><span class="back"></span><span class="pull">Tap to pull a card</span></button>`}
@@ -141,7 +141,7 @@ function deckView() {
       <div class="chips">${[0, 15, 30, 50, 75, 100].map((v) => `<button class="chip" aria-pressed="${chaos === v}" data-chaos="${v}">${v === 0 ? "Steady" : v === 100 ? "Wild" : v + "%"}</button>`).join("")}</div>
       <p class="note left">Steady deals whatever is most overdue on a regular clock. Wild picks any card at uneven times.</p></div>
     <section style="display:flex;flex-direction:column;gap:8px"><h3>Your deck · only you see it</h3>
-      ${cards.map((c) => `<button class="deckrow${c.active === false ? " off" : ""}" data-edit="${c.id}"><span style="color:${SUITC[c.suit]};width:20px">${SUIT[c.suit]}</span><span class="n">${esc(c.label)}</span><span class="f">every ${c.every}h · ${"●".repeat(c.imm || 3)}</span></button>`).join("")}
+      ${cards.map((c) => `<button class="deckrow${c.active === false ? " off" : ""}" data-edit="${c.id}"><span style="color:${SUITC[c.suit]};width:20px">${SUIT[c.suit]}</span><span class="n">${esc(c.label)}</span><span class="f">${esc(quotaLabel(c) || "every " + c.every + "h")} · ${"●".repeat(c.imm || 3)}</span></button>`).join("")}
       <button class="btn primary" data-act="newcard">New card</button></section>`;
 }
 
@@ -194,6 +194,9 @@ function editSheet() {
     <h3>Suit</h3><div class="chips">${SUITS.map((s) => `<button class="chip" aria-pressed="${c.suit === s}" data-esuit="${s}">${SUIT[s]} ${s}</button>`).join("")}</div>
     <label><span class="lbl">Comes up every (hours)</span><input type="number" id="eEvery" min="0.25" step="0.25" value="${c.every}"></label>
     <h3>Immediacy</h3><div class="chips">${[1, 2, 3, 4, 5].map((i) => `<button class="chip" aria-pressed="${c.imm === i}" data-eimm="${i}">${i}</button>`).join("")}</div>
+    <h3>How many</h3><div class="chips">${[["", "No limit"], ["hour", "Per hour"], ["day", "Per day"], ["week", "Per week"]].map(([per, l]) => `<button class="chip" aria-pressed="${(c.quota?.per || "") === per}" data-eper="${per}">${l}</button>`).join("")}</div>
+    ${c.quota ? `<label><span class="lbl">Exactly this many ${PERIODS[c.quota.per]}</span><input type="number" id="eQn" min="1" step="1" value="${esc(c.quota.n ?? "")}"></label>` : ""}
+    <p class="note left">${c.quota ? "Dealt exactly this many times, spread through the period. Pulls stop once you hit it. \"Comes up every\" is ignored." : "No limit: it comes up as often as \"Comes up every\" says."}</p>
     <h3>Lock when holding</h3><div class="chips">${[0, 2, 3, 4, 5].map((n) => `<button class="chip" aria-pressed="${(c.lockAt || 0) === n}" data-elock="${n}">${n ? n + " held" : "Never"}</button>`).join("")}</div>
     <p class="note left">While you hold this many, it's the only card you can play.</p>
     <label class="row" style="flex-direction:row"><input type="checkbox" id="eOn" ${c.active !== false ? "checked" : ""}> <span>In the deck</span></label>
@@ -257,6 +260,7 @@ $app.addEventListener("click", async (e) => {
   if (d.chaos) return act(() => S.setChaos(room, me, +d.chaos));
   if (d.edit) { sheet = { type: "edit", card: { ...state.cards.find((c) => c.id === d.edit) } }; render(); return; }
   if (d.esuit) { readEdit(); sheet.card.suit = d.esuit; render(); return; }
+  if (d.eper !== undefined) { readEdit(); sheet.card.quota = d.eper ? { n: sheet.card.quota?.n || 1, per: d.eper } : null; render(); return; }
   if (d.elock !== undefined) { readEdit(); sheet.card.lockAt = +d.elock || null; render(); return; }
   if (d.eimm) { readEdit(); sheet.card.imm = +d.eimm; render(); return; }
   if (d.at) return setLater(new Date(d.at));
@@ -281,7 +285,7 @@ $app.addEventListener("click", async (e) => {
       } catch (err) { toast("Couldn't reach the table: " + err.message); b.disabled = false; b.textContent = "Sit down"; }
       return;
     }
-    case "draw": return act(() => S.draw(room, me));
+    case "draw": return act(() => S.draw(room, me, profile.prefs || {}));
     case "play": return act(() => S.playCard(room, me, top), "Played: " + top.label);
     case "hold": return act(() => S.holdCard(room, me, top), "Held: " + top.label);
     case "later-top": sheet = { type: "later", kind: "top" }; return render();
@@ -329,6 +333,8 @@ function readEdit() {
   c.variants = document.getElementById("eVars").value.split("\n").map((s) => s.trim()).filter(Boolean);
   c.every = document.getElementById("eEvery").value;
   c.active = document.getElementById("eOn").checked;
+  const qn = document.getElementById("eQn");
+  if (qn && c.quota) c.quota = { ...c.quota, n: +qn.value || 1 };
 }
 
 function start() {
