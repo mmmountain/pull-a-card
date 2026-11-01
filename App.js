@@ -1081,7 +1081,7 @@ const DRAWER_W = Math.min(300, Dimensions.get("window").width * 0.8);
 function Drawer({ open, setOpen, section, name, room, onPick }) {
   const x = useRef(new Animated.Value(-DRAWER_W)).current;
   const [shown, setShown] = useState(false);
-  const go = (to, after) => Animated.spring(x, { toValue: to, useNativeDriver: true, bounciness: 0, speed: 18 }).start(after);
+  const go = (to, after) => Animated.spring(x, { toValue: to, useNativeDriver: true, bounciness: 0, speed: 18 }).start(({ finished }) => finished && after?.());
   useEffect(() => {
     if (open) { setShown(true); go(0); }
     else go(-DRAWER_W, () => setShown(false));
@@ -1101,28 +1101,28 @@ function Drawer({ open, setOpen, section, name, room, onPick }) {
     onPanResponderTerminate: (_, g) => settle(g.dx, g.vx, 0),
   })).current;
   const scrim = x.interpolate({ inputRange: [-DRAWER_W, 0], outputRange: [0, 1] });
+  // The panel stays mounted (just slid offscreen) so the native slide animation always has a view to move.
   return (
     <>
-      {!shown && <View style={st.edgeGrab} {...edge.panHandlers} />}
-      {shown && (
-        <View style={StyleSheet.absoluteFill}>
-          <Animated.View style={[StyleSheet.absoluteFill, st.drawerScrim, { opacity: scrim }]}>
-            <Pressable style={{ flex: 1 }} onPress={() => setOpen(false)} accessibilityLabel="Close menu" />
-          </Animated.View>
-          <Animated.View style={[st.drawer, { width: DRAWER_W, transform: [{ translateX: x }] }]} {...panel.panHandlers}>
-            <SafeAreaView edges={["top", "bottom", "left"]} style={{ flex: 1, gap: 6 }}>
-              <Text style={st.drawerBrand}>Prompt</Text>
-              <Text style={[st.note, { textAlign: "left", marginBottom: 12 }]} numberOfLines={1}>{name} · {room}</Text>
-              {SECTIONS.map(([k, l, icon]) => (
-                <Pressable key={k} onPress={() => onPick(k)} style={[st.drawerItem, section === k && st.drawerItemOn]} accessibilityRole="menuitem" accessibilityState={{ selected: section === k }}>
-                  <Text style={st.drawerIcon}>{icon}</Text>
-                  <Text style={[st.drawerTxt, section === k && { fontWeight: "800" }]}>{l}</Text>
-                </Pressable>
-              ))}
-            </SafeAreaView>
-          </Animated.View>
-        </View>
-      )}
+      <View pointerEvents="box-none" style={st.edgeZone}>
+        <View style={st.edgeGrab} {...edge.panHandlers} />
+        <View pointerEvents="none" style={st.edgeHandle}><View style={st.edgeTab} /></View>
+      </View>
+      <Animated.View pointerEvents={shown ? "auto" : "none"} style={[StyleSheet.absoluteFill, st.drawerScrim, { opacity: scrim }]}>
+        <Pressable style={{ flex: 1 }} onPress={() => setOpen(false)} accessibilityLabel="Close menu" />
+      </Animated.View>
+      <Animated.View pointerEvents={shown ? "auto" : "none"} style={[st.drawer, { width: DRAWER_W, transform: [{ translateX: x }] }]} {...panel.panHandlers}>
+        <SafeAreaView edges={["top", "bottom", "left"]} style={{ flex: 1, gap: 6 }}>
+          <Text style={st.drawerBrand}>Prompt</Text>
+          <Text style={[st.note, { textAlign: "left", marginBottom: 12 }]} numberOfLines={1}>{name} · {room}</Text>
+          {SECTIONS.map(([k, l, icon]) => (
+            <Pressable key={k} onPress={() => onPick(k)} style={[st.drawerItem, section === k && st.drawerItemOn]} accessibilityRole="menuitem" accessibilityState={{ selected: section === k }}>
+              <Text style={st.drawerIcon}>{icon}</Text>
+              <Text style={[st.drawerTxt, section === k && { fontWeight: "800" }]}>{l}</Text>
+            </Pressable>
+          ))}
+        </SafeAreaView>
+      </Animated.View>
     </>
   );
 }
@@ -1309,7 +1309,11 @@ function makeStyles() { return StyleSheet.create({
   topRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 10, paddingRight: 16, marginTop: 6 },
   menuBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center", gap: 4 },
   menuLine: { width: 20, height: 2.5, borderRadius: 2, backgroundColor: C.ink },
+  edgeZone: { position: "absolute", left: 0, top: 0, bottom: 0, width: 22 },
   edgeGrab: { position: "absolute", left: 0, top: 0, bottom: 0, width: 18 },
+  // A thin bar down the top half of the left edge, with a small tab, so you know the menu pulls out from there.
+  edgeHandle: { position: "absolute", left: 0, top: "12%", height: "40%", width: 3, borderTopRightRadius: 3, borderBottomRightRadius: 3, backgroundColor: C.accent, opacity: 0.85, justifyContent: "center" },
+  edgeTab: { width: 8, height: 44, borderTopRightRadius: 6, borderBottomRightRadius: 6, backgroundColor: C.accent },
   drawerScrim: { backgroundColor: "rgba(58,22,48,0.35)" },
   drawer: { position: "absolute", left: 0, top: 0, bottom: 0, backgroundColor: C.bg, paddingHorizontal: 16, paddingTop: 12, elevation: 16, borderTopRightRadius: 20, borderBottomRightRadius: 20 },
   drawerBrand: { fontSize: 30, fontWeight: "800", color: C.ink, marginTop: 8 },
