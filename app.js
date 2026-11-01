@@ -3,6 +3,7 @@ import { ORIGINAL, randomTheme } from "./theme.js";
 import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./model.js";
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./model.js";
 import { SUIT, SUITS, ago, fmtTime, heat, newId, parseLater } from "./model.js";
+import { DECK_LIBRARY, deckOf, everydayId, myDecks } from "./model.js";
 
 const $app = document.getElementById("app");
 
@@ -76,7 +77,7 @@ function cardView() {
   return `<section class="stage home">${lockBanner(locks)}${top
       ? `<div class="swipe" data-blocked="${blocked ? esc(wait ? "Not yet. " + bufferMessage(wait) : lockMessage(locks)) : ""}">${bigCard(top, quotaLabel(state.cards.find((c) => c.id === top.cardId) || {}, Date.now(), profile.prefs || {}))}<span class="swipetag" hidden></span></div>
         <p class="note">↑ play · ↓ hold · ← too soon · → not now · lean to adjust</p><div class="row actions"><button class="btn primary" data-act="play" ${blocked ? "disabled" : ""}>${wait ? "Wait" : blocked ? "Locked" : "Play"}</button><button class="btn" data-act="hold">Hold</button></div>${wait ? `<p class="note" style="max-width:300px">⏳ ${esc(bufferMessage(wait))}</p>` : ""}<button class="link" data-act="later-top">Remind me later</button>`
-      : !drawable(state.cards, state.players, state.hands, state.tables, me.id).length
+      : !drawable(state.cards, state.players, state.hands, state.tables, me.id, state.decks).length
       ? `<h2 style="text-align:center">Nothing left to pull</h2><p class="note" style="max-width:300px">${state.hands.some((h) => h.seat === me.id) ? "Every card in your deck is in your hand. Play or discard some to put them back in the deck." : "Your deck is empty or switched off. Add a card in the Deck tab."}</p><div class="row actions"><button class="btn primary" data-tab="hand">Open hand</button><button class="btn" data-tab="deck">Add a card</button></div>`
       : `<button class="deck" data-act="draw" aria-label="Tap to pull a card"><span class="back"></span><span class="back"></span><span class="back"></span><span class="pull">Tap to pull a card</span></button>`}
     </section>`;
@@ -131,7 +132,7 @@ function tableView() {
       <div class="cubes"><span class="lbl">Cubes · ${plays.length}</span><div class="g">${plays.slice(-24).map((x) => `<span class="cube" style="background:${SUITC[x.suit]}"></span>`).join("")}</div></div></div></div>`;
   };
   const others = players.filter((p) => p.id !== me.id);
-  const drawN = Math.max(0, myDeck(state.cards, state.players, me.id).filter((c) => c.active !== false).length - state.hands.filter((h) => h.seat === me.id).length);
+  const drawN = Math.max(0, myDeck(state.cards, state.players, me.id, state.decks).filter((c) => c.active !== false).length - state.hands.filter((h) => h.seat === me.id).length);
   return `<div class="board">${others.length ? others.map(side).join("") : side(null)}
     <div class="mid"><div class="pile"><span class="s b"></span>DRAW ${drawN}</div>
       <div class="turn">TURN<b>${state.game.turn}</b>${active ? (active.id === me.id ? "YOU PLAY" : esc(active.name.toUpperCase()) + " TO PLAY") : ""}</div>
@@ -139,14 +140,25 @@ function tableView() {
     ${side(players.find((p) => p.id === me.id))}</div>`;
 }
 
+let deckSel = null, deckArm = false;
+function curDeck() {
+  const me = profile.me, decks = myDecks(state.decks, me.id);
+  return decks.find((d) => d.id === deckSel) || decks[0];
+}
 function deckView() {
-  const me = profile.me;
-  const cards = myDeck(state.cards, state.players, me.id).sort((a, b) => a.label.localeCompare(b.label));
+  const me = profile.me, decks = myDecks(state.decks, me.id), deck = curDeck();
+  const all = myDeck(state.cards, state.players, me.id);
+  const count = (d) => all.filter((c) => deckOf(c, me.id) === d.id).length;
+  const cards = all.filter((c) => deckOf(c, me.id) === deck.id).sort((a, b) => a.label.localeCompare(b.label));
   const chaos = myChaos(state.players, me.id, state.config.chaos);
   return `<div class="panel"><h3>Your randomness · ${chaos}%</h3>
       <div class="chips">${[0, 15, 30, 50, 75, 100].map((v) => `<button class="chip" aria-pressed="${chaos === v}" data-chaos="${v}">${v === 0 ? "Steady" : v === 100 ? "Wild" : v + "%"}</button>`).join("")}</div>
       <p class="note left">Steady deals whatever is most overdue on a regular clock. Wild picks any card at uneven times.</p></div>
-    <section style="display:flex;flex-direction:column;gap:8px"><h3>Your deck · only you see it</h3>
+    <section style="display:flex;flex-direction:column;gap:8px"><h3>Your decks · only you see them</h3>
+      <div class="chips">${decks.map((d) => `<button class="chip" aria-pressed="${d.id === deck.id}" data-deck="${esc(d.id)}">${d.active ? "" : "○ "}${esc(d.name)} · ${count(d)}</button>`).join("")}<button class="chip" data-act="decklib">+ Add deck</button></div>
+      <div class="panel"><div class="row" style="justify-content:space-between"><div><b>${esc(deck.name)}</b><p class="note left">${deck.active ? "Cards are dealt from this deck." : "Paused. Nothing is dealt from this deck."}</p></div>
+        <button class="btn auto" data-act="decktoggle">${deck.active ? "Pause" : "Deal from it"}</button></div>
+        ${deck.id !== everydayId(me.id) ? `<button class="btn" data-act="deckdel">${deckArm ? "Tap again to delete " + esc(deck.name) + " and its cards" : "Delete deck"}</button>` : ""}</div>
       ${cards.map((c) => `<button class="deckrow${c.active === false ? " off" : ""}" data-edit="${c.id}"><span style="color:${SUITC[c.suit]};width:20px">${SUIT[c.suit]}</span><span class="n">${esc(c.label)}</span><span class="f">${esc(quotaLabel(c, Date.now(), profile.prefs || {}))} · ${"●".repeat(c.imm || 3)}</span></button>`).join("")}
       <button class="btn primary" data-act="newcard">New card</button></section>`;
 }
@@ -178,6 +190,14 @@ function meView() {
       <p class="note left">${esc(theme.name || ORIGINAL.name)}</p>
       <div class="row"><button class="btn primary" data-act="shuffle">Shuffle colors</button><button class="btn" data-act="original">Original</button></div></div>
     <button class="btn" data-act="leave">Leave this table</button>`;
+}
+
+function libSheet() {
+  const decks = myDecks(state.decks, profile.me.id);
+  return `<div class="scrim" data-act="close"></div><div class="sheet" role="dialog" aria-label="Add a deck"><h2>Add a deck</h2>
+    ${DECK_LIBRARY.map((t) => { const have = decks.some((d) => d.key === t.key); return `<div class="panel"><b>${esc(t.name)} · ${t.cards.length} cards</b><p class="note left">${esc(t.about)}</p>
+      <button class="btn${have ? "" : " primary"}" ${have ? "disabled" : `data-libadd="${t.key}"`}>${have ? "Added" : "Add " + esc(t.name)}</button></div>`; }).join("")}
+    <div class="panel"><b>Empty deck</b><div class="row"><input type="text" id="deckName" placeholder="Reading month"><button class="btn primary auto" data-act="decknew">Make it</button></div></div></div>`;
 }
 
 function laterSheet() {
@@ -225,7 +245,7 @@ function render() {
   if (!state) { $app.innerHTML = header() + `<p class="note">Loading the table…</p>`; return; }
   const scroll = scrollY;
   const body = { card: cardView, hand: handView, table: tableView, deck: deckView, me: meView }[tab] || cardView;
-  $app.innerHTML = header() + body() + (sheet ? (sheet.type === "later" ? laterSheet() : editSheet()) : "");
+  $app.innerHTML = header() + body() + (sheet ? (sheet.type === "later" ? laterSheet() : sheet.type === "lib" ? libSheet() : editSheet()) : "");
   scrollTo(0, scroll);
 }
 
@@ -304,6 +324,8 @@ $app.addEventListener("click", async (e) => {
   if (d.tab) { tab = d.tab; sheet = null; if (tab === "me") await loadPush(); render(); return; }
   if (d.sel) { sel = sel.includes(d.sel) ? sel.filter((x) => x !== d.sel) : [...sel, d.sel]; render(); return; }
   if (d.chaos) return act(() => S.setChaos(room, me, +d.chaos));
+  if (d.deck) { deckSel = d.deck; deckArm = false; render(); return; }
+  if (d.libadd) { const t = DECK_LIBRARY.find((x) => x.key === d.libadd); sheet = null; deckSel = me.id + ":" + t.key; return act(() => S.addLibraryDeck(room, me, t.key), "Added " + t.name); }
   if (d.edit) { const c0 = state.cards.find((c) => c.id === d.edit); sheet = { type: "edit", card: { ...c0, quota: { ...(c0.quota || effectiveQuota({ ...c0, tempo: 1 }, profile.prefs || {})) } } }; render(); return; }
   if (d.esuit) { readEdit(); sheet.card.suit = d.esuit; render(); return; }
   if (d.eper) { readEdit(); sheet.card.quota = { ...sheet.card.quota, per: d.eper }; render(); return; }
@@ -349,7 +371,20 @@ $app.addEventListener("click", async (e) => {
     }
     case "close": sheet = null; return render();
     case "tempo-reset": readEdit(); sheet.card.tempo = 1; return render();
-    case "newcard": sheet = { type: "edit", card: { label: "", suit: "body", imm: 3, active: true, plays: 0, quota: { n: 1, per: "day" } } }; return render();
+    case "newcard": sheet = { type: "edit", card: { label: "", suit: "body", imm: 3, active: true, plays: 0, quota: { n: 1, per: "day" }, deck: curDeck().id } }; return render();
+    case "decklib": sheet = { type: "lib" }; return render();
+    case "decktoggle": { const dk = curDeck(); return act(() => S.setDeckActive(room, me, dk, !dk.active), (dk.active ? "Paused " : "Dealing from ") + dk.name); }
+    case "deckdel": {
+      if (!deckArm) { deckArm = true; return render(); }
+      const dk = curDeck(); deckArm = false; deckSel = null;
+      return act(() => S.deleteDeck(room, me, dk), "Deleted " + dk.name);
+    }
+    case "decknew": {
+      const name = document.getElementById("deckName").value.trim();
+      if (!name) { toast("Name the deck."); return; }
+      sheet = null;
+      return act(async () => { deckSel = await S.newDeck(room, me, name); }, "Made " + name);
+    }
     case "esave": {
       readEdit(); const c = sheet.card;
       if (!c.label.trim()) { toast("Give the card a label."); return; }
