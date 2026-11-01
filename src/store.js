@@ -2,6 +2,7 @@ import "react-native-url-polyfill/auto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config";
+import { MAP_LIBRARY, canPlayAt, fitsSpots, installMap, live, newlyMissed, placeCard } from "./maps";
 import { DECK_LIBRARY, everydayId, myDecks, SEED_CARDS, BEDTIME_CARD, takeoverActive, nudgedTempo, holdReminder, bufferBlock, bufferMessage, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -57,10 +58,11 @@ export async function fetchRoom(room) {
 }
 
 export function shape(rows) {
-  const s = { decks: [], cards: [], players: [], tables: {}, hands: [], plays: [], discards: [], config: { chaos: 30 }, game: { turn: 1, active: null } };
+  const s = { maps: [], decks: [], cards: [], players: [], tables: {}, hands: [], plays: [], discards: [], config: { chaos: 30 }, game: { turn: 1, active: null } };
   for (const r of rows) {
     const d = { id: r.id, ...r.data };
-    if (r.coll === "decks") s.decks.push(d);
+    if (r.coll === "maps") s.maps.push(d);
+    else if (r.coll === "decks") s.decks.push(d);
     else if (r.coll === "cards") s.cards.push(d);
     else if (r.coll === "players") s.players.push(d);
     else if (r.coll === "tables") s.tables[r.id] = r.data;
@@ -130,7 +132,7 @@ export async function placeOnTable(room, me, t) {
   return t;
 }
 
-async function logPlay(room, me, t, combo = null) {
+async function logPlay(room, me, t, combo = null, at = null) {
   const now = new Date().toISOString();
   const game = (await getDoc(room, "game", "main")) || { turn: 1 };
   await upsert(room, "plays", newId(), {
@@ -138,6 +140,86 @@ async function logPlay(room, me, t, combo = null) {
   });
   const card = await getDoc(room, "cards", t.cardId);
   if (card) await upsert(room, "cards", t.cardId, { ...card, lastPlayed: now, plays: (card.plays || 0) + 1 });
+  try { await placeOnMaps(room, me, t, card, at); } catch {}
+}
+
+/* ---------- maps ---------- */
+const libTonnage = (cardId) => { for (const d of DECK_LIBRARY) for (const c of d.cards) if (c.tonnage && cardId.endsWith("-" + d.key + "-" + c.key)) return c.tonnage; return null; };
+
+/** A played card lands on a map: on the spot you chose, or the best open spot on your active maps. */
+async function placeOnMaps(room, me, t, card, at = null) {
+  const now = Date.now();
+  const maps = (await listColl(room, "maps")).filter((m) => m.owner === me.id && m.active !== false);
+  let hit = null;
+  if (at) {
+    const m = maps.find((x) => x.id === at.mapId), lm = m && live(m, now), sp = lm?.spots[at.spotId];
+    if (sp && canPlayAt(lm, sp, t, now)) hit = { map: lm, spot: sp };
+  }
+  hit = hit || fitsSpots(maps, t, now)[0];
+  if (!hit) return null;
+  const { id, ...data } = placeCard(hit.map, hit.spot.id, t, { tonnage: card?.tonnage ?? libTonnage(t.cardId) }, now);
+  await upsert(room, "maps", id, data);
+  return id;
+}
+
+/** Play a held card onto a specific spot. */
+export async function playToSpot(room, me, handId, mapId, spotId) {
+  const h = await getDoc(room, "hands", handId);
+  if (!h) return false;
+  await guardLock(room, me, [h.cardId]);
+  const m = await getDoc(room, "maps", mapId);
+  const lm = m && live(m), sp = lm?.spots?.[spotId];
+  if (!sp || !canPlayAt(lm, sp, h)) throw new Error("That spot isn't open for this card right now.");
+  await remove(room, "hands", handId);
+  await logPlay(room, me, h, null, { mapId, spotId });
+  await advance(room, me);
+  return true;
+}
+
+export async function addLibraryMap(room, me, key) {
+  const tpl = MAP_LIBRARY.find((m) => m.key === key);
+  if (!tpl) throw new Error("That map isn't in the library.");
+  const deckId = tpl.deckKey === "everyday" ? everydayId(me.id) : await addLibraryDeck(room, me, tpl.deckKey);
+  const cards = (await listColl(room, "cards")).filter((c) => (c.owner || me.id) === me.id);
+  const resolve = (k) => {
+    if (tpl.deckKey === "everyday") return k === "bed" ? (cards.find((c) => c.id === me.id + "-bed") || cards.find((c) => /go to bed/i.test(c.label)))?.id || null : null;
+    const id = me.id + "-" + tpl.deckKey + "-" + k;
+    return cards.some((c) => c.id === id) ? id : null;
+  };
+  const id = me.id + ":" + tpl.key;
+  await upsert(room, "maps", id, installMap(tpl, me.id, deckId, resolve));
+  return id;
+}
+export async function setMapActive(room, me, mapId, active) {
+  const m = await getDoc(room, "maps", mapId);
+  if (m) await upsert(room, "maps", mapId, { ...m, active });
+}
+export async function deleteMap(room, me, mapId) { await remove(room, "maps", mapId); }
+
+/** New round → empty the map. Missed spots hand you their card once, to play elsewhere or discard. Returns how many. */
+export async function syncMaps(room, me) {
+  const now = Date.now();
+  const maps = (await listColl(room, "maps")).filter((m) => m.owner === me.id && m.active !== false);
+  if (!maps.length) return 0;
+  const cards = await listColl(room, "cards");
+  let n = 0;
+  for (const m0 of maps) {
+    const m = live(m0, now), miss = newlyMissed(m, now);
+    if (!miss.length && !m.fresh) continue;
+    const spots = { ...m.spots };
+    for (const sp of miss) {
+      const card = cards.find((c) => "card:" + c.id === sp.accepts);
+      if (card) {
+        const t = dealFrom(card, now, Math.random, {});
+        await upsert(room, "hands", newId(), { ...t, seat: me.id, heldAt: new Date(now).toISOString(), remindAt: null, fromMap: m.name });
+        n++;
+      }
+      spots[sp.id] = { ...sp, dealtMiss: true };
+    }
+    const { id, fresh, ...data } = m;
+    await upsert(room, "maps", m0.id, { ...data, spots });
+  }
+  return n;
 }
 
 /** Throws if a lock card in your hand blocks playing these cards. */

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert, AppState, KeyboardAvoidingView, Modal, Platform, Pressable,
+  Dimensions, ActivityIndicator, Alert, AppState, KeyboardAvoidingView, Modal, Platform, Pressable,
   ScrollView, StyleSheet, Switch, Text, TextInput, View,
   Animated, PanResponder, Vibration,
 } from "react-native";
@@ -16,6 +16,7 @@ import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDa
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 import { DECK_LIBRARY, deckOf, everydayId, myDecks } from "./src/model";
+import { MAP_LIBRARY, PER_NAMES, amountText, canPlayAt, describeAccepts, fitsSpots, jitter, live, parseWhen, shapeEdges, shortWhen, spotPos, spotState } from "./src/maps";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
 const C = { ...ORIGINAL, suit: { ...ORIGINAL.suit } };
@@ -141,6 +142,7 @@ function Game({ profile, setProfile }) {
   const [tab, setTab] = useState("card");
   const [focusHand, setFocusHand] = useState(null);
   const [msg, setMsg] = useState("");
+  const [boardTouch, setBoardTouch] = useState(false);
   const say = (t) => { setMsg(t); setTimeout(() => setMsg((m) => (m === t ? "" : m)), 4000); };
 
   // Notifications: channels, permission, and button presses while the app is open.
@@ -155,17 +157,22 @@ function Game({ profile, setProfile }) {
       await N.claimDeliveredDeal(room, me).catch(() => {});
       await S.claimTakeover(room, me, prefs).catch(() => {});
       if (N.consumeShowCard()) setTab("card");
+      await syncMaps();
       refresh();
     })();
     const sub = Notifications.addNotificationResponseReceivedListener(onResponse);
     const app = AppState.addEventListener("change", (s) => {
       if (s === "active") {
         if (N.consumeShowCard()) setTab("card");
-        N.claimDeliveredDeal(room, me).catch(() => {}).then(() => S.claimTakeover(room, me, prefs)).catch(() => {}).finally(refresh);
+        N.claimDeliveredDeal(room, me).catch(() => {}).then(() => S.claimTakeover(room, me, prefs)).catch(() => {}).then(syncMaps).finally(refresh);
       }
     });
     return () => { sub.remove(); app.remove(); };
   }, [room]);
+
+  async function syncMaps() {
+    try { const n = await S.syncMaps(room, me); if (n) say(n === 1 ? "You missed a map spot. Its card is in your hand." : `You missed ${n} map spots. Their cards are in your hand.`); } catch {}
+  }
 
   async function onResponse(r) {
     try {
@@ -213,9 +220,9 @@ function Game({ profile, setProfile }) {
         <Text style={st.handCount}>HAND <Text style={st.handN}>{myHand.length}</Text></Text>
       </View>
       {tab === "card" ? <CardView state={state} room={room} me={me} act={act} goTo={setTab} prefs={prefs} say={say} /> : (
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 18 }}>
+      <ScrollView scrollEnabled={!boardTouch} contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 18 }}>
         {tab === "hand" && <HandView state={state} room={room} me={me} act={act} focusHand={focusHand} />}
-        {tab === "table" && <TableView state={state} me={me} />}
+        {tab === "table" && <TableTab state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
         {tab === "deck" && <DeckView state={state} room={room} me={me} act={act} />}
         {tab === "me" && <MeView profile={profile} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
       </ScrollView>)}
@@ -455,6 +462,260 @@ function LaterSheet({ open, label, onClose, onPick }) {
 }
 
 /* ---------------- table ---------------- */
+/* ---------------- table: players + maps ---------------- */
+function TableTab({ state, room, me, act, say, setBoardTouch }) {
+  const maps = (state.maps || []).filter((m) => m.owner === me.id);
+  const [selId, setSel] = useState(null);
+  const [lib, setLib] = useState(false);
+  const cur = selId === "players" ? null : maps.find((m) => m.id === selId) || (selId == null ? maps.find((m) => m.active !== false) || null : null);
+  const have = new Set(maps.map((m) => m.key));
+  return (
+    <>
+      <View style={st.chips}>
+        <Chip label="Players" on={!cur} onPress={() => setSel("players")} />
+        {maps.map((m) => <Chip key={m.id} label={(m.active === false ? "○ " : "") + m.name} on={cur?.id === m.id} onPress={() => setSel(m.id)} />)}
+        <Chip label="+ Map" on={false} onPress={() => setLib(true)} />
+      </View>
+      {cur ? <MapTable key={cur.id} m0={cur} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} onRemoved={() => setSel(null)} /> : <TableView state={state} me={me} />}
+      <Modal visible={lib} transparent animationType="slide" onRequestClose={() => setLib(false)}>
+        <Pressable style={st.scrim} onPress={() => setLib(false)} />
+        <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]}>
+          <Text style={st.h2}>Add a map</Text>
+          <Text style={[st.note, { textAlign: "left" }]}>Maps run side by side. Cards you play land on the right spot by themselves; a missed spot gets an X and sends its card to your hand.</Text>
+          {MAP_LIBRARY.map((t) => (
+            <View key={t.key} style={st.panel}>
+              <Text style={st.h3}>{t.name} · {PER_NAMES[t.per].toLowerCase()}</Text>
+              <Text style={[st.note, { textAlign: "left" }]}>{t.about}</Text>
+              {t.deckKey !== "everyday" && <Text style={[st.note, { textAlign: "left" }]}>Adds the {DECK_LIBRARY.find((d) => d.key === t.deckKey)?.name} deck if you don't have it.</Text>}
+              <Btn primary={!have.has(t.key)} disabled={have.has(t.key)} label={have.has(t.key) ? "Added" : "Add " + t.name} onPress={() => {
+                setLib(false); setSel(me.id + ":" + t.key);
+                act(() => S.addLibraryMap(room, me, t.key), "Added " + t.name);
+              }} />
+            </View>
+          ))}
+        </ScrollView>
+      </Modal>
+    </>
+  );
+}
+
+function MapTable({ m0, state, room, me, act, setBoardTouch, onRemoved }) {
+  const [selCard, setSelCard] = useState(null);
+  const [selSpot, setSelSpot] = useState(null);
+  const [arm, setArm] = useState(false);
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick((x) => x + 1), 60000); return () => clearInterval(t); }, []);
+  const now = Date.now(), m = live({ ...m0, active: true }, now), paused = m0.active === false;
+  const cards = myDeck(state.cards, state.players, me.id);
+  const hand = state.hands.filter((h) => h.seat === me.id).sort((a, b) => (a.heldAt || "").localeCompare(b.heldAt || ""));
+  const selH = hand.find((h) => h.id === selCard), selS = selSpot && m.spots[selSpot];
+  const hl = new Set(selH && !paused ? fitsSpots([m], selH, now).map((f) => f.spot.id) : []);
+  const open = Object.values(m.spots).filter((sp) => !sp.auto && spotState(m, sp, now) === "open").length;
+  const play = (h, sid) => {
+    const sh = m.shapes.find((x) => x.spots.includes(sid));
+    setSelCard(null); setSelSpot(null);
+    act(() => S.playToSpot(room, me, h.id, m0.id, sid), `Played ${h.label} on ${sh?.label || m.name}`);
+  };
+  const tapSpot = (sid) => {
+    if (selH) {
+      if (!paused && canPlayAt(m, m.spots[sid], selH, now)) return play(selH, sid);
+      setSelCard(null);
+    }
+    setSelSpot(selSpot === sid ? null : sid);
+  };
+  const tapCard = (h) => {
+    if (selS && !paused && canPlayAt(m, selS, h, now)) return play(h, selSpot);
+    setSelCard(selCard === h.id ? null : h.id); setSelSpot(null);
+  };
+  let info;
+  if (paused) info = "This map is paused. Cards you play won't land on it.";
+  else if (selH) info = hl.size ? `${hl.size} spot${hl.size === 1 ? "" : "s"} lit up for ${selH.label}. Tap one to play it there.` : `No open spot on this map for ${selH.label} right now. Hold it, play it from the Hand tab, or discard it.`;
+  else if (selS) {
+    const stt = spotState(m, selS, now), n = hand.filter((h) => canPlayAt(m, selS, h, now)).length;
+    const what = { missed: "Missed.", filled: "Played" + (selS.filled ? ": " + selS.filled.label : "") + ".", full: "Full.", skipped: "This was before you added the map.", waiting: "Waiting for the spots before it.", future: "Not open yet." }[stt]
+      || (n ? `${n} card${n === 1 ? "" : "s"} in your hand fit. Tap one to play it here.` : "Open. Nothing in your hand fits.");
+    info = `${describeAccepts(selS, cards)} · ${parseWhen(selS.when).label} · ${what}`;
+  } else info = `${PER_NAMES[m.per]} map · ${open} spot${open === 1 ? "" : "s"} open now. Tap a card to light up its spots, or tap a spot.`;
+  const best = selH && fitsSpots([m], selH, now)[0];
+  return (
+    <View style={{ gap: 10 }}>
+      <MapBoard m={m} cards={cards} hl={hl} sel={selSpot} now={now} onSpot={tapSpot} onBlank={() => { setSelCard(null); setSelSpot(null); }} setBoardTouch={setBoardTouch} />
+      <Text style={[st.note, { textAlign: "left" }]}>{info}</Text>
+      {!!selH && (
+        <View style={st.row}>
+          <Btn primary flex disabled={!best || paused} label={hl.size === 1 ? "Play to its spot" : "Play to the best spot"} onPress={() => best && play(selH, best.spot.id)} />
+          <Btn label="Cancel" onPress={() => setSelCard(null)} />
+        </View>
+      )}
+      <Text style={st.label}>YOUR HAND · {hand.length}</Text>
+      <ScrollView horizontal contentContainerStyle={{ gap: 10, paddingVertical: 4 }}>
+        {hand.length ? hand.map((h) => {
+          const fits = selS ? canPlayAt(m, selS, h, now) : null;
+          return (
+            <Pressable key={h.id} onPress={() => tapCard(h)} style={[st.mini, selCard === h.id && st.miniSel, fits === true && { borderColor: C.ink }, fits === false && { opacity: 0.38 }]}>
+              <Text style={[st.miniMeta, { color: C.suit[h.suit] }]}>{SUIT[h.suit] || "●"}{h.fromMap ? " missed" : ""}</Text>
+              <Text style={st.miniLabel}>{h.label}</Text>
+              <Text style={st.miniMeta}> </Text>
+            </Pressable>
+          );
+        }) : <Text style={[st.note, { textAlign: "left" }]}>Your hand is empty. Cards you hold, and cards from missed spots, show up here.</Text>}
+      </ScrollView>
+      <View style={st.row}>
+        <Btn flex label={paused ? "Turn this map on" : "Pause map"} onPress={() => act(() => S.setMapActive(room, me, m0.id, paused), paused ? "Map on" : "Map paused")} />
+        <Btn flex danger={arm} label={arm ? "Tap again to remove" : "Remove map"} onPress={() => {
+          if (!arm) return setArm(true);
+          onRemoved(); act(() => S.deleteMap(room, me, m0.id), "Removed " + m0.name);
+        }} />
+      </View>
+    </View>
+  );
+}
+
+/** The map drawn with plain views. Pinch to zoom, drag to move, or use the buttons. */
+function MapBoard({ m, cards, hl, sel, now, onSpot, onBlank, setBoardTouch }) {
+  const W = m.W || 1400, H = m.H || 1000;
+  const vw = Dimensions.get("window").width - 32;
+  const fit = vw / W;
+  const vh = Math.min(H * fit, Dimensions.get("window").height * 0.6);
+  const s = useRef(new Animated.Value(fit)).current, tx = useRef(new Animated.Value(0)).current, ty = useRef(new Animated.Value(0)).current;
+  const cur = useRef({ s: fit, x: 0, y: 0 });
+  const g0 = useRef(null);
+  const box = useRef(null), off = useRef({ x: 0, y: 0 });
+  const pulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const a = Animated.loop(Animated.sequence([Animated.timing(pulse, { toValue: 0.3, duration: 550, useNativeDriver: true }), Animated.timing(pulse, { toValue: 1, duration: 550, useNativeDriver: true })]));
+    a.start(); return () => a.stop();
+  }, []);
+  const set = (ns, nx, ny) => {
+    ns = Math.max(fit * 0.9, Math.min(2.5, ns));
+    const minX = Math.min(0, vw - W * ns), minY = Math.min(0, vh - H * ns);
+    nx = Math.max(minX, Math.min(0, nx)); ny = Math.max(minY, Math.min(0, ny));
+    if (W * ns < vw) nx = (vw - W * ns) / 2;
+    if (H * ns < vh) ny = (vh - H * ns) / 2;
+    cur.current = { s: ns, x: nx, y: ny };
+    s.setValue(ns); tx.setValue(nx); ty.setValue(ny);
+  };
+  useEffect(() => { set(fit, 0, 0); }, [m.id]);
+  const zoomBy = (k) => { const { s: s0, x, y } = cur.current, ns = Math.max(fit * 0.9, Math.min(2.5, s0 * k)); set(ns, vw / 2 - (vw / 2 - x) * (ns / s0), vh / 2 - (vh / 2 - y) * (ns / s0)); };
+  const dist = (t) => Math.hypot(t[0].pageX - t[1].pageX, t[0].pageY - t[1].pageY);
+  const pr = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponderCapture: (e, g) => e.nativeEvent.touches.length > 1 || Math.abs(g.dx) + Math.abs(g.dy) > 8,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: () => { g0.current = null; },
+    onPanResponderMove: (e, g) => {
+      const t = e.nativeEvent.touches;
+      if (t.length > 1) {
+        const cmx = (t[0].pageX + t[1].pageX) / 2, cmy = (t[0].pageY + t[1].pageY) / 2;
+        if (!g0.current || !g0.current.pinch) g0.current = { pinch: true, d: dist(t), ...cur.current, mx: cmx, my: cmy };
+        const g1 = g0.current, ns = Math.max(fit * 0.9, Math.min(2.5, g1.s * (dist(t) / g1.d))), r = ns / g1.s;
+        // Keep the point under your fingers in place while zooming, and follow the fingers as they move.
+        const fx = g1.mx - off.current.x, fy = g1.my - off.current.y;
+        set(ns, fx - (fx - g1.x) * r + (cmx - g1.mx), fy - (fy - g1.y) * r + (cmy - g1.my));
+        return;
+      }
+      if (!g0.current || g0.current.pinch) g0.current = { ...cur.current, dx: g.dx, dy: g.dy };
+      set(cur.current.s, g0.current.x + g.dx - g0.current.dx, g0.current.y + g.dy - g0.current.dy);
+    },
+    onPanResponderRelease: () => { g0.current = null; setBoardTouch(false); },
+    onPanResponderTerminate: () => { g0.current = null; setBoardTouch(false); },
+  }), [fit, vw, vh]);
+
+  const suitOf = (sp) => sp.accepts.startsWith("suit:") ? sp.accepts.slice(5) : cards.find((c) => "card:" + c.id === sp.accepts)?.suit || "body";
+  const nameOf = (sp) => sp.label || (sp.accepts === "any" ? "any card" : sp.accepts.startsWith("suit:") ? "any " + sp.accepts.slice(5) : (cards.find((c) => "card:" + c.id === sp.accepts)?.label || "?").replace("#", "").trim());
+  const els = [];
+  for (const sh of m.shapes) {
+    shapeEdges(sh).forEach(([a, b], k) => {
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]), th = sh.kind === "path" ? 10 : 6, ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+      els.push(<View key={sh.id + "e" + k} style={{ position: "absolute", left: (a[0] + b[0]) / 2 - len / 2, top: (a[1] + b[1]) / 2 - th / 2, width: len, height: th, borderRadius: th / 2, backgroundColor: C.line, transform: [{ rotate: ang + "rad" }] }} />);
+    });
+    if (sh.kind === "pool") continue;
+    const vertical = sh.kind === "path" && Math.abs(Math.sin(((sh.rot || 0) * Math.PI) / 180)) > 0.7;
+    const big = sh.kind === "ring" && m.shapes.some((p) => p.kind === "pool" && Math.hypot(p.cx - sh.cx, p.cy - sh.cy) < 20);
+    const lx = vertical ? sh.cx - 50 : sh.cx, ly = big ? sh.cy + sh.ry * 0.62 : sh.kind === "path" && !vertical ? sh.cy - 56 : sh.cy - 8;
+    els.push(
+      <View key={sh.id + "l"} pointerEvents="none" style={{ position: "absolute", width: 320, left: vertical ? lx - 320 : lx - 160, top: ly - 26 }}>
+        <Text style={{ fontSize: 28, fontWeight: "800", color: C.ink, textAlign: vertical ? "right" : "center" }}>{sh.label}</Text>
+        {!!sh.sub && <Text style={{ fontSize: 16, color: C.muted, textAlign: vertical ? "right" : "center" }}>{sh.sub}</Text>}
+      </View>
+    );
+  }
+  for (const sh of m.shapes) sh.spots.forEach((sid, i) => {
+    const sp = m.spots[sid], [x, y] = spotPos(sh, i), stt = spotState(m, sp, now), col = C.suit[suitOf(sp)] || C.accent, isHl = hl.has(sid), isSel = sel === sid;
+    if (sh.kind === "pool") {
+      const r = sh.rx, frac = sp.target ? Math.min(1, (sp.total || 0) / sp.target) : 0, pile = sp.pile || [];
+      els.push(
+        <Pressable key={sid} onPress={() => onSpot(sid)} style={{ position: "absolute", left: x - r, top: y - r, width: r * 2, height: r * 2 }}>
+          <View style={{ width: r * 2, height: r * 2, borderRadius: r, backgroundColor: C.paper, borderWidth: isHl ? 5 : 2, borderColor: isHl ? C.ink : C.line, overflow: "hidden", alignItems: "center", justifyContent: "center" }}>
+            <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: r * 2 * frac, backgroundColor: col, opacity: 0.35 }} />
+            <Text style={{ fontSize: 26, fontWeight: "800", color: C.ink }}>{sh.label}</Text>
+            <Text style={{ fontSize: 21, fontWeight: "800", color: C.ink }}>{amountText(sp)}</Text>
+            {!!sh.sub && <Text style={{ fontSize: 15, color: C.muted }}>{sh.sub}</Text>}
+          </View>
+          {isHl && <Animated.View pointerEvents="none" style={{ position: "absolute", left: -8, top: -8, width: r * 2 + 16, height: r * 2 + 16, borderRadius: r + 8, borderWidth: 4, borderColor: C.ink, opacity: pulse }} />}
+          {isSel && <View pointerEvents="none" style={{ position: "absolute", left: -8, top: -8, width: r * 2 + 16, height: r * 2 + 16, borderRadius: r + 8, borderWidth: 3, borderStyle: "dashed", borderColor: C.ink }} />}
+          {pile.slice(-4).map((e, k, arr) => (
+            <PlacedCard key={k} e={e} x={r + r * 0.95 + k * 5} y={r + r * 0.8 - k * 3} rot={jitter(sid + k, 9)} badge={k === arr.length - 1 && pile.length > 1 ? "×" + pile.length : ""} />
+          ))}
+        </Pressable>
+      );
+      return;
+    }
+    const R = 30, name = nameOf(sp), short = sp.label ? "" : shortWhen(sp);
+    const ring = stt === "missed" ? { backgroundColor: "#d9d0d5", borderColor: "#a89ca3", borderWidth: 2 }
+      : stt === "filled" ? { backgroundColor: "rgba(255,253,247,.35)", borderColor: col, borderWidth: 2.5 }
+      : stt === "open" ? { backgroundColor: C.paper, borderColor: col, borderWidth: 3.5 }
+      : { backgroundColor: "rgba(255,253,247,.35)", borderColor: C.line, borderWidth: 2.5, borderStyle: "dashed", opacity: stt === "skipped" ? 0.45 : 1 };
+    els.push(
+      <Pressable key={sid} onPress={() => onSpot(sid)} style={{ position: "absolute", left: x - 80, top: y - R - 14, width: 160, alignItems: "center" }}>
+        <View style={{ width: R * 2 + 28, height: R * 2 + 28, alignItems: "center", justifyContent: "center" }}>
+          {isHl && <Animated.View style={{ position: "absolute", width: R * 2 + 18, height: R * 2 + 18, borderRadius: R + 9, borderWidth: 4, borderColor: C.ink, opacity: pulse }} />}
+          {isSel && <View style={{ position: "absolute", width: R * 2 + 16, height: R * 2 + 16, borderRadius: R + 8, borderWidth: 3, borderStyle: "dashed", borderColor: C.ink }} />}
+          <View style={[{ width: R * 2, height: R * 2, borderRadius: R, alignItems: "center", justifyContent: "center" }, ring]}>
+            {stt === "missed" ? <Text style={{ fontSize: 30, fontWeight: "800", color: "#a89ca3" }}>✕</Text>
+              : stt === "filled" ? null
+              : <Text style={{ fontSize: stt === "open" ? 18 : 14, fontWeight: "800", color: stt === "open" ? col : C.line }}>{SUIT[suitOf(sp)]}</Text>}
+          </View>
+          {stt === "filled" && <PlacedCard e={sp.filled} x={R + 14 + 2} y={R + 14 + 6} rot={jitter(sid)} meta={sp.label || shortWhen(sp) || "✓"} />}
+        </View>
+        {stt !== "filled" && <Text numberOfLines={1} style={{ fontSize: 15, fontWeight: "700", color: C.ink, marginTop: -8 }}>{name.length > 16 ? name.slice(0, 15) + "…" : name}</Text>}
+        {stt !== "filled" && !!short && <Text style={{ fontSize: 13, color: C.muted }}>{short}</Text>}
+      </Pressable>
+    );
+  });
+  return (
+    <View style={{ width: vw, height: vh, borderRadius: 18, overflow: "hidden", backgroundColor: C.felt }}
+      ref={box} onTouchStart={() => { setBoardTouch(true); box.current?.measureInWindow((x, y) => { off.current = { x, y }; }); }} onTouchEnd={() => setBoardTouch(false)} onTouchCancel={() => setBoardTouch(false)} {...pr.panHandlers}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onBlank} />
+      <Animated.View style={{ position: "absolute", left: 0, top: 0, width: W, height: H, transformOrigin: "0 0", transform: [{ translateX: tx }, { translateY: ty }, { scale: s }] }}>
+        {els}
+      </Animated.View>
+      <View style={{ position: "absolute", right: 8, top: 8, gap: 6 }}>
+        {[["+", () => zoomBy(1.35)], ["−", () => zoomBy(1 / 1.35)], ["⤢", () => set(fit, 0, 0)]].map(([l, f]) => (
+          <Pressable key={l} onPress={f} style={{ width: 38, height: 38, borderRadius: 10, borderWidth: 1.5, borderColor: C.line, backgroundColor: C.paper, alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ fontSize: 18, fontWeight: "700", color: C.ink }}>{l}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+/** A played card sitting on a spot: a little tilted, with a shadow. x,y is its center. */
+function PlacedCard({ e, x, y, rot, meta, badge }) {
+  if (!e) return null;
+  const col = C.suit[e.suit] || C.accent;
+  return (
+    <View pointerEvents="none" style={{ position: "absolute", left: x - 29, top: y - 40, width: 58, height: 80, borderRadius: 7, backgroundColor: C.paper, elevation: 4, borderWidth: 1, borderColor: "rgba(58,22,48,.12)", transform: [{ rotate: rot.toFixed(1) + "deg" }], overflow: "visible" }}>
+      <View style={{ height: 7, backgroundColor: col, borderTopLeftRadius: 7, borderTopRightRadius: 7 }} />
+      <Text style={{ fontSize: 10, fontWeight: "800", color: col, marginLeft: 5 }}>{SUIT[e.suit] || "●"}</Text>
+      <Text numberOfLines={3} style={{ fontSize: 10, fontWeight: "700", color: C.ink, textAlign: "center", paddingHorizontal: 3 }}>{e.label}</Text>
+      {!!meta && <Text numberOfLines={1} style={{ position: "absolute", bottom: 4, left: 0, right: 0, fontSize: 8.5, color: C.muted, textAlign: "center" }}>{meta}</Text>}
+      {!!badge && <View style={{ position: "absolute", right: -7, top: -7, width: 22, height: 22, borderRadius: 11, backgroundColor: C.ink, alignItems: "center", justifyContent: "center" }}><Text style={{ fontSize: 10, fontWeight: "800", color: C.bg }}>{badge}</Text></View>}
+    </View>
+  );
+}
+
 function TableView({ state, me }) {
   const players = [...state.players].sort((a, b) => (a.joined || "").localeCompare(b.joined || ""));
   const others = players.filter((p) => p.id !== me.id);
