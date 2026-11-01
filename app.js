@@ -1,6 +1,6 @@
 import * as S from "./store.js";
 import { ORIGINAL, randomTheme } from "./theme.js";
-import { myChaos, myDeck } from "./model.js";
+import { myChaos, myDeck, stackPlays, lastMove } from "./model.js";
 import { SUIT, SUITS, ago, fmtTime, heat, newId, parseLater } from "./model.js";
 
 const $app = document.getElementById("app");
@@ -22,8 +22,8 @@ const SUITC = { body: "var(--s-body)", home: "var(--s-home)", mind: "var(--s-min
 const pips = (n) => `<div class="pips">${[1, 2, 3, 4, 5].map((i) => `<span class="pip${i <= n ? " on" : ""}"></span>`).join("")}</div>`;
 
 let profile = S.loadProfile();
-let state = null, tab = new URLSearchParams(location.search).get("tab") || "play";
-let sel = null, sheet = null, toastT = null, unsub = null, refreshT = null;
+let state = null, tab = new URLSearchParams(location.search).get("tab") || "card";
+let sel = [], sheet = null, toastT = null, unsub = null, refreshT = null;
 const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
 const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 
@@ -55,7 +55,7 @@ function joinView() {
 
 function header() {
   const n = state ? state.hands.filter((h) => h.seat === profile.me.id).length : 0;
-  return `<header><nav class="tabs" role="tablist">${[["play", "Play"], ["table", "Table"], ["deck", "Deck"], ["me", "Me"]]
+  return `<header><nav class="tabs" role="tablist">${[["card", "Card"], ["hand", "Hand"], ["table", "Table"], ["deck", "Deck"], ["me", "Me"]]
     .map(([k, l]) => `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${l}</button>`).join("")}</nav>
     <div class="handcount">HAND<b>${n}</b></div></header>`;
 }
@@ -65,23 +65,37 @@ function bigCard(t) {
   return `<div class="card"><div class="idx tl"><span class="r">${t.imm}</span>${s}</div><h2>${esc(t.label)}</h2>${t.variant ? `<div class="var">${esc(t.variant)}</div>` : ""}${pips(t.imm)}<div class="idx br"><span class="r">${t.imm}</span>${s}</div></div>`;
 }
 
-function playView() {
+// Home: just the card in front of you.
+function cardView() {
   const me = profile.me, t = state.tables[me.id], top = t && !t.empty ? t : null;
-  const hand = state.hands.filter((h) => h.seat === me.id).sort((a, b) => (a.heldAt || "").localeCompare(b.heldAt || ""));
-  const left = Math.max(0, myDeck(state.cards, state.players, me.id).filter((c) => c.active !== false).length - hand.length);
-  const mine = state.game.active === me.id;
-  const selH = hand.find((h) => h.id === sel);
-  return `<section class="stage">${top
-      ? `${bigCard(top)}<div class="row actions"><button class="btn primary" data-act="play">Play</button><button class="btn" data-act="hold">Hold</button><button class="btn" data-act="later-top">Later</button></div>`
-      : `<button class="deck" data-act="draw" aria-label="Pull a card"><span class="back"></span><span class="back"></span><span class="back"></span><span class="pull">Pull a card</span></button><p class="note">${left} in the deck · ${mine ? "your turn" : "not your turn, but you can still pull"}</p>`}
-    </section>
-    <section style="display:flex;flex-direction:column;gap:8px"><h3>Your hand</h3>
-      ${hand.length ? `<div class="hand">${hand.map((h) => {
-        const r = h.remindAt && Date.parse(h.remindAt) > Date.now();
-        return `<button class="mini ${heat(h)}" aria-pressed="${sel === h.id}" data-sel="${h.id}"><span class="a">${SUIT[h.suit]} ${h.imm}</span><span class="l">${esc(h.label)}</span><span class="a">${r ? "⏰ " + fmtTime(h.remindAt) : "held " + ago(h.heldAt)}</span></button>`;
-      }).join("")}</div>` : `<p class="note left">Empty hand. Nice.</p>`}
-      ${selH ? `<div class="row"><button class="btn primary" data-act="hplay">Play it</button><button class="btn" data-act="later-hand">Remind</button><button class="btn" data-act="hdiscard">Discard</button></div>` : ""}
+  return `<section class="stage home">${top
+      ? `${bigCard(top)}<div class="row actions"><button class="btn primary" data-act="play">Play</button><button class="btn" data-act="hold">Hold</button></div><button class="link" data-act="later-top">Remind me later</button>`
+      : `<button class="deck" data-act="draw" aria-label="Tap to pull a card"><span class="back"></span><span class="back"></span><span class="back"></span><span class="pull">Tap to pull a card</span></button>`}
     </section>`;
+}
+
+// Hand: select one card to play, remind or discard; several to play together.
+function handView() {
+  const me = profile.me;
+  const hand = state.hands.filter((h) => h.seat === me.id).sort((a, b) => (a.heldAt || "").localeCompare(b.heldAt || ""));
+  sel = sel.filter((id) => hand.some((h) => h.id === id));
+  if (!hand.length) return `<section style="padding-top:60px;display:flex;flex-direction:column;gap:8px"><h2>Empty hand.</h2><p class="note left">Cards you hold show up here.</p></section>`;
+  const picked = hand.filter((h) => sel.includes(h.id));
+  const mine = state.game.active === me.id;
+  return `<h3>${hand.length} held · tap to select${picked.length > 1 ? " · " + picked.length + " selected" : ""}</h3>
+    <div class="grid">${hand.map((h) => {
+      const r = h.remindAt && Date.parse(h.remindAt) > Date.now(), on = sel.includes(h.id);
+      return `<button class="mini ${heat(h)}" aria-pressed="${on}" data-sel="${h.id}"><span class="a"><span style="color:${SUITC[h.suit]}">${SUIT[h.suit]}</span> ${h.imm}${on ? '<span class="ck">✓</span>' : ""}</span><span class="l">${esc(h.label)}</span>${h.variant ? `<span class="a">${esc(h.variant)}</span>` : ""}<span class="a">${r ? "⏰ " + fmtTime(h.remindAt) : "held " + ago(h.heldAt)}</span></button>`;
+    }).join("")}</div>
+    ${picked.length === 1 ? `<div class="row"><button class="btn primary" data-act="hplay">Play it</button><button class="btn" data-act="later-hand">Remind</button><button class="btn" data-act="hdiscard">Discard</button></div>` : ""}
+    ${picked.length > 1 ? `<p class="note left">${picked.map((h) => esc(h.label)).join(" + ")}</p><div class="row"><button class="btn primary" data-act="hcombo">Play ${picked.length} together</button><button class="btn" data-act="hclear">Clear</button></div>${mine ? "" : `<p class="note left">It's not your turn, but you can still play.</p>`}` : ""}`;
+}
+
+// Solitaire-style stack: one edge per card underneath, newest face up.
+function stackHtml(sk, fresh) {
+  const n = sk.cards.length, edges = Math.min(n - 1, 11), top = sk.cards[n - 1], c = SUITC[sk.suit];
+  return `<div class="stack" style="height:${100 + edges * 6}px">${Array.from({ length: edges }, (_, i) => `<span class="edge" style="top:${i * 6}px;border-top-color:${c}"></span>`).join("")}
+    <div class="pc top${fresh ? " fresh" : ""}" style="top:${edges * 6}px;border-top-color:${c}"><div class="t"><span style="color:${c}">${SUIT[sk.suit]}</span>${n > 1 ? `<b class="n">×${n}</b>` : ""}</div><div class="l">${esc(sk.label)}</div><div class="t"><span>${ago(top.at)}</span></div></div></div>`;
 }
 
 function tableView() {
@@ -97,7 +111,8 @@ function tableView() {
     const turn = state.game.active === p.id;
     return `<div class="side"><div class="row" style="justify-content:space-between"><div class="who"><span class="av">${esc((p.name || "?")[0].toUpperCase())}</span><span class="nm">${esc(p.name)}${p.id === me.id ? " (you)" : ""}</span></div>
       <div class="row" style="gap:6px"><span class="note">${held} held</span>${turn ? `<span class="tag">TO PLAY</span>` : ""}</div></div>
-      <div class="zone"><div class="played">${plays.length ? plays.slice(-8).map((x) => `<div class="pc${lastPlay?.id === x.id ? " fresh" : ""}"><div class="t"><span>${SUIT[x.suit]} ${x.imm}</span><span>T${x.turn}</span></div><div class="l">${esc(x.label)}</div><div class="t"><span>${ago(x.at)}</span></div></div>`).join("")
+      ${(() => { const mv = lastMove(plays); return mv.length > 1 ? `<p class="note left">Last: ${mv.map((x) => esc(x.label)).join(" + ")} · played together</p>` : ""; })()}
+      <div class="zone"><div class="played">${plays.length ? stackPlays(plays).map((sk) => stackHtml(sk, sk.cards.some((c) => c.id === lastPlay?.id))).join("")
         : `<p class="note" style="margin:auto">${turn ? "Fresh. Ready for turn " + state.game.turn : "Nothing played yet"}</p>`}</div>
       <div class="cubes"><span class="lbl">Cubes · ${plays.length}</span><div class="g">${plays.slice(-24).map((x) => `<span class="cube" style="background:${SUITC[x.suit]}"></span>`).join("")}</div></div></div></div>`;
   };
@@ -179,7 +194,7 @@ function render() {
   if (!profile?.room) { $app.innerHTML = joinView(); return; }
   if (!state) { $app.innerHTML = header() + `<p class="note">Loading the table…</p>`; return; }
   const scroll = scrollY;
-  const body = { play: playView, table: tableView, deck: deckView, me: meView }[tab] || playView;
+  const body = { card: cardView, hand: handView, table: tableView, deck: deckView, me: meView }[tab] || cardView;
   $app.innerHTML = header() + body() + (sheet ? (sheet.type === "later" ? laterSheet() : editSheet()) : "");
   scrollTo(0, scroll);
 }
@@ -228,7 +243,7 @@ $app.addEventListener("click", async (e) => {
   const b = e.target.closest("button, .scrim"); if (!b) return;
   const d = b.dataset, room = profile?.room, me = profile?.me;
   if (d.tab) { tab = d.tab; sheet = null; if (tab === "me") await loadPush(); render(); return; }
-  if (d.sel) { sel = sel === d.sel ? null : d.sel; render(); return; }
+  if (d.sel) { sel = sel.includes(d.sel) ? sel.filter((x) => x !== d.sel) : [...sel, d.sel]; render(); return; }
   if (d.chaos) return act(() => S.setChaos(room, me, +d.chaos));
   if (d.edit) { sheet = { type: "edit", card: { ...state.cards.find((c) => c.id === d.edit) } }; render(); return; }
   if (d.esuit) { readEdit(); sheet.card.suit = d.esuit; render(); return; }
@@ -259,9 +274,11 @@ $app.addEventListener("click", async (e) => {
     case "play": return act(() => S.playCard(room, me, top), "Played: " + top.label);
     case "hold": return act(() => S.holdCard(room, me, top), "Held: " + top.label);
     case "later-top": sheet = { type: "later", kind: "top" }; return render();
-    case "later-hand": sheet = { type: "later", kind: "hand", id: sel }; return render();
-    case "hplay": { const id = sel; sel = null; return act(() => S.playFromHand(room, me, id), "Played"); }
-    case "hdiscard": { const id = sel; sel = null; return act(() => S.discardFromHand(room, me, id), "Discarded"); }
+    case "later-hand": sheet = { type: "later", kind: "hand", id: sel[0] }; return render();
+    case "hplay": { const ids = [...sel]; sel = []; return act(() => S.playCombo(room, me, ids), "Played"); }
+    case "hcombo": { const ids = [...sel]; sel = []; return act(() => S.playCombo(room, me, ids), "Played together"); }
+    case "hclear": sel = []; return render();
+    case "hdiscard": { const id = sel[0]; sel = []; return act(() => S.discardFromHand(room, me, id), "Discarded"); }
     case "laterset": {
       const at = parseLater(document.getElementById("laterTxt").value);
       if (!at || at - Date.now() < 60e3) { toast("Try a time later today, like 3pm, 5:30, or in 2h."); return; }
