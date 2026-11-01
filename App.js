@@ -17,7 +17,7 @@ import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDa
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 import { DECK_LIBRARY, deckOf, everydayId, myDecks } from "./src/model";
-import { MAP_LIBRARY, PER_NAMES, amountText, canPlayAt, describeAccepts, fitsSpots, jitter, live, parseWhen, shapeEdges, shortWhen, spotPos, spotState } from "./src/maps";
+import { SUIT_NAMES, MAP_LIBRARY, PER_NAMES, amountText, canPlayAt, describeAccepts, fitsSpots, jitter, live, parseWhen, shapeEdges, shortWhen, spotPos, spotState } from "./src/maps";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
 const C = { ...ORIGINAL, suit: { ...ORIGINAL.suit } };
@@ -337,7 +337,7 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say }) {
   const locks = activeLocks(fromState.cards, fromState.hands, me.id);
   const wait = top && bufferBlock(card, fromState.plays, me.id);
   const blocked = top && (!canPlay(locks, [top.cardId]) || !!wait);
-  const padTop = 64, padBottom = ins.bottom + WHEEL_H + 18;
+  const padTop = 64, padBottom = ins.bottom + WHEEL_H + 44;
   const canPull = drawable(state.cards, state.players, state.hands, state.tables, me.id, state.decks).length > 0;
   return (
     <View style={StyleSheet.absoluteFill}>
@@ -348,19 +348,26 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say }) {
               const r = await M.swipeAll(ctx, from, top, it);
               if (r?.handId && r.remindAt) await N.scheduleReminder(from, r.handId, top, r.remindAt);
             }, swipeLabel(it) + ": " + top.label)}>
+            <View pointerEvents="none" style={[st.cardFrame, { top: ins.top + padTop - 18 }]} />
             <View style={[st.fullCardBody, { paddingTop: ins.top + padTop, paddingBottom: padBottom + 150 }]}>
-              <View style={st.fullCorner}>
-                <Text style={[st.fullSuit, { color: C.suit[top.suit] }]}>{SUIT[top.suit]}</Text>
-                {!!beef && <Text style={st.fullBeef}>{beef}</Text>}
+              <View style={st.cardHead}>
+                <View style={st.fullCorner}>
+                  <Text style={[st.fullSuit, { color: C.suit[top.suit] }]}>{SUIT[top.suit]}</Text>
+                  {!!beef && <Text style={st.fullBeef}>{beef}</Text>}
+                </View>
+                <Text style={st.cardKicker}>{(SUIT_NAMES[top.suit] || "").toUpperCase()}</Text>
               </View>
-              <View style={{ flex: 1, justifyContent: "center", alignItems: "center", gap: 12 }}>
+              <View style={st.cardRule} />
+              <View style={{ flex: 1, justifyContent: "center", alignItems: "center", gap: 14 }}>
                 <Text style={st.fullTitle}>{top.label}</Text>
+                <View style={st.titleRule}><View style={[st.titleDot, { backgroundColor: C.suit[top.suit] }]} /></View>
                 {!!top.variant && <Text style={st.fullVar}>{top.variant}</Text>}
                 {!!card && !!quotaLabel(card, Date.now(), prefs) && <Text style={[st.fullVar, { fontSize: 14 }]}>{quotaLabel(card, Date.now(), prefs)}</Text>}
                 {!!locks.length && <Text style={[st.fullVar, { color: C.hot }]}>🔒 {lockMessage(locks)}</Text>}
                 {!!wait && <Text style={[st.fullVar, { color: C.hot }]}>⏳ {bufferMessage(wait)}</Text>}
               </View>
-              <View style={{ gap: 6, alignItems: "center" }}>
+              <View style={st.cardRule} />
+              <View style={{ gap: 8, alignItems: "center", paddingTop: 10 }}>
                 <Text style={st.label}>{countsHere || ctx.rooms.length === 1 ? "GOES TO" : "PULLED AT " + from.toUpperCase() + " · DOESN'T COUNT HERE"}</Text>
                 <View style={[st.chips, { justifyContent: "center" }]}>
                   {where.map((w) => (
@@ -371,9 +378,13 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say }) {
                   ))}
                 </View>
               </View>
+              <View style={[st.fullCorner, { position: "absolute", right: 22, bottom: padBottom + 146, transform: [{ rotate: "180deg" }] }]}>
+                <Text style={[st.fullSuit, { fontSize: 24, color: C.suit[top.suit] }]}>{SUIT[top.suit]}</Text>
+                {!!beef && <Text style={[st.fullBeef, { fontSize: 30, lineHeight: 34 }]}>{beef}</Text>}
+              </View>
             </View>
           </SwipeCard>
-          <View pointerEvents="box-none" style={[st.cardControls, { paddingBottom: padBottom }]}>
+          <View pointerEvents="box-none" style={[st.cardControls, { bottom: padBottom - 6 }]}>
             <View style={[st.row, { width: "100%" }]}>
               <Btn primary flex label={wait ? "Wait" : blocked ? "Locked" : "Play"} disabled={blocked} onPress={() => act(() => M.playTop(ctx, from, top), "Played: " + top.label)} />
               <Btn flex label="Hold" onPress={() => act(() => M.holdTop(ctx, from, top), "Held: " + top.label)} />
@@ -556,61 +567,69 @@ function SwipeCard({ t, blockedMsg, onSwipe, say, children }) {
 }
 
 /* ---------------- play-mode wheel ---------------- */
-// Table, Card and Hand ride a huge wheel along the bottom; you only see a sliver of its rim, so the words
-// drift past each other in a wide, slow arc. It loops forever: no first view, no last.
+// Table, Card and Hand sit 120° apart on one wheel, seen tilted so its rim is a wide, shallow ellipse.
+// Changing view turns the wheel a third of a turn. It loops: no first view, no last.
 const MODES = [["table", "Table"], ["card", "Card"], ["hand", "Hand"]];
-const WHEEL_H = 64;
+const WHEEL_H = 96;
 const mod3 = (n) => ((n % 3) + 3) % 3;
+/** "#rrggbb" + alpha → rgba() */
+const fade = (hex, a) => { const h = String(hex).replace("#", ""); const n = parseInt(h.length === 3 ? h.replace(/./g, "$&$&") : h, 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
 function ModeWheel({ mode, onPick, handN, handMore }) {
   const ins = useSafeAreaInsets();
   const W = Dimensions.get("window").width;
-  const step = W * 0.36;                     // distance between words along the rim
+  const RX = W * 0.29, RY = 26;             // the rim: wide and shallow
   const want = Math.max(0, MODES.findIndex((m) => m[0] === mode));
-  const [cur, setCur] = useState(want);      // unbounded, so the wheel always turns the short way
+  const [cur, setCur] = useState(want);     // unbounded, so the wheel always turns the short way
+  const [pos, setPos] = useState(want);     // animated position, in thirds of a turn
   const p = useRef(new Animated.Value(want)).current;
+  useEffect(() => { const id = p.addListener(({ value }) => setPos(value)); return () => p.removeListener(id); }, []);
   useEffect(() => {
     if (mod3(cur) === want) return;
     const d = mod3(want - cur);
     setCur(cur + (d === 2 ? -1 : d));
   }, [want]);
-  useEffect(() => { Animated.spring(p, { toValue: cur, useNativeDriver: true, bounciness: 4, speed: 10 }).start(); }, [cur]);
+  useEffect(() => { Animated.spring(p, { toValue: cur, useNativeDriver: false, bounciness: 3, speed: 9 }).start(); }, [cur]);
   const go = (n) => { const next = cur + n; setCur(next); onPick(MODES[mod3(next)][0]); };
+  const live = useRef(go); live.current = go;
   const swipe = useRef(PanResponder.create({
     onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy),
     onPanResponderRelease: (_, g) => { if (Math.abs(g.dx) > 40) live.current(g.dx < 0 ? 1 : -1); },
   })).current;
-  const live = useRef(go); live.current = go;
-  const slots = [cur - 2, cur - 1, cur, cur + 1, cur + 2];
   return (
-    <View style={[st.wheel, { paddingBottom: ins.bottom + 6 }]} {...swipe.panHandlers}>
-      <Pressable onPress={() => go(-1)} hitSlop={12} style={st.wheelArrow} accessibilityRole="button" accessibilityLabel={"Previous: " + MODES[mod3(cur - 1)][1]}>
-        <Text style={st.wheelArrowTxt}>‹</Text>
-      </Pressable>
-      <View style={{ flex: 1, height: WHEEL_H }} pointerEvents="box-none">
-        {slots.map((j) => {
-          const [k, l] = MODES[mod3(j)];
-          const r = [j - 2, j - 1, j, j + 1, j + 2];
-          // A big rim: words slide sideways, dip a few pixels and tilt a few degrees as they move off-center.
-          const x = p.interpolate({ inputRange: r, outputRange: [2 * step, step, 0, -step, -2 * step], extrapolate: "clamp" });
-          const y = p.interpolate({ inputRange: r, outputRange: [14, 4, 0, 4, 14], extrapolate: "clamp" });
-          const tilt = p.interpolate({ inputRange: r, outputRange: ["9deg", "4deg", "0deg", "-4deg", "-9deg"], extrapolate: "clamp" });
-          const sc = p.interpolate({ inputRange: r, outputRange: [0.6, 0.78, 1, 0.78, 0.6], extrapolate: "clamp" });
-          const op = p.interpolate({ inputRange: r, outputRange: [0, 0.45, 1, 0.45, 0], extrapolate: "clamp" });
-          const on = j === cur;
-          return (
-            <Animated.View key={j} style={[st.wheelSlot, { opacity: op, transform: [{ translateX: x }, { translateY: y }, { rotate: tilt }, { scale: sc }] }]}>
-              <Pressable onPress={() => j !== cur && go(j - cur)} hitSlop={8} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={l}>
-                <Text style={[st.wheelTxt, on && st.wheelTxtOn]}>
-                  {l}{k === "hand" ? <Text style={st.wheelCount}> {handN}{handMore > 0 ? "+" + handMore : ""}</Text> : null}
-                </Text>
-              </Pressable>
-            </Animated.View>
-          );
-        })}
+    <View style={[st.wheel, { height: WHEEL_H + ins.bottom + 40, paddingBottom: ins.bottom + 8 }]} {...swipe.panHandlers}>
+      {/* Fog: the screen behind the menu fades out toward the bottom. */}
+      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+        {Array.from({ length: 14 }, (_, i) => (
+          <View key={i} style={{ flex: 1, backgroundColor: fade(C.bg, Math.min(0.96, Math.pow((i + 1) / 14, 1.6))) }} />
+        ))}
       </View>
-      <Pressable onPress={() => go(1)} hitSlop={12} style={st.wheelArrow} accessibilityRole="button" accessibilityLabel={"Next: " + MODES[mod3(cur + 1)][1]}>
-        <Text style={st.wheelArrowTxt}>›</Text>
-      </Pressable>
+      <View style={[st.row, { flex: 1, alignItems: "flex-end", paddingHorizontal: 10 }]}>
+        <Pressable onPress={() => go(-1)} hitSlop={12} style={st.wheelArrow} accessibilityRole="button" accessibilityLabel={"Previous: " + MODES[mod3(cur - 1)][1]}>
+          <Text style={st.wheelArrowTxt}>‹</Text>
+        </Pressable>
+        <View style={{ flex: 1, height: WHEEL_H }} pointerEvents="box-none">
+          {MODES.map(([k, l], i) => {
+            let d = i - pos; d = d - 3 * Math.round(d / 3);   // −1.5…1.5 thirds from the top of the wheel
+            const th = d * (2 * Math.PI / 3);
+            const front = (1 + Math.cos(th)) / 2;              // 1 at the top, 0 at the far side
+            const on = i === mod3(cur);
+            return (
+              <View key={k} style={[st.wheelSlot, { opacity: Math.max(0, front * 1.25 - 0.15), zIndex: Math.round(front * 10),
+                transform: [{ translateX: RX * Math.sin(th) }, { translateY: RY * (1 - Math.cos(th)) }, { rotate: (Math.sin(th) * 14) + "deg" }, { scale: 0.7 + 0.3 * front }] }]}>
+                <Pressable onPress={() => !on && go(mod3(i - cur) === 1 ? 1 : -1)} hitSlop={10} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={l}>
+                  <Text style={[st.wheelTxt, on && st.wheelTxtOn]}>
+                    {l}{k === "hand" ? <Text style={st.wheelCount}> {handN}{handMore > 0 ? "+" + handMore : ""}</Text> : null}
+                  </Text>
+                </Pressable>
+              </View>
+            );
+          })}
+          <View pointerEvents="none" style={[st.wheelDot, { left: "50%" }]} />
+        </View>
+        <Pressable onPress={() => go(1)} hitSlop={12} style={st.wheelArrow} accessibilityRole="button" accessibilityLabel={"Next: " + MODES[mod3(cur + 1)][1]}>
+          <Text style={st.wheelArrowTxt}>›</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -1421,8 +1440,8 @@ function makeStyles() { return StyleSheet.create({
   awayTag: { alignSelf: "flex-start", maxWidth: "100%", backgroundColor: C.bg2, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 },
   awayTagTxt: { fontSize: 10, fontWeight: "700", color: C.muted },
   topRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 10, paddingRight: 8, paddingTop: 4, paddingBottom: 10 },
-  menuBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center", gap: 4 },
-  menuLine: { width: 20, height: 2.5, borderRadius: 2, backgroundColor: C.ink },
+  menuBtn: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", gap: 4, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 4 },
+  menuLine: { width: 18, height: 2.5, borderRadius: 2, backgroundColor: C.ink },
   edgeZone: { position: "absolute", left: 0, top: 0, bottom: 0, width: 22 },
   edgeGrab: { position: "absolute", left: 0, top: 0, bottom: 0, width: 18 },
   // A thin bar down the top half of the left edge, with a small tab, so you know the menu pulls out from there.
@@ -1470,22 +1489,29 @@ function makeStyles() { return StyleSheet.create({
   whereChipHere: { borderWidth: 2, borderColor: C.accent },
   whereTable: { fontSize: 13, fontWeight: "800", color: C.ink },
   whereMap: { fontSize: 12, color: C.muted },
-  cardControls: { position: "absolute", left: 22, right: 22, bottom: 6, alignItems: "center", gap: 10 },
+  cardControls: { position: "absolute", left: 16, right: 16, alignItems: "center", gap: 8, padding: 12, borderRadius: 20, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 10 },
   fullBack: { position: "absolute", left: 6, right: 6, bottom: 6, borderRadius: 24, backgroundColor: C.paper, padding: 8, elevation: 6 },
   fullBackInner: { flex: 1, borderRadius: 18, backgroundColor: C.accent, alignItems: "center", justifyContent: "center" },
   miniBeef: { fontSize: 18, fontWeight: "800", color: C.ink },
-  wheel: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", alignItems: "center", paddingHorizontal: 8, paddingTop: 4 },
-  wheelArrow: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 22, backgroundColor: C.bg2 },
-  wheelArrowTxt: { fontSize: 28, fontWeight: "800", color: C.ink, marginTop: -3 },
-  wheelSlot: { position: "absolute", left: 0, right: 0, top: 10, alignItems: "center" },
-  wheelTxt: { fontSize: 22, fontWeight: "700", color: C.muted, letterSpacing: 0.5 },
-  wheelTxtOn: { fontSize: 26, fontWeight: "800", color: C.ink },
-  wheelCount: { fontSize: 15, fontWeight: "800", color: C.accent },
+  wheel: { position: "absolute", left: 0, right: 0, bottom: 0 },
+  wheelArrow: { width: 40, height: 40, marginBottom: 22, alignItems: "center", justifyContent: "center", borderRadius: 20, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 3 },
+  wheelArrowTxt: { fontSize: 24, fontWeight: "800", color: C.ink, marginTop: -3 },
+  wheelSlot: { position: "absolute", left: 0, right: 0, top: 18, alignItems: "center" },
+  wheelTxt: { fontSize: 14, fontWeight: "700", color: C.muted, letterSpacing: 1.5, textTransform: "uppercase" },
+  wheelTxtOn: { fontSize: 16, fontWeight: "800", color: C.ink },
+  wheelCount: { fontSize: 12, fontWeight: "800", color: C.accent },
+  wheelDot: { position: "absolute", top: 8, width: 6, height: 6, marginLeft: -3, borderRadius: 3, backgroundColor: C.accent },
+  cardFrame: { position: "absolute", left: 12, right: 12, bottom: 12, borderRadius: 16, borderWidth: 1.5, borderColor: C.line },
+  cardHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 10 },
+  cardKicker: { fontSize: 11, fontWeight: "800", letterSpacing: 2.5, color: C.muted },
+  cardRule: { height: 1.5, backgroundColor: C.line, marginHorizontal: -4 },
+  titleRule: { width: 120, height: 1.5, backgroundColor: C.line, alignItems: "center", justifyContent: "center" },
+  titleDot: { width: 8, height: 8, borderRadius: 4 },
   swipeHint: { fontSize: 12, color: C.muted, textAlign: "center" },
   toast: { position: "absolute", left: 16, right: 16, bottom: 24, backgroundColor: C.ink, borderRadius: 12, padding: 12 },
   toastTxt: { color: C.bg, textAlign: "center", fontWeight: "600" },
   toastUndo: { color: C.accent, fontWeight: "800", letterSpacing: 1, paddingHorizontal: 8 },
-  undoBtn: { width: 44, height: 44, borderRadius: 12, backgroundColor: C.bg2, alignItems: "center", justifyContent: "center" },
+  undoBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 4, alignItems: "center", justifyContent: "center" },
   undoIcon: { fontSize: 24, fontWeight: "800", color: C.ink, marginTop: -2 },
 }); }
 let st = makeStyles();
