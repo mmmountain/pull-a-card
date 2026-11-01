@@ -85,6 +85,10 @@ export function subscribeRoom(room, onChange) {
   };
 }
 
+/* ---------- raw docs (for the deck library sync) ---------- */
+export const putDoc = (room, coll, id, data) => upsert(room, coll, id, data);
+export const delDoc = (room, coll, id) => remove(room, coll, id);
+
 /* ---------- undo ---------- */
 // Snapshot every doc at your tables before a move and after it; undo puts back only the docs that move changed,
 // so a friend's moves in between are left alone.

@@ -135,3 +135,76 @@ export async function playCopiesElsewhere(ctx, h) {
     for (const x of ctx.states[r]?.hands || []) if (x.seat === ctx.me.id && x.link === h.link) { try { await S.playFromHand(r, ctx.me, x.id); } catch {} }
   }
 }
+
+/* ---------- your deck library ---------- */
+// My decks lives in one place (room "lib:<you>"), apart from every table. Each table keeps a copy of
+// your cards so it can track its own deals and plays; edits in the library are copied out to all of them.
+export const libRoom = (meId) => "lib:" + meId;
+const STATS = ["lastDrawn", "drawLog", "plays", "lastPlayed", "dueAt", "tempo"];
+const strip = (o, keys) => { const x = { ...o }; for (const k of keys) delete x[k]; return x; };
+const defOf = (c) => strip(c, ["id", ...STATS]);
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const mineIn = (st1, meId) => ({
+  cards: myDeck(st1.cards, st1.players, meId),
+  decks: (st1.decks || []).filter((d) => d.owner === meId),
+});
+
+/**
+ * Bring the library and your tables in line. Cards or decks a table has that the library doesn't
+ * (say, added with a map) join the library; then every library card and deck is copied to every table,
+ * keeping each table's own deal and play counts. `removed` ids are deleted everywhere.
+ */
+export async function syncLibrary(rooms, meId, removed = { cards: [], decks: [] }) {
+  const lib = libRoom(meId);
+  const libSt = await S.fetchRoom(lib);
+  const L = mineIn(libSt, meId);
+  const have = { cards: new Set(L.cards.map((c) => c.id)), decks: new Set(L.decks.map((d) => d.id)) };
+  const gone = { cards: new Set(removed.cards || []), decks: new Set(removed.decks || []) };
+  const states = {};
+  for (const r of rooms) { try { states[r] = await S.fetchRoom(r); } catch {} }
+  // Absorb anything new from the tables.
+  for (const r of rooms) {
+    const T = states[r]; if (!T) continue;
+    const m = mineIn(T, meId);
+    for (const c of m.cards) if (!have.cards.has(c.id) && !gone.cards.has(c.id)) { await S.putDoc(lib, "cards", c.id, { ...defOf(c), owner: meId }); have.cards.add(c.id); L.cards.push({ ...c }); }
+    for (const d of m.decks) if (!have.decks.has(d.id) && !gone.decks.has(d.id)) { const { id, ...dd } = d; await S.putDoc(lib, "decks", id, dd); have.decks.add(id); L.decks.push(d); }
+  }
+  const myLib = libSt.players.find((p) => p.id === meId);
+  // Copy out.
+  for (const r of rooms) {
+    const T = states[r]; if (!T) continue;
+    for (const c of L.cards) {
+      const cur = T.cards.find((x) => x.id === c.id);
+      const def = { ...defOf(c), owner: meId };
+      if (cur && same(defOf(cur), def)) continue;
+      const keep = {}; if (cur) for (const k of STATS) if (cur[k] !== undefined) keep[k] = cur[k];
+      await S.putDoc(r, "cards", c.id, { ...def, ...keep });
+    }
+    for (const d of L.decks) {
+      const cur = (T.decks || []).find((x) => x.id === d.id);
+      const { id, ...dd } = d;
+      if (cur && same(strip(cur, ["id"]), dd)) continue;
+      await S.putDoc(r, "decks", id, dd);
+    }
+    for (const id of gone.cards) if (T.cards.some((x) => x.id === id)) await S.delDoc(r, "cards", id);
+    for (const id of gone.decks) if ((T.decks || []).some((x) => x.id === id)) await S.delDoc(r, "decks", id);
+    if (typeof myLib?.chaos === "number") {
+      const p = T.players.find((x) => x.id === meId);
+      if (p && p.chaos !== myLib.chaos) { const { id, ...pd } = p; await S.putDoc(r, "players", id, { ...pd, chaos: myLib.chaos }); }
+    }
+  }
+}
+
+/** The library room needs your player doc (for randomness) before anything else. */
+export async function ensureLibrary(me) {
+  const lib = libRoom(me.id);
+  const st1 = await S.fetchRoom(lib);
+  if (!st1.players.some((p) => p.id === me.id)) await S.putDoc(lib, "players", me.id, { name: me.name, joined: new Date().toISOString() });
+}
+
+/** Library cards shown with this table's counts, so "2 of 3 today" stays true. */
+export function libraryView(libSt, tableSt) {
+  if (!libSt) return null;
+  const byId = new Map((tableSt?.cards || []).map((c) => [c.id, c]));
+  return { ...libSt, cards: libSt.cards.map((c) => { const t = byId.get(c.id); if (!t) return c; const k = {}; for (const f of STATS) if (t[f] !== undefined) k[f] = t[f]; return { ...c, ...k }; }) };
+}
