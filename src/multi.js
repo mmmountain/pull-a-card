@@ -1,4 +1,5 @@
 // Prompt — several tables at once.
+// A paused table (ctx.live leaves it out) gets no copies of your top card and its plays don't count.
 // Every table is its own track: its own turns, plays, maps and hand. You have one top card across
 // all of them. A card "applies" at a table when you have a card with the same name there that's
 // switched on and either sits in an active deck or is required by one of your active maps.
@@ -35,7 +36,7 @@ export function findTop(ctx) {
 /** Every table holding a copy of this top card, starting with `origin`. */
 function copiesOfTop(ctx, origin, t) {
   const out = [];
-  for (const r of [origin, ...ctx.rooms.filter((x) => x !== origin)]) {
+  for (const r of [origin, ...(ctx.live || ctx.rooms).filter((x) => x !== origin)]) {
     const tr = topAt(ctx.states[r], ctx.me.id);
     if (!tr) continue;
     if (r === origin || (t.link && tr.link === t.link)) out.push([r, tr]);
@@ -53,7 +54,7 @@ export async function mirrorTop(ctx, origin) {
   const link = t.link || newId();
   if (!t.link) await S.setTop(origin, ctx.me, { ...t, link });
   let n = 0;
-  for (const r of ctx.rooms) {
+  for (const r of ctx.live || ctx.rooms) {
     if (r === origin || topAt(ctx.states[r], ctx.me.id)) continue;
     const match = applies(ctx.states[r], ctx.me.id, t);
     if (!match) continue;

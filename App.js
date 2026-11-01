@@ -137,12 +137,21 @@ function Game({ profile, setProfile }) {
   const prefs = { ...S.DEFAULT_PREFS, ...(profile.prefs || {}) };
   const { states, error, refresh } = useRooms(rooms);
   const state = states[room];
-  const ctx = { rooms, states, room, me };
+  const paused = profile.paused || [];
+  const ctx = { rooms, live: rooms.filter((r) => !paused.includes(r)), paused, states, room, me };
+  const togglePause = async (r) => {
+    const on = !paused.includes(r);
+    const p = { ...profile, paused: on ? [...paused, r] : paused.filter((x) => x !== r) };
+    await S.saveProfile(p);
+    setProfile(p);
+    say((on ? "Paused " : "Resumed ") + r);
+  };
   const [switcher, setSwitcher] = useState(false);
   const [tab, setTab0] = useState("card");          // play views: table · card · hand
   const [section, setSection] = useState("play");   // drawer: play · decks · me · settings
   const setTab = (t) => { setSection("play"); setTab0(t); };
   const [drawer, setDrawer] = useState(false);
+  const [editReq, setEditReq] = useState(null);     // card id to open in My decks
   const [focusHand, setFocusHand] = useState(null);
   const [msg, setMsg] = useState("");
   const [boardTouch, setBoardTouch] = useState(false);
@@ -191,11 +200,12 @@ function Game({ profile, setProfile }) {
   const planKey = useMemo(() => state && JSON.stringify([
     myDeck(state.cards, state.players, me.id).map((c) => [c.id, c.label, c.every, c.imm, c.active, c.quota, c.amounts, (c.drawLog || []).length, c.deck]),
     (state.decks || []).map((d) => [d.id, d.active]),
-    myChaos(state.players, me.id, state.config.chaos), prefs, state.hands.length, state.plays.length,
-  ]), [state, profile.prefs]);
+    myChaos(state.players, me.id, state.config.chaos), prefs, state.hands.length, state.plays.length, paused.includes(room),
+  ]), [state, profile.prefs, profile.paused]);
   useEffect(() => {
     if (!state) return;
-    const t = setTimeout(() => { N.rescheduleDeals(room, me, prefs, state).catch(() => {}); }, 1500);
+    // A paused table deals nothing to this phone.
+    const t = setTimeout(() => { (paused.includes(room) ? N.cancelKind("deal") : N.rescheduleDeals(room, me, prefs, state)).catch(() => {}); }, 1500);
     return () => clearTimeout(t);
   }, [planKey]);
 
@@ -203,7 +213,7 @@ function Game({ profile, setProfile }) {
   const mirrorKey = state && JSON.stringify([room, state.tables[me.id]?.drawnAt, state.tables[me.id]?.link, rooms.map((r) => !!states[r])]);
   useEffect(() => {
     const t = state?.tables[me.id];
-    if (!t || t.empty || t.link || rooms.some((r) => !states[r])) return;
+    if (!t || t.empty || t.link || paused.includes(room) || rooms.some((r) => !states[r])) return;
     if (rooms.some((r) => r !== room && states[r].tables[me.id] && !states[r].tables[me.id].empty)) return;
     M.mirrorTop(ctx, room).then(refresh).catch(() => {});
   }, [mirrorKey]);
@@ -272,7 +282,7 @@ function Game({ profile, setProfile }) {
   return (
     <SafeAreaView style={st.screen} edges={["top", "left", "right"]}>
       <StatusBar style="dark" />
-      {cardMode && <CardView ctx={ctx} state={state} room={room} me={me} act={act} goTo={(t) => (t === "deck" ? setSection("decks") : setTab(t))} prefs={prefs} say={say} />}
+      {cardMode && <CardView onEdit={async (r, id) => { if (r !== room) await switchTo(r); setEditReq(id); setSection("decks"); }} onTogglePause={togglePause} ctx={ctx} state={state} room={room} me={me} act={act} goTo={(t) => (t === "deck" ? setSection("decks") : setTab(t))} prefs={prefs} say={say} />}
       <View style={st.topRow} pointerEvents="box-none">
         <Pressable onPress={() => setDrawer(true)} style={st.menuBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Open menu">
           <View style={st.menuLine} /><View style={st.menuLine} /><View style={st.menuLine} />
@@ -288,7 +298,7 @@ function Game({ profile, setProfile }) {
       <ScrollView scrollEnabled={!boardTouch} contentContainerStyle={{ padding: 16, paddingBottom: section === "play" ? 48 + WHEEL_H + 24 : 48, gap: 18 }}>
         {section === "play" && tab === "hand" && <HandView ctx={ctx} state={state} room={room} me={me} act={act} focusHand={focusHand} />}
         {section === "play" && tab === "table" && <TableTab ctx={ctx} onPickTable={switchTo} openTables={() => setSwitcher(true)} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
-        {section === "decks" && <DeckView state={state} room={room} me={me} act={act} />}
+        {section === "decks" && <DeckView state={state} room={room} me={me} act={act} editReq={editReq} clearEditReq={() => setEditReq(null)} />}
         {section === "me" && <MeView part="me" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} openSwitcher={() => setSwitcher(true)} onLeave={() => leaveTable(room)} />}
         {section === "settings" && <MeView part="settings" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
       </ScrollView>)}
@@ -301,7 +311,7 @@ function Game({ profile, setProfile }) {
           )}
         </View>
       )}
-      <TableSwitcher open={switcher} ctx={ctx} onClose={() => setSwitcher(false)} onPick={switchTo} onAdd={addTable} onLeave={leaveTable} />
+      <TableSwitcher open={switcher} ctx={ctx} onClose={() => setSwitcher(false)} onPick={switchTo} onAdd={addTable} onLeave={leaveTable} onPause={togglePause} />
       <Drawer open={drawer} setOpen={setDrawer} section={section} name={me.name} room={room}
         onPick={(k) => { setDrawer(false); setSection(k); }} />
     </SafeAreaView>
@@ -311,7 +321,7 @@ function Game({ profile, setProfile }) {
 /* ---------------- card (home) ---------------- */
 // Just the card in front of you. Tap to pull one, then play it or hold it.
 // The card is the whole screen. Everything else sits on top of it.
-function CardView({ ctx, state, room, me, act, goTo, prefs, say }) {
+function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: togglePauseRef, onEdit }) {
   const ins = useSafeAreaInsets();
   const found = M.findTop(ctx);
   const top = found?.t || null, from = found?.room || room;
@@ -355,7 +365,14 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say }) {
                   <Text style={[st.fullSuit, { color: C.suit[top.suit] }]}>{SUIT[top.suit]}</Text>
                   {!!beef && <Text style={st.fullBeef}>{beef}</Text>}
                 </View>
-                <Text style={st.cardKicker}>{(SUIT_NAMES[top.suit] || "").toUpperCase()}</Text>
+                <View style={[st.row, { gap: 12 }]}>
+                  <Text style={st.cardKicker}>{(SUIT_NAMES[top.suit] || "").toUpperCase()}</Text>
+                  {!!card && (
+                    <Pressable onPress={() => onEdit(from, card.id)} hitSlop={10} style={st.editBtn} accessibilityRole="button" accessibilityLabel={"Edit " + top.label}>
+                      <Text style={st.editIcon}>✎</Text>
+                    </Pressable>
+                  )}
+                </View>
               </View>
               <View style={st.cardRule} />
               <View style={{ flex: 1, justifyContent: "center", alignItems: "center", gap: 14 }}>
@@ -393,6 +410,12 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say }) {
             <Text style={st.swipeHint}>↑ play · ↓ hold · ← too soon · → not now</Text>
           </View>
         </>
+      ) : ctx.paused.includes(room) ? (
+        <View style={[st.home, { paddingTop: ins.top + padTop }]}>
+          <Text style={[st.h2, { textAlign: "center" }]}>⏸ {room} is paused</Text>
+          <Text style={[st.note, { maxWidth: 300 }]}>Nothing is dealt here and your plays don't count here until you resume it.</Text>
+          <Btn primary label="Resume this table" onPress={() => togglePauseRef(room)} />
+        </View>
       ) : canPull ? (
         <Pressable onPress={() => act(() => M.drawAll(ctx, prefs))} style={[st.fullBack, { top: ins.top + 6 }]} accessibilityRole="button" accessibilityLabel="Tap to pull a card">
           <View style={st.fullBackInner}><View style={st.drawBtn}><Text style={st.drawTxt}>Tap to pull a card</Text></View></View>
@@ -680,7 +703,7 @@ function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, set
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, alignItems: "center" }}>
           {ctx.rooms.map((r) => (
             <Pressable key={r} onPress={() => onPickTable(r)} style={[st.tableChip, r === room && st.tableChipOn]} accessibilityRole="tab" accessibilityState={{ selected: r === room }}>
-              <Text style={[st.tableChipTxt, r === room && { color: C.ink }]}>{r}</Text>
+              <Text style={[st.tableChipTxt, r === room && { color: C.ink }]}>{ctx.paused.includes(r) ? "⏸ " : ""}{r}</Text>
             </Pressable>
           ))}
           <Pressable onPress={openTables} style={st.tableChip} accessibilityRole="button" accessibilityLabel="Join or leave tables">
@@ -986,7 +1009,7 @@ function TableView({ state, me }) {
 }
 
 /* ---------------- deck ---------------- */
-function DeckView({ state, room, me, act }) {
+function DeckView({ state, room, me, act, editReq, clearEditReq }) {
   const [edit, setEdit] = useState(null);
   const [lib, setLib] = useState(false);
   const [newName, setNewName] = useState("");
@@ -999,6 +1022,13 @@ function DeckView({ state, room, me, act }) {
   const cards = all.filter((c) => deckOf(c, me.id) === deck.id).sort((a, b) => a.label.localeCompare(b.label));
   const pick = (id) => { setSel(id); setArm(false); };
   const chaos = myChaos(state.players, me.id, state.config.chaos);
+  // Opened from the ✎ on a card: jump to its deck and open its editor.
+  useEffect(() => {
+    if (!editReq) return;
+    const c = state.cards.find((x) => x.id === editReq);
+    if (c) { setSel(deckOf(c, me.id)); setEdit(c); }
+    clearEditReq();
+  }, [editReq, state]);
   return (
     <>
       <View style={st.panel}>
@@ -1258,7 +1288,7 @@ function Drawer({ open, setOpen, section, name, room, onPick }) {
 
 /* ---------------- table switcher ---------------- */
 // Your tables, each with what's waiting there. Add another by name; a friend who types the same name sits with you.
-function TableSwitcher({ open, ctx, onClose, onPick, onAdd, onLeave }) {
+function TableSwitcher({ open, ctx, onClose, onPick, onAdd, onLeave, onPause }) {
   const [arm, setArm] = useState(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1281,12 +1311,15 @@ function TableSwitcher({ open, ctx, onClose, onPick, onAdd, onLeave }) {
           return (
             <Pressable key={r} onPress={() => onPick(r)} style={[st.tableRow, on && st.tableRowOn]} accessibilityRole="button" accessibilityState={{ selected: on }}>
               <View style={{ flex: 1, gap: 2 }}>
-                <Text style={st.h3} numberOfLines={1}>{r}</Text>
+                <Text style={[st.h3, ctx.paused.includes(r) && { color: C.muted }]} numberOfLines={1}>{ctx.paused.includes(r) ? "⏸ " : ""}{r}</Text>
                 <Text style={[st.note, { textAlign: "left" }]} numberOfLines={1}>
                   {!s1 ? "Loading…" : [t && !t.empty ? "▶ " + t.label : null, held + " held", maps ? maps + (maps === 1 ? " map" : " maps") : null, others ? "+" + others + (others === 1 ? " player" : " players") : "solo"].filter(Boolean).join(" · ")}
                 </Text>
               </View>
               {on && <View style={st.check}><Text style={st.checkTxt}>✓</Text></View>}
+              <Pressable onPress={() => onPause(r)} hitSlop={8} style={st.leaveBtn} accessibilityRole="button" accessibilityLabel={(ctx.paused.includes(r) ? "Resume " : "Pause ") + r}>
+                <Text style={st.leaveTxt}>{ctx.paused.includes(r) ? "▶ Resume" : "⏸ Pause"}</Text>
+              </Pressable>
               <Pressable onPress={() => { if (arm === r) { setArm(null); onLeave(r); } else setArm(r); }} hitSlop={8} style={[st.leaveBtn, arm === r && { borderColor: C.hot }]} accessibilityRole="button" accessibilityLabel={"Leave " + r}>
                 <Text style={[st.leaveTxt, arm === r && { color: C.hot }]}>{arm === r ? "Tap to leave" : "Leave"}</Text>
               </Pressable>
@@ -1503,6 +1536,8 @@ function makeStyles() { return StyleSheet.create({
   wheelDot: { position: "absolute", top: 8, width: 6, height: 6, marginLeft: -3, borderRadius: 3, backgroundColor: C.accent },
   cardFrame: { position: "absolute", left: 12, right: 12, bottom: 12, borderRadius: 16, borderWidth: 1.5, borderColor: C.line },
   cardHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 10 },
+  editBtn: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", borderWidth: 1.5, borderColor: C.line },
+  editIcon: { fontSize: 18, color: C.ink },
   cardKicker: { fontSize: 11, fontWeight: "800", letterSpacing: 2.5, color: C.muted },
   cardRule: { height: 1.5, backgroundColor: C.line, marginHorizontal: -4 },
   titleRule: { width: 120, height: 1.5, backgroundColor: C.line, alignItems: "center", justifyContent: "center" },
