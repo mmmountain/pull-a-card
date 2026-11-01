@@ -1,6 +1,6 @@
 {
-  "name": "Pull a Card",
-  "short_name": "Pull a Card",
+  "name": "Prompt",
+  "short_name": "Prompt",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
