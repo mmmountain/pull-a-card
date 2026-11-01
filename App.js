@@ -11,7 +11,7 @@ import * as S from "./src/store";
 import * as N from "./src/notify";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, randomTheme } from "./src/theme";
-import { myChaos, myDeck, stackPlays, lastMove, drawable } from "./src/model";
+import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
@@ -228,13 +228,16 @@ function CardView({ state, room, me, act, goTo }) {
       await N.scheduleReminder(room, handId, top, at);
     }, "Held. Reminder at " + fmtTime(at));
   };
+  const locks = activeLocks(state.cards, state.hands, me.id);
+  const blocked = top && !canPlay(locks, [top.cardId]);
   return (
     <View style={st.home}>
+      {!!locks.length && <LockBanner locks={locks} />}
       {top ? (
         <>
           <BigCard t={top} />
           <View style={[st.row, { width: 280, maxWidth: "80%" }]}>
-            <Btn primary flex label="Play" onPress={() => act(() => S.playCard(room, me, top), "Played: " + top.label)} />
+            <Btn primary flex label={blocked ? "Locked" : "Play"} disabled={blocked} onPress={() => act(() => S.playCard(room, me, top), "Played: " + top.label)} />
             <Btn flex label="Hold" onPress={() => act(() => S.holdCard(room, me, top), "Held: " + top.label)} />
           </View>
           <Pressable onPress={() => setLater(true)} hitSlop={10}><Text style={st.link}>Remind me later</Text></Pressable>
@@ -271,6 +274,8 @@ function HandView({ state, room, me, act, focusHand }) {
   const picked = hand.filter((h) => sel.includes(h.id));
   const toggle = (id) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   const myTurn = state.game.active === me.id;
+  const locks = activeLocks(state.cards, state.hands, me.id);
+  const blocked = picked.length > 0 && !canPlay(locks, picked.map((h) => h.cardId));
   const setReminder = async (at) => {
     const h = later; setLater(null);
     await act(async () => { await S.setRemind(room, h.id, at); await N.scheduleReminder(room, h.id, h, at); }, "Reminder at " + fmtTime(at));
@@ -278,6 +283,7 @@ function HandView({ state, room, me, act, focusHand }) {
   if (!hand.length) return <View style={{ paddingTop: 60, gap: 8 }}><Text style={st.h2}>Empty hand.</Text><Text style={[st.note, { textAlign: "left" }]}>Cards you hold show up here.</Text></View>;
   return (
     <>
+      {!!locks.length && <LockBanner locks={locks} />}
       <Text style={st.label}>{hand.length} HELD · TAP TO SELECT{picked.length > 1 ? " · " + picked.length + " SELECTED" : ""}</Text>
       <View style={st.handGrid}>
         {hand.map((h) => {
@@ -299,7 +305,7 @@ function HandView({ state, room, me, act, focusHand }) {
       </View>
       {picked.length === 1 && (
         <View style={st.row}>
-          <Btn primary flex label="Play it" onPress={() => { setSel([]); act(() => S.playCombo(room, me, [picked[0].id]), "Played: " + picked[0].label); }} />
+          <Btn primary flex label={blocked ? "Locked" : "Play it"} disabled={blocked} onPress={() => { setSel([]); act(() => S.playCombo(room, me, [picked[0].id]), "Played: " + picked[0].label); }} />
           <Btn flex label="Remind" onPress={() => setLater(picked[0])} />
           <Btn flex label="Discard" onPress={() => { setSel([]); act(() => S.discardFromHand(room, me, picked[0].id), "Discarded: " + picked[0].label); }} />
         </View>
@@ -308,7 +314,7 @@ function HandView({ state, room, me, act, focusHand }) {
         <View style={{ gap: 8 }}>
           <Text style={[st.note, { textAlign: "left" }]}>{picked.map((h) => h.label).join(" + ")}</Text>
           <View style={st.row}>
-            <Btn primary flex label={"Play " + picked.length + " together"} onPress={() => { const ids = picked.map((h) => h.id); setSel([]); act(() => S.playCombo(room, me, ids), "Played together"); }} />
+            <Btn primary flex label={blocked ? "Locked" : "Play " + picked.length + " together"} disabled={blocked} onPress={() => { const ids = picked.map((h) => h.id); setSel([]); act(() => S.playCombo(room, me, ids), "Played together"); }} />
             <Btn flex label="Clear" onPress={() => setSel([])} />
           </View>
           {!myTurn && <Text style={[st.note, { textAlign: "left" }]}>It's not your turn, but you can still play.</Text>}
@@ -317,6 +323,10 @@ function HandView({ state, room, me, act, focusHand }) {
       <LaterSheet open={!!later} label={later?.label} onClose={() => setLater(null)} onPick={setReminder} />
     </>
   );
+}
+
+function LockBanner({ locks }) {
+  return <View style={st.lock}><Text style={st.lockTxt}>🔒 {lockMessage(locks)}</Text></View>;
 }
 
 /* Solitaire-style stack: one edge per card underneath, the newest card face up on top. */
@@ -484,6 +494,9 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
         <Text style={st.label}>IMMEDIACY</Text>
         <View style={st.chips}>{[1, 2, 3, 4, 5].map((i) => <Chip key={i} label={String(i)} on={c.imm === i} onPress={() => setC({ ...c, imm: i })} />)}</View>
         <Text style={[st.note, { textAlign: "left" }]}>4 and 5 ring louder and show over the lock screen.</Text>
+        <Text style={st.label}>LOCK WHEN HOLDING</Text>
+        <View style={st.chips}>{[0, 2, 3, 4, 5].map((n) => <Chip key={n} label={n ? n + " held" : "Never"} on={(c.lockAt || 0) === n} onPress={() => setC({ ...c, lockAt: n || null })} />)}</View>
+        <Text style={[st.note, { textAlign: "left" }]}>While you hold this many, it's the only card you can play.</Text>
         <View style={[st.row, { justifyContent: "space-between" }]}><Text style={st.h3}>In the deck</Text><Switch value={c.active !== false} onValueChange={(v) => setC({ ...c, active: v })} trackColor={{ true: C.accent }} /></View>
         <View style={st.row}>
           <Btn primary flex label="Save" onPress={save} />
@@ -649,6 +662,8 @@ function makeStyles() { return StyleSheet.create({
   stackEdge: { position: "absolute", left: 0, width: 72, height: 100, borderRadius: 8, backgroundColor: C.paper, borderWidth: 1, borderColor: C.line, borderTopWidth: 3, elevation: 1 },
   stackTop: { position: "absolute", left: 0, marginLeft: 0, width: 72, height: 100, borderTopWidth: 3, borderWidth: 1, borderColor: C.line },
   stackN: { fontSize: 11, fontWeight: "800", color: C.ink },
+  lock: { alignSelf: "stretch", backgroundColor: C.paper, borderRadius: 12, borderWidth: 2, borderColor: C.hot, padding: 12 },
+  lockTxt: { color: C.ink, fontWeight: "600", fontSize: 14 },
   toast: { position: "absolute", left: 16, right: 16, bottom: 24, backgroundColor: C.ink, borderRadius: 12, padding: 12 },
   toastTxt: { color: C.bg, textAlign: "center", fontWeight: "600" },
 }); }

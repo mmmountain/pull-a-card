@@ -78,7 +78,8 @@ export async function rescheduleDeals(room, me, prefs, state) {
   const chaos = myChaos(state.players, me.id, state.config?.chaos ?? 30);
   const times = planDealTimes({ everyMins: prefs.everyMins, chaos, startHour: prefs.startHour, endHour: prefs.endHour });
   const cards = myDeck(state.cards, state.players, me.id).map((c) => ({ ...c }));
-  const busy = [...state.hands.map((h) => h.cardId), ...Object.values(state.tables).filter((t) => !t.empty).map((t) => t.cardId)];
+  const up = state.tables[me.id];
+  const busy = up && !up.empty ? [up.cardId] : [];
   const out = [];
   for (const when of times) {
     const k = pickCard(cards, busy, chaos, when.getTime());
@@ -174,7 +175,7 @@ export async function handleResponse(resp) {
   if (data.kind === "deal") {
     const t = data.card;
     if (action === "play") {
-      await S.playCard(room, me, t);
+      try { await S.playCard(room, me, t); } catch (e) { await confirm("Can't play " + t.label, String(e.message || e)); return null; }
       await dismiss();
     } else if (action === "hold") {
       await S.holdCard(room, me, t);
@@ -195,7 +196,7 @@ export async function handleResponse(resp) {
   if (data.kind === "reminder") {
     const { handId, card } = data;
     if (action === "play") {
-      await S.playFromHand(room, me, handId);
+      try { await S.playFromHand(room, me, handId); } catch (e) { await confirm("Can't play " + card.label, String(e.message || e)); return null; }
       await dismiss();
     } else if (action === "discard") {
       await S.discardFromHand(room, me, handId);

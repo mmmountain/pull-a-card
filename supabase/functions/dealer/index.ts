@@ -111,7 +111,7 @@ Deno.serve(async (req) => {
     if (top && !top.empty) {
       await send("Still up: " + line(top), `Turn ${game.turn || 1} · Play, hold, or later`, "deal");
     } else {
-      const busy = [...hands.map((x: any) => x.cardId), ...Object.values(tables).filter((t: any) => !t.empty).map((t: any) => t.cardId)];
+      const busy: string[] = []; // repeats allowed; this player's table is empty here
       const k = pickCard(cards, busy, chaos, now.getTime());
       if (k) {
         const vs = (k.variants || []).filter(Boolean);
