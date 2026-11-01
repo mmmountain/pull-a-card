@@ -1,6 +1,6 @@
 import * as S from "./store.js";
 import { ORIGINAL, randomTheme } from "./theme.js";
-import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel } from "./model.js";
+import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./model.js";
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./model.js";
 import { SUIT, SUITS, ago, fmtTime, heat, newId, parseLater } from "./model.js";
 
@@ -206,6 +206,10 @@ function editSheet() {
     <p class="note left">${amts.length ? `Deals add up to exactly ${n} ${esc(c.label || "")} ${PERIODS[q.per]}, spread out. Bigger amounts mean fewer deals.` : `Dealt exactly ${n} time${n === 1 ? "" : "s"} ${PERIODS[q.per]}, spread out.`}</p>
     <h3>Suit</h3><div class="chips">${SUITS.map((s) => `<button class="chip" aria-pressed="${c.suit === s}" data-esuit="${s}">${SUIT[s]} ${s}</button>`).join("")}</div>
     <h3>Immediacy</h3><div class="chips">${[1, 2, 3, 4, 5].map((i) => `<button class="chip" aria-pressed="${c.imm === i}" data-eimm="${i}">${i}</button>`).join("")}</div>
+    <h3>Timing (optional)</h3>
+    <label><span class="lbl">Can be dealt from</span><input type="text" id="eOpens" value="${c.opensAt ? esc(fmtTime(hmDate(c.opensAt))) : ""}" placeholder="9:30pm"></label>
+    <label><span class="lbl">Urgent from (nags until played)</span><input type="text" id="eTake" value="${c.takeover ? esc(fmtTime(hmDate(c.takeover))) : ""}" placeholder="10:30pm"></label>
+    <p class="note left">${c.takeover ? `From ${fmtTime(hmDate(c.takeover))} until you play it, it's the only card you can play and your phone gets a notification every 10 minutes.` : "Leave empty for a normal card."}</p>
     <h3>Wait between plays</h3>
     ${[["self", "After this same card"], ["suit", `After any ${SUIT[c.suit]} ${c.suit} card`], ["any", "After any card"]].map(([k, l]) => `<p class="note left" style="color:var(--ink)">${l}</p><div class="chips">${BUFFER_STEPS.map(([m, ml]) => `<button class="chip" aria-pressed="${(c.buffer?.[k] || 0) === m}" data-ebuf="${k}:${m}">${ml}</button>`).join("")}</div>`).join("")}
     <p class="note left">It can still be held, but it can't be played or dealt until the wait is over.</p>
@@ -379,18 +383,22 @@ function readEdit() {
   const amts = document.getElementById("eAmts").value.split(/[ ,]+/).map(Number).filter((x) => x > 0);
   c.amounts = amts.length ? amts : null;
   c.active = document.getElementById("eOn").checked;
+  const tm = (id) => { const v = document.getElementById(id)?.value.trim(); if (!v) return null; const d = parseLater(v, new Date(2026, 0, 1, 0, 0)); return d ? toHM(d) : undefined; };
+  const o = tm("eOpens"), k = tm("eTake");
+  if (o !== undefined) c.opensAt = o;
+  if (k !== undefined) c.takeover = k;
   c.quota = { ...c.quota, n: Math.max(1, +document.getElementById("eQn").value || 1) };
 }
 
 function start() {
   unsub?.();
   render();
-  S.ensureDeck(profile.room, profile.me).catch(() => {}).finally(refresh);
+  S.ensureDeck(profile.room, profile.me).catch(() => {}).then(() => S.claimTakeover(profile.room, profile.me, profile.prefs || {})).catch(() => {}).finally(refresh);
   loadPush().then(() => tab === "me" && render());
   unsub = S.subscribeRoom(profile.room, () => { clearTimeout(refreshT); refreshT = setTimeout(refresh, 250); });
 }
 
 if ("serviceWorker" in navigator) swReg().catch(() => {});
-document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && profile?.room) S.claimTakeover(profile.room, profile.me, profile.prefs || {}).catch(() => {}).finally(refresh); });
 setInterval(() => { if (profile?.room && state && !sheet && !document.hidden && tab !== "me") render(); }, 60000);
 if (profile?.room) start(); else render();
