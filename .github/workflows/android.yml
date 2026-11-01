@@ -1,4 +1,4 @@
-name: Ship Pull a Card
+name: Ship Prompt
 
 # Every push to main:
 #   web     → republishes the iPhone/web app (gh-pages)
@@ -122,7 +122,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Pull a Card build ${{ github.run_number }}
+          name: Prompt build ${{ github.run_number }}
           make_latest: true
           body: |
             Install this only if Claude says a reinstall is needed. Everyday changes arrive on their own.
