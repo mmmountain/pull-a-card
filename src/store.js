@@ -413,6 +413,10 @@ export async function setDeckActive(room, me, deck, active) {
   const { id, ...data } = deck;
   await upsert(room, "decks", id, { ...data, owner: me.id, name: deck.name, active });
 }
+export async function setDeckEmoji(room, me, deck, emoji) {
+  const { id, ...data } = deck;
+  await upsert(room, "decks", id, { ...data, owner: me.id, name: deck.name, emoji: emoji || null });
+}
 export async function renameDeck(room, me, deck, name) {
   const { id, ...data } = deck;
   await upsert(room, "decks", id, { ...data, owner: me.id, name });

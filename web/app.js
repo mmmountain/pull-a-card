@@ -78,7 +78,7 @@ function cardView() {
   const blocked = top && (!canPlay(locks, [top.cardId]) || !!wait);
   return `<section class="stage home">${lockBanner(locks)}${top
       ? `<div class="swipe" data-blocked="${blocked ? esc(wait ? "Not yet. " + bufferMessage(wait) : lockMessage(locks)) : ""}">${bigCard(top, quotaLabel(state.cards.find((c) => c.id === top.cardId) || {}, Date.now(), profile.prefs || {}))}<span class="swipetag" hidden></span></div>
-        <p class="note">↑ play · ↓ hold · ← too soon · → not now · lean to adjust</p><div class="row actions"><button class="btn primary" data-act="play" ${blocked ? "disabled" : ""}>${wait ? "Wait" : blocked ? "Locked" : "Play"}</button><button class="btn" data-act="hold">Hold</button></div>${wait ? `<p class="note" style="max-width:300px">⏳ ${esc(bufferMessage(wait))}</p>` : ""}<button class="link" data-act="later-top">Remind me later</button>`
+        <p class="note">↑ play · ↓ hold · ← less often · → snooze 30 min</p><div class="row actions"><button class="btn primary" data-act="play" ${blocked ? "disabled" : ""}>${wait ? "Wait" : blocked ? "Locked" : "Play"}</button><button class="btn" data-act="hold">Hold</button></div>${wait ? `<p class="note" style="max-width:300px">⏳ ${esc(bufferMessage(wait))}</p>` : ""}<button class="link" data-act="later-top">Snooze…</button>`
       : !drawable(state.cards, state.players, state.hands, state.tables, me.id, state.decks).length
       ? `<h2 style="text-align:center">Nothing left to pull</h2><p class="note" style="max-width:300px">${state.hands.some((h) => h.seat === me.id) ? "Every card in your deck is in your hand. Play or discard some to put them back in the deck." : "Your deck is empty or switched off. Add a card in the Deck tab."}</p><div class="row actions"><button class="btn primary" data-tab="hand">Open hand</button><button class="btn" data-tab="deck">Add a card</button></div>`
       : `<button class="deck" data-act="draw" aria-label="Tap to pull a card"><span class="back"></span><span class="back"></span><span class="back"></span><span class="pull">Tap to pull a card</span></button>`}
@@ -323,7 +323,7 @@ function laterSheet() {
   const label = sheet.kind === "top" ? state.tables[profile.me.id]?.label : state.hands.find((h) => h.id === sheet.id)?.label;
   const now = new Date(), plus = (m) => new Date(now.getTime() + m * 6e4), at = (h) => { const d = new Date(now); d.setHours(h, 0, 0, 0); return d; };
   const quick = [["30 min", plus(30)], ["1 hour", plus(60)], ["2 hours", plus(120)], ["5 PM", at(17)], ["8 PM", at(20)]].filter(([, d]) => d - now > 60e3);
-  return `<div class="scrim" data-act="close"></div><div class="sheet" role="dialog" aria-label="Remind me later">
+  return `<div class="scrim" data-act="close"></div><div class="sheet" role="dialog" aria-label="Snooze">
     <h3>Remind me about</h3><h2>${esc(label || "")}</h2>
     <div class="chips">${quick.map(([l, d]) => `<button class="chip" data-at="${d.toISOString()}">${l}</button>`).join("")}</div>
     <div class="row"><input type="text" id="laterTxt" placeholder="3pm, 5:30, in 2h"><button class="btn primary auto" data-act="laterset">Set</button></div>

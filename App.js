@@ -16,7 +16,7 @@ import { ORIGINAL, randomTheme } from "./src/theme";
 import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./src/model";
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
-import { DECK_LIBRARY, deckOf, everydayId, myDecks } from "./src/model";
+import { DECK_LIBRARY, deckOf, everydayId, myDecks, deckEmoji, cardEmojis } from "./src/model";
 import { SUIT_NAMES, MAP_LIBRARY, PER_NAMES, amountText, canPlayAt, describeAccepts, fitsSpots, jitter, live, parseWhen, shapeEdges, shortWhen, spotPos, spotState } from "./src/maps";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
@@ -352,6 +352,7 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
     const others = (s1?.players || []).filter((p) => p.id !== me.id);
     return { room: r, maps, with: others.length === 1 ? others[0].name || "1 player" : others.length ? String(others.length) : "" };
   });
+  const emojis = top ? cardEmojis(ctx.states[M.libRoom(me.id)] || fromState, me.id, top.base || top.label) : [];
   const sc = top ? C.suit[top.suit] : C.accent;
   const tint = mix(C.paper, sc, 0.3), ink2 = mix(sc, C.ink, 0.45);
   const [later, setLater] = useState(false);
@@ -410,6 +411,11 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
                 {!!locks.length && <Text style={[st.fullVar, { color: C.hot }]}>🔒 {lockMessage(locks)}</Text>}
                 {!!wait && <Text style={[st.fullVar, { color: C.hot }]}>⏳ {bufferMessage(wait)}</Text>}
               </View>
+              {!!emojis.length && (
+                <View style={[st.deckLogo, { left: 28, bottom: padBottom + 148, borderColor: ink2 }]} accessibilityLabel={"Deck " + emojis.join(" ")}>
+                  {emojis.map((e) => <Text key={e} style={st.deckLogoTxt}>{e}</Text>)}
+                </View>
+              )}
               <View style={[st.fullCorner, { position: "absolute", right: 28, bottom: padBottom + 150, transform: [{ rotate: "180deg" }] }]}>
                 <Text style={[st.fullSuit, { fontSize: 24, color: sc }]}>{SUIT[top.suit]}</Text>
                 {!!beef && <Text style={[st.fullBeef, { fontSize: 30, lineHeight: 34, color: ink2 }]}>{beef}</Text>}
@@ -431,8 +437,8 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
               <Btn primary flex label={wait ? "Wait" : blocked ? "Locked" : "Play"} disabled={blocked} onPress={() => act(() => M.playTop(ctx, from, top), "Played: " + top.label)} />
               <Btn flex label="Hold" onPress={() => act(() => M.holdTop(ctx, from, top), "Held: " + top.label)} />
             </View>
-            <Pressable onPress={() => setLater(true)} hitSlop={10}><Text style={st.link}>Remind me later</Text></Pressable>
-            <Text style={st.swipeHint}>↑ play · ↓ hold · ← too soon · → not now</Text>
+            <Pressable onPress={() => setLater(true)} hitSlop={10}><Text style={st.link}>Snooze…</Text></Pressable>
+            <Text style={st.swipeHint}>↑ play · ↓ hold · ← less often · → snooze 30 min</Text>
           </View>
         </>
       ) : ctx.paused.includes(room) ? (
@@ -498,7 +504,7 @@ function HandView({ ctx, state, room, me, act, focusHand }) {
         style={[st.mini, { backgroundColor: mix(C.paper, C.suit[h.suit] || C.accent, 0.28), borderTopColor: C.suit[h.suit], borderTopWidth: 6 }, g.here ? st.miniGrid : st.miniAway, hot === "warm" && { borderColor: C.warm }, hot === "hot" && { borderColor: C.hot }, on && st.miniSel]}>
         <View style={[st.row, { justifyContent: "space-between" }]}>
           <Text style={[st.miniMeta, { color: C.suit[h.suit], fontSize: 15 }]}>{SUIT[h.suit]}{(h.beef ?? cardOf(g)?.beef) ? <Text style={st.miniBeef}> {h.beef ?? cardOf(g)?.beef}</Text> : null}</Text>
-          {on && <View style={st.check}><Text style={st.checkTxt}>✓</Text></View>}
+          {on ? <View style={st.check}><Text style={st.checkTxt}>✓</Text></View> : <Text style={{ fontSize: g.here ? 15 : 11 }}>{cardEmojis(ctx.states[M.libRoom(me.id)] || ctx.states[g.places[0].room], me.id, h.base || h.label).join("")}</Text>}
         </View>
         <Text style={g.here ? st.miniLabel : st.miniLabelAway} numberOfLines={g.here ? 3 : 2}>{h.label}</Text>
         {g.here && !!h.variant && <Text style={st.miniMeta} numberOfLines={2}>{h.variant}</Text>}
@@ -1067,17 +1073,19 @@ function DeckView({ state, room, me, act, editReq, clearEditReq }) {
       <View style={{ gap: 8 }}>
         <Text style={st.label}>YOUR DECKS · ONLY YOU SEE THEM</Text>
         <View style={st.chips}>
-          {decks.map((d) => <Chip key={d.id} label={(d.active ? "" : "○ ") + d.name + " · " + count(d)} on={d.id === deck.id} onPress={() => pick(d.id)} />)}
+          {decks.map((d) => <Chip key={d.id} label={(d.active ? "" : "○ ") + (deckEmoji(d) ? deckEmoji(d) + " " : "") + d.name + " · " + count(d)} on={d.id === deck.id} onPress={() => pick(d.id)} />)}
           <Chip label="+ Add deck" on={false} onPress={() => setLib(true)} />
         </View>
         <View style={st.panel}>
           <View style={[st.row, { justifyContent: "space-between" }]}>
             <View style={{ flex: 1 }}>
-              <Text style={st.h3}>{deck.name}</Text>
+              <Text style={st.h3}>{deckEmoji(deck) ? deckEmoji(deck) + "  " : ""}{deck.name}</Text>
               <Text style={[st.note, { textAlign: "left" }]}>{deck.active ? "Cards are dealt from this deck." : "Paused. Nothing is dealt from this deck."}</Text>
             </View>
             <Switch value={deck.active} onValueChange={(v) => act(() => S.setDeckActive(room, me, deck, v), (v ? "Dealing from " : "Paused ") + deck.name)} trackColor={{ true: C.accent }} />
           </View>
+          <Text style={st.label}>DECK LOGO · SHOWS ON EVERY CARD FROM THIS DECK</Text>
+          <EmojiPicker value={deckEmoji(deck)} onPick={(e) => act(() => S.setDeckEmoji(room, me, deck, e), e ? "Logo " + e : "Logo removed")} />
           {deck.id !== everydayId(me.id) && (
             <Btn danger={arm} label={arm ? "Tap again to delete " + deck.name + " and its cards" : "Delete deck"} onPress={() => {
               if (!arm) return setArm(true);
@@ -1258,6 +1266,27 @@ function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitc
       <TakeoverPanel act={act} />
       <Text style={st.note}>Version {Updates.createdAt ? Updates.createdAt.toLocaleString() : "built-in"}{Updates.isEmbeddedLaunch ? "" : " · updated"}</Text>
     </>
+  );
+}
+
+/* ---------------- deck logo picker ---------------- */
+const EMOJIS = ["☀️", "🌙", "🏋️", "🏃", "🧘", "💧", "🥗", "🧹", "🏠", "💼", "📚", "🎸", "🎨", "🌱", "🐕", "💤", "🧠", "❤️", "⭐", "🔥", "⚡", "🎯", "🛠️", "💰"];
+function EmojiPicker({ value, onPick }) {
+  const [txt, setTxt] = useState("");
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={st.chips}>
+        {EMOJIS.map((e) => (
+          <Pressable key={e} onPress={() => onPick(e === value ? null : e)} style={[st.emojiCell, e === value && st.emojiCellOn]} accessibilityRole="button" accessibilityState={{ selected: e === value }} accessibilityLabel={"Logo " + e}>
+            <Text style={{ fontSize: 22 }}>{e}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <View style={st.row}>
+        <TextInput value={txt} onChangeText={setTxt} placeholder="Or type any emoji" placeholderTextColor={C.muted} style={[st.input, { flex: 1 }]} maxLength={8} />
+        <Btn label="Use" disabled={!txt.trim()} onPress={() => { onPick(txt.trim()); setTxt(""); }} />
+      </View>
+    </View>
   );
 }
 
@@ -1570,6 +1599,10 @@ function makeStyles() { return StyleSheet.create({
   whereLine: { fontSize: 14, fontWeight: "800", color: C.ink, textAlign: "center" },
   whereDim: { fontWeight: "500", color: C.muted },
   cardHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 10 },
+  deckLogo: { position: "absolute", flexDirection: "row", gap: 2, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1.5, backgroundColor: C.paper },
+  deckLogoTxt: { fontSize: 22 },
+  emojiCell: { width: 44, height: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.paper, borderWidth: 2, borderColor: "transparent" },
+  emojiCellOn: { borderColor: C.accent },
   editBtn: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", borderWidth: 1.5, borderColor: C.line },
   editIcon: { fontSize: 18, color: C.ink },
   cardKicker: { fontSize: 11, fontWeight: "800", letterSpacing: 2.5, color: C.muted },
