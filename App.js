@@ -139,7 +139,10 @@ function Game({ profile, setProfile }) {
   const state = states[room];
   const ctx = { rooms, states, room, me };
   const [switcher, setSwitcher] = useState(false);
-  const [tab, setTab] = useState("card");
+  const [tab, setTab0] = useState("card");          // play views: table · card · hand
+  const [section, setSection] = useState("play");   // drawer: play · decks · me · settings
+  const setTab = (t) => { setSection("play"); setTab0(t); };
+  const [drawer, setDrawer] = useState(false);
   const [focusHand, setFocusHand] = useState(null);
   const [msg, setMsg] = useState("");
   const [boardTouch, setBoardTouch] = useState(false);
@@ -237,31 +240,43 @@ function Game({ profile, setProfile }) {
   return (
     <SafeAreaView style={st.screen} edges={["top", "left", "right"]}>
       <StatusBar style="dark" />
-      <Pressable onPress={() => setSwitcher(true)} style={st.tableBar} accessibilityRole="button" accessibilityLabel={"Table " + room + ". Switch tables"}>
-        <Text style={st.tableBarLbl}>TABLE</Text>
-        <Text style={st.tableBarName} numberOfLines={1}>{room}</Text>
-        {rooms.length > 1 && <Text style={st.tableBarLbl}>{rooms.indexOf(room) + 1} of {rooms.length}</Text>}
-        <Text style={st.tableBarCaret}>▾</Text>
-      </Pressable>
-      <View style={st.header}>
-        <View style={st.tabs}>
-          {[["card", "Card"], ["hand", "Hand"], ["table", "Table"], ["deck", "Deck"], ["me", "Me"]].map(([k, l]) => (
-            <Pressable key={k} onPress={() => setTab(k)} style={[st.tab, tab === k && st.tabOn]} accessibilityRole="tab" accessibilityState={{ selected: tab === k }}>
-              <Text style={[st.tabTxt, tab === k && st.tabTxtOn]}>{l}</Text>
-            </Pressable>
-          ))}
-        </View>
-        <Text style={st.handCount}>HAND <Text style={st.handN}>{hereN}</Text>{groups.length > hereN ? <Text style={st.handCount}> +{groups.length - hereN}</Text> : null}</Text>
+      <View style={st.topRow}>
+        <Pressable onPress={() => setDrawer(true)} style={st.menuBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Open menu">
+          <View style={st.menuLine} /><View style={st.menuLine} /><View style={st.menuLine} />
+        </Pressable>
+        <Pressable onPress={() => setSwitcher(true)} style={st.tableBar} accessibilityRole="button" accessibilityLabel={"Table " + room + ". Switch tables"}>
+          <Text style={st.tableBarLbl}>TABLE</Text>
+          <Text style={st.tableBarName} numberOfLines={1}>{room}</Text>
+          {rooms.length > 1 && <Text style={st.tableBarLbl}>{rooms.indexOf(room) + 1} of {rooms.length}</Text>}
+          <Text style={st.tableBarCaret}>▾</Text>
+        </Pressable>
       </View>
-      {tab === "card" ? <CardView ctx={ctx} state={state} room={room} me={me} act={act} goTo={setTab} prefs={prefs} say={say} /> : (
+      {section === "play" ? (
+        <View style={st.header}>
+          <View style={st.tabs}>
+            {[["table", "Table"], ["card", "Card"], ["hand", "Hand"]].map(([k, l]) => (
+              <Pressable key={k} onPress={() => setTab(k)} style={[st.tab, tab === k && st.tabOn]} accessibilityRole="tab" accessibilityState={{ selected: tab === k }}>
+                <Text style={[st.tabTxt, tab === k && st.tabTxtOn]}>{l}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={st.handCount}>HAND <Text style={st.handN}>{hereN}</Text>{groups.length > hereN ? <Text style={st.handCount}> +{groups.length - hereN}</Text> : null}</Text>
+        </View>
+      ) : (
+        <View style={st.header}><Text style={st.h2}>{SECTIONS.find((x) => x[0] === section)[1]}</Text></View>
+      )}
+      {section === "play" && tab === "card" ? <CardView ctx={ctx} state={state} room={room} me={me} act={act} goTo={(t) => (t === "deck" ? setSection("decks") : setTab(t))} prefs={prefs} say={say} /> : (
       <ScrollView scrollEnabled={!boardTouch} contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 18 }}>
-        {tab === "hand" && <HandView ctx={ctx} state={state} room={room} me={me} act={act} focusHand={focusHand} />}
-        {tab === "table" && <TableTab ctx={ctx} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
-        {tab === "deck" && <DeckView state={state} room={room} me={me} act={act} />}
-        {tab === "me" && <MeView profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
+        {section === "play" && tab === "hand" && <HandView ctx={ctx} state={state} room={room} me={me} act={act} focusHand={focusHand} />}
+        {section === "play" && tab === "table" && <TableTab ctx={ctx} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
+        {section === "decks" && <DeckView state={state} room={room} me={me} act={act} />}
+        {section === "me" && <MeView part="me" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} openSwitcher={() => setSwitcher(true)} />}
+        {section === "settings" && <MeView part="settings" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
       </ScrollView>)}
       {!!msg && <View style={st.toast}><Text style={st.toastTxt}>{msg}</Text></View>}
       <TableSwitcher open={switcher} ctx={ctx} onClose={() => setSwitcher(false)} onPick={switchTo} onAdd={addTable} />
+      <Drawer open={drawer} setOpen={setDrawer} section={section} name={me.name} room={room}
+        onPick={(k) => { setDrawer(false); setSection(k); }} />
     </SafeAreaView>
   );
 }
@@ -996,7 +1011,7 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
 }
 
 /* ---------------- me / settings ---------------- */
-function MeView({ profile, rooms, prefs, setProfile, act, state }) {
+function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitcher }) {
   const [plan, setPlan] = useState([]);
   useEffect(() => {
     Notifications.getAllScheduledNotificationsAsync().then((all) => {
@@ -1017,13 +1032,20 @@ function MeView({ profile, rooms, prefs, setProfile, act, state }) {
     await S.saveProfile(p);
     setProfile(p);
   };
-  return (
+  if (part === "me") return (
     <>
       <View style={st.panel}>
         <Text style={st.label}>YOU</Text>
-        <Text style={st.h3}>{profile.me.name} · table “{profile.room}”</Text>
-        <Text style={[st.note, { textAlign: "left" }]}>Friends join by entering the same table name.</Text>
+        <Text style={st.h2}>{profile.me.name}</Text>
+        <Text style={[st.note, { textAlign: "left" }]}>Sitting at {rooms.length} {rooms.length === 1 ? "table" : "tables"}: {rooms.join(", ")}.</Text>
+        <Text style={[st.note, { textAlign: "left" }]}>Friends join a table by entering the same table name.</Text>
+        <Btn label="Switch or add tables" onPress={openSwitcher} />
       </View>
+      <Btn label={"Leave “" + profile.room + "”"} onPress={leave} />
+    </>
+  );
+  return (
+    <>
       <View style={st.panel}>
         <View style={[st.row, { justifyContent: "space-between" }]}><Text style={st.h3}>Deal me cards</Text><Switch value={prefs.notify} onValueChange={(v) => update({ notify: v })} trackColor={{ true: C.accent }} /></View>
         <Text style={[st.note, { textAlign: "left" }]}>Cards are dealt when they fall behind their targets, checked every 20 minutes while you're awake.</Text>
@@ -1047,8 +1069,60 @@ function MeView({ profile, rooms, prefs, setProfile, act, state }) {
         </View>
       </View>
       <TakeoverPanel act={act} />
-      <Btn label={"Leave “" + profile.room + "”"} onPress={leave} />
       <Text style={st.note}>Version {Updates.createdAt ? Updates.createdAt.toLocaleString() : "built-in"}{Updates.isEmbeddedLaunch ? "" : " · updated"}</Text>
+    </>
+  );
+}
+
+/* ---------------- side menu ---------------- */
+const SECTIONS = [["play", "Play", "♠"], ["decks", "My decks", "▤"], ["me", "Me", "●"], ["settings", "Settings", "⚙"]];
+const DRAWER_W = Math.min(300, Dimensions.get("window").width * 0.8);
+// Slides in from the left: tap the ☰ button, or drag from the left edge of the screen. Drag it back or tap outside to close.
+function Drawer({ open, setOpen, section, name, room, onPick }) {
+  const x = useRef(new Animated.Value(-DRAWER_W)).current;
+  const [shown, setShown] = useState(false);
+  const go = (to, after) => Animated.spring(x, { toValue: to, useNativeDriver: true, bounciness: 0, speed: 18 }).start(after);
+  useEffect(() => {
+    if (open) { setShown(true); go(0); }
+    else go(-DRAWER_W, () => setShown(false));
+  }, [open]);
+  const settle = (dx, vx, from) => { const pos = from + dx; setOpen(pos > -DRAWER_W / 2 || vx > 0.5) ; if (!(pos > -DRAWER_W / 2 || vx > 0.5)) go(-DRAWER_W, () => setShown(false)); else go(0); };
+  const edge = useRef(PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => g.dx > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+    onPanResponderGrant: () => setShown(true),
+    onPanResponderMove: (_, g) => x.setValue(Math.min(0, -DRAWER_W + Math.max(0, g.dx))),
+    onPanResponderRelease: (_, g) => settle(g.dx, g.vx, -DRAWER_W),
+    onPanResponderTerminate: (_, g) => settle(g.dx, g.vx, -DRAWER_W),
+  })).current;
+  const panel = useRef(PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => g.dx < -8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+    onPanResponderMove: (_, g) => x.setValue(Math.min(0, g.dx)),
+    onPanResponderRelease: (_, g) => settle(g.dx, g.vx, 0),
+    onPanResponderTerminate: (_, g) => settle(g.dx, g.vx, 0),
+  })).current;
+  const scrim = x.interpolate({ inputRange: [-DRAWER_W, 0], outputRange: [0, 1] });
+  return (
+    <>
+      {!shown && <View style={st.edgeGrab} {...edge.panHandlers} />}
+      {shown && (
+        <View style={StyleSheet.absoluteFill}>
+          <Animated.View style={[StyleSheet.absoluteFill, st.drawerScrim, { opacity: scrim }]}>
+            <Pressable style={{ flex: 1 }} onPress={() => setOpen(false)} accessibilityLabel="Close menu" />
+          </Animated.View>
+          <Animated.View style={[st.drawer, { width: DRAWER_W, transform: [{ translateX: x }] }]} {...panel.panHandlers}>
+            <SafeAreaView edges={["top", "bottom", "left"]} style={{ flex: 1, gap: 6 }}>
+              <Text style={st.drawerBrand}>Prompt</Text>
+              <Text style={[st.note, { textAlign: "left", marginBottom: 12 }]} numberOfLines={1}>{name} · {room}</Text>
+              {SECTIONS.map(([k, l, icon]) => (
+                <Pressable key={k} onPress={() => onPick(k)} style={[st.drawerItem, section === k && st.drawerItemOn]} accessibilityRole="menuitem" accessibilityState={{ selected: section === k }}>
+                  <Text style={st.drawerIcon}>{icon}</Text>
+                  <Text style={[st.drawerTxt, section === k && { fontWeight: "800" }]}>{l}</Text>
+                </Pressable>
+              ))}
+            </SafeAreaView>
+          </Animated.View>
+        </View>
+      )}
     </>
   );
 }
@@ -1232,7 +1306,18 @@ function makeStyles() { return StyleSheet.create({
   miniLabelAway: { fontSize: 12, fontWeight: "700", color: C.ink },
   awayTag: { alignSelf: "flex-start", maxWidth: "100%", backgroundColor: C.bg2, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 },
   awayTagTxt: { fontSize: 10, fontWeight: "700", color: C.muted },
-  tableBar: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 16, marginTop: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, backgroundColor: C.bg2, minHeight: 44 },
+  topRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 10, paddingRight: 16, marginTop: 6 },
+  menuBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center", gap: 4 },
+  menuLine: { width: 20, height: 2.5, borderRadius: 2, backgroundColor: C.ink },
+  edgeGrab: { position: "absolute", left: 0, top: 0, bottom: 0, width: 18 },
+  drawerScrim: { backgroundColor: "rgba(58,22,48,0.35)" },
+  drawer: { position: "absolute", left: 0, top: 0, bottom: 0, backgroundColor: C.bg, paddingHorizontal: 16, paddingTop: 12, elevation: 16, borderTopRightRadius: 20, borderBottomRightRadius: 20 },
+  drawerBrand: { fontSize: 30, fontWeight: "800", color: C.ink, marginTop: 8 },
+  drawerItem: { flexDirection: "row", alignItems: "center", gap: 14, minHeight: 52, paddingHorizontal: 14, borderRadius: 12 },
+  drawerItemOn: { backgroundColor: C.accent },
+  drawerIcon: { fontSize: 18, width: 22, textAlign: "center", color: C.ink },
+  drawerTxt: { fontSize: 17, fontWeight: "600", color: C.ink },
+  tableBar: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, backgroundColor: C.bg2, minHeight: 44 },
   tableBarLbl: { fontSize: 11, color: C.muted, letterSpacing: 1.2, fontWeight: "600" },
   tableBarName: { flex: 1, fontSize: 16, fontWeight: "800", color: C.ink },
   tableBarCaret: { fontSize: 16, color: C.ink },
