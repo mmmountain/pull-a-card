@@ -1,6 +1,6 @@
 import * as S from "./store.js";
 import { ORIGINAL, randomTheme } from "./theme.js";
-import { bufferBlock, bufferMessage, BUFFER_STEPS } from "./model.js";
+import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel } from "./model.js";
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./model.js";
 import { SUIT, SUITS, ago, fmtTime, heat, newId, parseLater } from "./model.js";
 
@@ -74,7 +74,8 @@ function cardView() {
   const wait = top && bufferBlock(state.cards.find((c) => c.id === top.cardId), state.plays, me.id);
   const blocked = top && (!canPlay(locks, [top.cardId]) || !!wait);
   return `<section class="stage home">${lockBanner(locks)}${top
-      ? `${bigCard(top, quotaLabel(state.cards.find((c) => c.id === top.cardId) || {}, Date.now(), profile.prefs || {}))}<div class="row actions"><button class="btn primary" data-act="play" ${blocked ? "disabled" : ""}>${wait ? "Wait" : blocked ? "Locked" : "Play"}</button><button class="btn" data-act="hold">Hold</button></div>${wait ? `<p class="note" style="max-width:300px">⏳ ${esc(bufferMessage(wait))}</p>` : ""}<button class="link" data-act="later-top">Remind me later</button>`
+      ? `<div class="swipe" data-blocked="${blocked ? esc(wait ? "Not yet. " + bufferMessage(wait) : lockMessage(locks)) : ""}">${bigCard(top, quotaLabel(state.cards.find((c) => c.id === top.cardId) || {}, Date.now(), profile.prefs || {}))}<span class="swipetag" hidden></span></div>
+        <p class="note">↑ play · ↓ hold · ← too soon · → not now · lean to adjust</p><div class="row actions"><button class="btn primary" data-act="play" ${blocked ? "disabled" : ""}>${wait ? "Wait" : blocked ? "Locked" : "Play"}</button><button class="btn" data-act="hold">Hold</button></div>${wait ? `<p class="note" style="max-width:300px">⏳ ${esc(bufferMessage(wait))}</p>` : ""}<button class="link" data-act="later-top">Remind me later</button>`
       : !drawable(state.cards, state.players, state.hands, state.tables, me.id).length
       ? `<h2 style="text-align:center">Nothing left to pull</h2><p class="note" style="max-width:300px">${state.hands.some((h) => h.seat === me.id) ? "Every card in your deck is in your hand. Play or discard some to put them back in the deck." : "Your deck is empty or switched off. Add a card in the Deck tab."}</p><div class="row actions"><button class="btn primary" data-tab="hand">Open hand</button><button class="btn" data-tab="deck">Add a card</button></div>`
       : `<button class="deck" data-act="draw" aria-label="Tap to pull a card"><span class="back"></span><span class="back"></span><span class="back"></span><span class="pull">Tap to pull a card</span></button>`}
@@ -201,6 +202,7 @@ function editSheet() {
     <h3>How often</h3><div class="chips">${Object.entries(PERIOD_NAMES).map(([per, l]) => `<button class="chip" aria-pressed="${q.per === per}" data-eper="${per}">${l}</button>`).join("")}</div>
     <h3>Target ${PERIODS[q.per]}</h3>
     <div class="row"><button class="btn auto" data-qstep="-1" aria-label="Less">−</button><input type="number" id="eQn" min="1" step="1" value="${esc(q.n)}" style="text-align:center;font:800 22px var(--display)"><button class="btn auto" data-qstep="1" aria-label="More">+</button></div>
+    ${c.tempo && c.tempo !== 1 ? `<div class="row"><p class="note left" style="color:var(--ink);flex:1">Your swipes adjusted this to ${Math.max(1, Math.round(n * c.tempo))} ${PERIODS[q.per]} (${c.tempo > 1 ? "+" : ""}${Math.round((c.tempo - 1) * 100)}%).</p><button class="btn auto" data-act="tempo-reset">Reset</button></div>` : ""}
     <p class="note left">${amts.length ? `Deals add up to exactly ${n} ${esc(c.label || "")} ${PERIODS[q.per]}, spread out. Bigger amounts mean fewer deals.` : `Dealt exactly ${n} time${n === 1 ? "" : "s"} ${PERIODS[q.per]}, spread out.`}</p>
     <h3>Suit</h3><div class="chips">${SUITS.map((s) => `<button class="chip" aria-pressed="${c.suit === s}" data-esuit="${s}">${SUIT[s]} ${s}</button>`).join("")}</div>
     <h3>Immediacy</h3><div class="chips">${[1, 2, 3, 4, 5].map((i) => `<button class="chip" aria-pressed="${c.imm === i}" data-eimm="${i}">${i}</button>`).join("")}</div>
@@ -214,6 +216,7 @@ function editSheet() {
 }
 
 function render() {
+  if (sw) { pendingRender = true; return; }
   if (!profile?.room) { $app.innerHTML = joinView(); return; }
   if (!state) { $app.innerHTML = header() + `<p class="note">Loading the table…</p>`; return; }
   const scroll = scrollY;
@@ -255,6 +258,35 @@ async function loadPush() {
   } catch { pushInfo = null; }
 }
 
+/* ---------------- swiping the top card ---------------- */
+let sw = null, pendingRender = false;
+const TONE = { play: "var(--accent)", hold: "var(--s-home)", soon: "var(--warm)", later: "var(--muted)" };
+$app.addEventListener("pointerdown", (e) => {
+  const el = e.target.closest(".swipe"); if (!el) return;
+  sw = { el, tag: el.querySelector(".swipetag"), x: e.clientX, y: e.clientY };
+  el.setPointerCapture(e.pointerId); el.style.transition = "none";
+});
+$app.addEventListener("pointermove", (e) => {
+  if (!sw) return;
+  const dx = e.clientX - sw.x, dy = e.clientY - sw.y, it = swipeIntent(dx, dy);
+  sw.el.style.transform = `translate(${dx}px, ${dy}px) rotate(${Math.max(-16, Math.min(16, dx / 15))}deg)`;
+  sw.tag.hidden = !it; if (it) { sw.tag.textContent = swipeLabel(it); sw.tag.style.borderColor = TONE[it.kind]; }
+  sw.it = it; sw.dx = dx; sw.dy = dy;
+});
+const swipeEnd = () => {
+  if (!sw) return;
+  const { el, it, dx = 0, dy = 0 } = sw;
+  const back = () => { el.style.transition = "transform .3s cubic-bezier(.2,1.4,.4,1)"; el.style.transform = ""; sw.tag.hidden = true; };
+  if (!it) { back(); sw = null; if (pendingRender) { pendingRender = false; render(); } return; }
+  if (it.kind === "play" && el.dataset.blocked) { back(); toast(el.dataset.blocked); sw = null; return; }
+  const d = Math.hypot(dx, dy) || 1, top = state.tables[profile.me.id];
+  el.style.transition = "transform .23s ease-in, opacity .23s";
+  el.style.transform = `translate(${(dx / d) * 700}px, ${(dy / d) * 900}px) rotate(${dx / 8}deg)`; el.style.opacity = "0";
+  setTimeout(() => { sw = null; pendingRender = false; act(() => S.swipeTop(profile.room, profile.me, top, it), swipeLabel(it) + ": " + top.label); }, 230);
+};
+$app.addEventListener("pointerup", swipeEnd);
+$app.addEventListener("pointercancel", swipeEnd);
+
 /* ---------------- events ---------------- */
 async function setLater(at) {
   const s = sheet; sheet = null;
@@ -268,7 +300,7 @@ $app.addEventListener("click", async (e) => {
   if (d.tab) { tab = d.tab; sheet = null; if (tab === "me") await loadPush(); render(); return; }
   if (d.sel) { sel = sel.includes(d.sel) ? sel.filter((x) => x !== d.sel) : [...sel, d.sel]; render(); return; }
   if (d.chaos) return act(() => S.setChaos(room, me, +d.chaos));
-  if (d.edit) { const c0 = state.cards.find((c) => c.id === d.edit); sheet = { type: "edit", card: { ...c0, quota: { ...effectiveQuota(c0, profile.prefs || {}) } } }; render(); return; }
+  if (d.edit) { const c0 = state.cards.find((c) => c.id === d.edit); sheet = { type: "edit", card: { ...c0, quota: { ...(c0.quota || effectiveQuota({ ...c0, tempo: 1 }, profile.prefs || {})) } } }; render(); return; }
   if (d.esuit) { readEdit(); sheet.card.suit = d.esuit; render(); return; }
   if (d.eper) { readEdit(); sheet.card.quota = { ...sheet.card.quota, per: d.eper }; render(); return; }
   if (d.qstep) { readEdit(); const st = sheet.card.amounts?.length ? Math.min(...sheet.card.amounts) : 1; sheet.card.quota.n = Math.max(1, sheet.card.quota.n + +d.qstep * st); render(); return; }
@@ -312,6 +344,7 @@ $app.addEventListener("click", async (e) => {
       return setLater(at);
     }
     case "close": sheet = null; return render();
+    case "tempo-reset": readEdit(); sheet.card.tempo = 1; return render();
     case "newcard": sheet = { type: "edit", card: { label: "", suit: "body", imm: 3, active: true, plays: 0, quota: { n: 1, per: "day" } } }; return render();
     case "esave": {
       readEdit(); const c = sheet.card;

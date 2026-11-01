@@ -102,6 +102,9 @@ label{display:flex;flex-direction:column;gap:4px}
 .stack .pc.top{position:absolute;left:0;margin:0;width:72px;height:100px;transform:none;border:1px solid var(--line);border-top:3px solid}
 .stack .n{font:800 11px var(--display);color:var(--ink)}
 .lock{align-self:stretch;background:var(--paper);border:2px solid var(--hot);border-radius:12px;padding:12px;font-weight:600}
+.swipe{position:relative;z-index:10;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab;will-change:transform}
+.swipe:active{cursor:grabbing}
+.swipetag{position:absolute;top:18px;left:50%;transform:translateX(-50%);background:var(--paper);border:3px solid var(--accent);border-radius:12px;padding:6px 12px;font:800 16px var(--display);white-space:nowrap;box-shadow:var(--shadow);pointer-events:none}
 .sheet{position:fixed;inset:auto 0 0 0;background:var(--bg);border-radius:20px 20px 0 0;padding:20px max(20px,env(safe-area-inset-left)) calc(28px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:12px;box-shadow:0 -10px 40px rgba(58,22,48,.25);max-height:88dvh;overflow:auto;z-index:20}
 .scrim{position:fixed;inset:0;background:rgba(58,22,48,.35);z-index:19}
 .toast{position:fixed;left:16px;right:16px;bottom:calc(20px + env(safe-area-inset-bottom));background:var(--ink);color:var(--bg);border-radius:12px;padding:12px;text-align:center;font-weight:600;z-index:30}

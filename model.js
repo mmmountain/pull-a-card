@@ -84,7 +84,7 @@ function periodProgress(per, now, win) {
 /** Every card has a target. Old cards with only "comes up every N hours" get one worked out from that. */
 export function effectiveQuota(card, win = {}) {
   const q = card.quota;
-  if (q && q.n > 0 && PERIODS[q.per]) return q;
+  if (q && q.n > 0 && PERIODS[q.per]) return card.tempo && card.tempo !== 1 ? { ...q, n: Math.max(1, Math.round(q.n * card.tempo)), base: q.n } : q;
   const every = card.every || 4;
   const awake = Math.max(1, (win.endHour ?? 21) - (win.startHour ?? 8));
   const avg = mean(card.amounts) || 1;
@@ -123,6 +123,7 @@ export function behindBy(k, now = Date.now(), win = {}) {
 export const DUE_AT = 0.5;
 /** Due: half a deal behind pace, or anything still owed in the last stretch of the period. */
 export function isDue(k, now = Date.now(), win = {}) {
+  if (k.dueAt && now >= Date.parse(k.dueAt)) return true; // "not now, bring it back soon"
   const q = quotaState(k, now, win);
   return q.open && ((q.expected - q.drawn) / q.unit >= DUE_AT || q.progress >= 0.9);
 }
@@ -130,7 +131,7 @@ export function isDue(k, now = Date.now(), win = {}) {
 /** Weight for picking: cards further behind pace are much more likely. */
 function dueScore(k, now, win) {
   const q = quotaState(k, now, win);
-  const b = (q.expected - q.drawn) / q.unit + (q.progress >= 0.9 ? q.remaining / q.unit : 0);
+  const b = (q.expected - q.drawn) / q.unit + (q.progress >= 0.9 ? q.remaining / q.unit : 0) + (k.dueAt && now >= Date.parse(k.dueAt) ? 4 : 0);
   return Math.max(0.02, Math.min(20, b >= 0 ? (b + 0.5) ** 2 : Math.exp(b * 3) * 0.25));
 }
 
@@ -138,7 +139,7 @@ function dueScore(k, now, win) {
 export function markDrawn(card, at = new Date().toISOString(), amount = null) {
   const cutoff = Date.parse(at) - 35 * 864e5;
   const log = [...(card.drawLog || []).filter((e) => logTime(e) >= cutoff), { at, n: amount || 1 }].slice(-500);
-  return { lastDrawn: at, drawLog: log };
+  return { lastDrawn: at, drawLog: log, dueAt: null };
 }
 
 export function quotaLabel(card, now = Date.now(), win = {}) {
@@ -345,4 +346,35 @@ export function bufferMessage(block) {
   if (!block) return "";
   const m = block.mins, span = m >= 60 ? `${+(m / 60).toFixed(1)} h` : `${m} min`;
   return `Ready at ${fmtTime(new Date(block.until))} (${span} ${block.why}).`;
+}
+
+/* ---------- swiping the top card ---------- */
+// Up/down picks the action, leaning right means "sooner / more", leaning left "later / less".
+//   up: play (lean = how often it should come)   down: hold (lean = when to remind you)
+//   right: not now, back in 30 min               left: too soon, a bit less often
+export function swipeIntent(dx, dy, min = 80) {
+  if (Math.hypot(dx, dy) < min) return null;
+  const a = (Math.atan2(dx, -dy) * 180) / Math.PI; // 0 = up, 90 = right, ±180 = down
+  const lean = (x) => (Math.abs(x) < 0.12 ? 0 : Math.max(-1, Math.min(1, x)));
+  if (Math.abs(a) <= 60) return { kind: "play", tilt: lean(a / 55) };
+  if (Math.abs(a) >= 120) return { kind: "hold", tilt: lean((a > 0 ? 180 - a : -(180 + a)) / 55) };
+  return a > 0 ? { kind: "soon", tilt: 0 } : { kind: "later", tilt: 0 };
+}
+export function swipeLabel(it) {
+  if (!it) return "";
+  const amt = Math.abs(it.tilt) > 0.55 ? "" : "a bit ";
+  if (it.kind === "play") return it.tilt > 0 ? `Play · ${amt}more often` : it.tilt < 0 ? `Play · ${amt}less often` : "Play";
+  if (it.kind === "hold") return it.tilt > 0 ? "Hold · remind me in 1 h" : it.tilt < 0 ? "Hold · remind me tonight" : "Hold";
+  return it.kind === "soon" ? "Not now · back in 30 min" : "Too soon · less often";
+}
+/** How a swipe changes the card's pace: up to ±15% per play swipe, −10% for "too soon". Stays within ½× to 2×. */
+export function nudgedTempo(tempo, it) {
+  const d = it.kind === "play" ? it.tilt * 0.15 : it.kind === "later" ? -0.1 : 0;
+  return Math.round(Math.max(0.5, Math.min(2, (tempo || 1) * (1 + d))) * 100) / 100;
+}
+export function holdReminder(it, now = new Date()) {
+  if (it.kind !== "hold" || !it.tilt) return null;
+  if (it.tilt > 0) return new Date(now.getTime() + 60 * 6e4);
+  const t = new Date(now); t.setHours(20, 0, 0, 0);
+  return t.getTime() - now.getTime() > 30 * 6e4 ? t : new Date(now.getTime() + 2 * 36e5);
 }
