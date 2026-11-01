@@ -87,46 +87,71 @@ function finish(w) {
   return w;
 }
 
-/* ---------- rounds: a day, week (from Monday) or month ---------- */
+/* ---------- rounds: a day, week (from Monday), month, or every N days ---------- */
+// `per` is "day" | "week" | "month", or a map / { per, days, startAt, startHour }:
+//   per "days" repeats every `days` days counted from `startAt`; `startHour` moves when a day begins (4 = 4 AM).
 const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const cyc = (p) => (p && typeof p === "object"
+  ? { per: p.per || "week", days: Math.max(1, Math.round(+p.days || 1)), startAt: p.startAt || null, startHour: Math.max(0, Math.min(23, +p.startHour || 0)) }
+  : { per: p || "week", days: 1, startAt: null, startHour: 0 });
+const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n, d.getHours(), d.getMinutes());
 export function roundStart(per, now = Date.now()) {
-  const d = midnight(new Date(now));
-  if (per === "week") d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-  if (per === "month") d.setDate(1);
+  const c = cyc(per);
+  const t = new Date(now - c.startHour * 36e5);
+  let d = midnight(t);
+  if (c.per === "week") d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  else if (c.per === "month") d.setDate(1);
+  else if (c.per === "days") {
+    const ds = /^(\d{4})-(\d{2})-(\d{2})/.exec(c.startAt || "");
+    const anchor = ds ? new Date(+ds[1], +ds[2] - 1, +ds[3]) : new Date(2026, 0, 5); // a local date, "YYYY-MM-DD"
+    const gone = Math.round((d - anchor) / DAY);
+    d = addDays(anchor, Math.floor(gone / c.days) * c.days);
+  }
+  d.setHours(c.startHour);
   return d;
 }
 export function roundEnd(per, now = Date.now()) {
-  const d = roundStart(per, now);
-  if (per === "day") d.setDate(d.getDate() + 1);
-  else if (per === "week") d.setDate(d.getDate() + 7);
-  else d.setMonth(d.getMonth() + 1);
-  return d;
+  const c = cyc(per), d = roundStart(per, now);
+  if (c.per === "day") return addDays(d, 1);
+  if (c.per === "week") return addDays(d, 7);
+  if (c.per === "days") return addDays(d, c.days);
+  const e = new Date(d); e.setMonth(e.getMonth() + 1); return e;
 }
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-export const roundKey = (per, now = Date.now()) => ymd(roundStart(per, now));
-export const PER_NAMES = { day: "Daily", week: "Weekly", month: "Monthly" };
+export const roundKey = (per, now = Date.now()) => { const c = cyc(per); return ymd(roundStart(per, now)) + (c.per === "days" ? "+" + c.days : "") + (c.startHour ? "@" + c.startHour : ""); };
+export const PER_NAMES = { day: "Daily", week: "Weekly", month: "Monthly", days: "Every few days" };
+/** "Daily", "Every 10 days", "Weekly · from 4 AM" */
+export function perLabel(m) {
+  const c = cyc(m);
+  const base = c.per === "days" ? (c.days === 1 ? "Daily" : `Every ${c.days} days`) : PER_NAMES[c.per] || "Weekly";
+  return base + (c.startHour ? " · from " + fmtMin(c.startHour * 60) : "");
+}
 
 /** The map as it is this round: a new round starts with every spot empty. */
 export function live(map, now = Date.now()) {
-  if (map.round === roundKey(map.per, now)) return map;
+  if (map.round === roundKey(map, now)) return map;
   const spots = {};
   for (const [id, sp] of Object.entries(map.spots || {})) { const { filled, total, pile, dealtMiss, ...rest } = sp; spots[id] = rest; }
-  return { ...map, round: roundKey(map.per, now), spots, fresh: true };
+  return { ...map, round: roundKey(map, now), spots, fresh: true };
 }
 
 /** When this window is open inside the current round: a list of [startMs, endMs]. */
 export function occurrences(w, per, now = Date.now()) {
   if (w.bad) return [];
-  const start = roundStart(per, now), end = roundEnd(per, now);
+  const start = roundStart(per, now), end = roundEnd(per, now), sh = cyc(per).startHour;
   if (w.always) return [[start.getTime(), end.getTime()]];
   const out = [];
-  for (let d = new Date(start), i = 1; d < end; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1), i++) {
+  for (let d = midnight(start), i = 1; d < end; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1), i++) {
     if (w.date && !(d.getMonth() === w.date.m && d.getDate() === w.date.d)) continue;
     if (w.day && i !== w.day) continue;
     if (w.week && Math.ceil(i / 7) !== w.week) continue;
     if (w.days && !w.days.includes(d.getDay())) continue;
-    const from = w.from ?? 0, to = w.to ?? 1440;
-    out.push([d.getTime() + from * 6e4, d.getTime() + to * 6e4]);
+    // With a late day start (say 4 AM), times before it belong to the early hours after midnight.
+    const from = w.from ?? sh * 60, to = w.to ?? (sh ? 1440 + sh * 60 : 1440);
+    const shift = sh && w.from != null && w.from < sh * 60 ? 1 : 0;
+    const at = (min) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + shift, 0, min).getTime(); // calendar math, safe across DST
+    const a = Math.max(start.getTime(), at(from)), b = Math.min(end.getTime(), at(to));
+    if (a < b) out.push([a, b]);
   }
   return out;
 }
@@ -160,7 +185,7 @@ export function accepts(spot, card) {
 /** open | future | waiting | missed | skipped (before you added the map) | filled | full */
 export function spotState(map, spot, now = Date.now()) {
   const shape = map.shapes.find((s) => s.id === spot.shape);
-  const occ = occurrences(parseWhen(spot.when), map.per, now);
+  const occ = occurrences(parseWhen(spot.when), map, now);
   const isOpen = occ.some(([a, b]) => now >= a && now < b);
   if (shape?.kind === "pool") return spot.target && (spot.total || 0) >= spot.target ? "full" : isOpen ? "open" : "future";
   if (spot.filled) return "filled";
@@ -306,5 +331,30 @@ export function installMap(tpl, ownerId, deckId, resolve, now = Date.now()) {
     spots[id] = { ...sp, accepts: a };
   }
   const { about, deckKey, ...rest } = tpl;
-  return { ...rest, owner: ownerId, deck: deckId, active: true, since: new Date(now).toISOString(), round: roundKey(tpl.per, now), spots };
+  return { ...rest, owner: ownerId, deck: deckId, active: true, since: new Date(now).toISOString(), round: roundKey(tpl, now), spots };
+}
+
+/* ---------- the editor's layout ---------- */
+/** Size a shape for its spot count and place shapes that have no position yet below the rest. */
+export function layoutMap(map) {
+  const W = map.W || 1000;
+  let H = 0;
+  const placed = map.shapes.filter((sh) => sh.cx != null);
+  for (const sh of placed) H = Math.max(H, sh.cy + (sh.ry || sh.rx) + 90);
+  const shapes = map.shapes.map((sh) => ({ ...sh }));
+  let col = 0, rowY = H + 220;
+  for (const sh of shapes) {
+    const n = sh.spots.length;
+    if (sh.kind === "pool") { sh.rx = sh.ry = 110; }
+    else if (sh.kind === "path") { sh.rx = Math.min(380, 70 + 70 * Math.max(1, n - 1) / 2); sh.ry = sh.rx; }
+    else { sh.rx = Math.min(300, 90 + 18 * n); sh.ry = sh.rx; }
+    if (sh.cx == null) {
+      const wide = sh.kind === "path" || sh.rx > 200;
+      if (wide && col) { col = 0; rowY += 470; }
+      sh.cx = wide ? W / 2 : col ? W * 0.75 : W * 0.25; sh.cy = rowY; sh.rot = sh.rot || 0;
+      if (wide || col) { col = 0; rowY += Math.max(470, sh.ry * 2 + 160); } else col = 1;
+    }
+  }
+  for (const sh of shapes) H = Math.max(H, sh.cy + (sh.kind === "path" ? 80 : sh.ry) + 110);
+  return { ...map, W, H: Math.max(600, H), shapes };
 }

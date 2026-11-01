@@ -173,6 +173,7 @@ export function dealFrom(card, now = Date.now(), rand = Math.random, win = {}) {
     variant: vs.length ? vs[Math.floor(rand() * vs.length)] : "",
     suit: card.suit || "body",
     imm: card.imm || 3,
+    beef: card.beef || null,
     every: intervalHours(card, win),
     drawnAt: new Date(now).toISOString(),
   };
@@ -267,13 +268,20 @@ const firstPlayer = (players) => [...(players || [])].sort((a, b) => (a.joined |
 export function deckOwner(card, players) {
   return card.owner || firstPlayer(players);
 }
-/** Your cards. Pass `decks` to keep only cards from decks that are switched on (what gets dealt). */
-export function myDeck(cards, players, meId, decks = null) {
+/**
+ * Your cards. Pass `decks` to keep only what this table deals: cards from decks that are switched on
+ * and that this table uses (your player doc's useDecks; unset = all), plus any card the table's current
+ * map needs (pass `maps`), even if its deck is off.
+ */
+export function myDeck(cards, players, meId, decks = null, maps = null) {
   const first = firstPlayer(players);
   const mine = cards.filter((c) => (c.owner || first) === meId);
   if (!decks) return mine;
-  const on = new Set(myDecks(decks, meId).filter((d) => d.active).map((d) => d.id));
-  return mine.filter((c) => on.has(deckOf(c, meId)));
+  const use = (players || []).find((p) => p.id === meId)?.useDecks;
+  const on = new Set(myDecks(decks, meId).filter((d) => d.active && (!Array.isArray(use) || use.includes(d.id))).map((d) => d.id));
+  const need = new Set();
+  for (const m of maps || []) if (m.owner === meId && m.active !== false) for (const sp of Object.values(m.spots || {})) if (sp.accepts?.startsWith("card:")) need.add(sp.accepts.slice(5));
+  return mine.filter((c) => on.has(deckOf(c, meId)) || need.has(c.id));
 }
 export function myChaos(players, meId, fallback = 30) {
   const p = (players || []).find((x) => x.id === meId);
@@ -305,10 +313,10 @@ export function lastMove(plays) {
 }
 
 /** Cards you could pull right now: your active cards not already in a hand or face up. */
-export function drawable(cards, players, hands, tables, meId, decks = null) {
+export function drawable(cards, players, hands, tables, meId, decks = null, maps = null) {
   // Repeats are allowed: a card you're holding can be pulled again. Only the face-up card is out.
   const up = tables?.[meId];
-  return myDeck(cards, players, meId, decks || []).filter((c) => c.active !== false && !(up && !up.empty && up.cardId === c.id));
+  return myDeck(cards, players, meId, decks || [], maps).filter((c) => c.active !== false && !(up && !up.empty && up.cardId === c.id));
 }
 
 /* ---------- lock rule ---------- */
@@ -368,7 +376,7 @@ export function bufferMessage(block) {
 /* ---------- swiping the top card ---------- */
 // Up/down picks the action, leaning right means "sooner / more", leaning left "later / less".
 //   up: play (lean = how often it should come)   down: hold (lean = when to remind you)
-//   right: not now, back in 30 min               left: too soon, a bit less often
+//   right: snooze, back in 30 min                left: less often (skip it, deal it a bit less)
 export function swipeIntent(dx, dy, min = 80) {
   if (Math.hypot(dx, dy) < min) return null;
   const a = (Math.atan2(dx, -dy) * 180) / Math.PI; // 0 = up, 90 = right, ±180 = down
@@ -382,7 +390,7 @@ export function swipeLabel(it) {
   const amt = Math.abs(it.tilt) > 0.55 ? "" : "a bit ";
   if (it.kind === "play") return it.tilt > 0 ? `Play · ${amt}more often` : it.tilt < 0 ? `Play · ${amt}less often` : "Play";
   if (it.kind === "hold") return it.tilt > 0 ? "Hold · remind me in 1 h" : it.tilt < 0 ? "Hold · remind me tonight" : "Hold";
-  return it.kind === "soon" ? "Not now · back in 30 min" : "Too soon · less often";
+  return it.kind === "soon" ? "Snooze · back in 30 min" : "Less often · skip it";
 }
 /** How a swipe changes the card's pace: up to ±15% per play swipe, −10% for "too soon". Stays within ½× to 2×. */
 export function nudgedTempo(tempo, it) {
@@ -426,6 +434,23 @@ export function myDecks(decks, meId) {
   const mine = (decks || []).filter((d) => d.owner === meId);
   const list = mine.some((d) => d.id === everydayId(meId)) ? [] : [{ id: everydayId(meId), owner: meId, name: "Everyday", active: true }];
   return [...list, ...mine].map((d) => ({ ...d, active: d.active !== false }));
+}
+
+/** A deck's little logo: the emoji you picked, else a default for the built-in decks. */
+const DECK_EMOJI = { everyday: "☀️", powerlifting: "🏋️", mindful: "🧘" };
+export function deckEmoji(deck) {
+  if (!deck) return "";
+  if (deck.emoji) return deck.emoji;
+  if (deck.key && DECK_EMOJI[deck.key]) return DECK_EMOJI[deck.key];
+  return /:everyday$/.test(deck.id || "") ? DECK_EMOJI.everyday : "";
+}
+/** Emojis of every deck that has a card with this name (a card can sit in more than one deck). */
+export function cardEmojis(state, meId, label) {
+  if (!state) return [];
+  const want = String(label || "").trim().toLowerCase();
+  const decks = myDecks(state.decks, meId);
+  const ids = new Set(myDeck(state.cards, state.players, meId).filter((c) => c.label.trim().toLowerCase() === want).map((c) => deckOf(c, meId)));
+  return [...new Set(decks.filter((d) => ids.has(d.id)).map(deckEmoji).filter(Boolean))];
 }
 
 /** Ready-made decks you can add from the library. Targets are per day or week; tweak them after adding. */

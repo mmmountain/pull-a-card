@@ -17,7 +17,7 @@ import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDa
 import { periodStart, myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 import { DECK_LIBRARY, deckOf, everydayId, myDecks, deckEmoji, cardEmojis } from "./src/model";
-import { SUIT_NAMES, MAP_LIBRARY, PER_NAMES, amountText, canPlayAt, describeAccepts, fitsSpots, jitter, live, parseWhen, shapeEdges, shortWhen, spotPos, spotState } from "./src/maps";
+import { DAYNAME, fmtMin, perLabel, layoutMap, SUIT_NAMES, MAP_LIBRARY, PER_NAMES, amountText, canPlayAt, describeAccepts, fitsSpots, jitter, live, parseWhen, shapeEdges, shortWhen, spotPos, spotState } from "./src/maps";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
 const C = { ...ORIGINAL, suit: { ...ORIGINAL.suit } };
@@ -744,6 +744,7 @@ function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, set
   const maps = (state.maps || []).filter((m) => m.owner === me.id);
   const [lib, setLib] = useState(false);
   const [mapMenu, setMapMenu] = useState(false);
+  const [editing, setEditing] = useState(null);   // {} = new map, or the map being edited
   const cur = maps.find((m) => m.active !== false) || null;
   const meP = state.players.find((p) => p.id === me.id) || {};
   const per = meP.stackPer || "day";
@@ -780,8 +781,10 @@ function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, set
           {decks.map((d) => <Chip key={d.id} label={(deckEmoji(d) ? deckEmoji(d) + " " : "") + d.name + (d.active ? "" : " (off)")} on={usesDeck(d) && d.active} onPress={() => toggleDeck(d)} />)}
         </View>
       </View>
-      {cur ? <MapTable key={cur.id} ctx={ctx} m0={cur} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} onRemoved={() => {}} />
+      {cur ? <MapTable key={cur.id} ctx={ctx} m0={cur} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} onRemoved={() => {}} onEdit={() => setEditing(cur)} />
         : <TableView state={state} me={me} per={per} />}
+      {!!editing && <MapEditor map={editing.id ? editing : null} cards={myDeck((libSt || state).cards, (libSt || state).players, me.id)} decks={decks}
+        onClose={() => setEditing(null)} onSave={(d) => { const id = editing.id || null; setEditing(null); act(() => S.saveMap(room, me, id, d), (id ? "Saved " : "Playing ") + d.name); }} />}
       <Modal visible={mapMenu} transparent animationType="slide" onRequestClose={() => setMapMenu(false)}>
         <Pressable style={st.scrim} onPress={() => setMapMenu(false)} />
         <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]}>
@@ -801,12 +804,15 @@ function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, set
             <Pressable key={m.id} onPress={() => { setMapMenu(false); act(() => S.useMap(room, me, m.id), "Playing " + m.name); }} style={[st.tableRow, cur?.id === m.id && st.tableRowOn]} accessibilityRole="button" accessibilityState={{ selected: cur?.id === m.id }}>
               <View style={{ flex: 1 }}>
                 <Text style={st.h3}>◇ {m.name}</Text>
-                <Text style={[st.note, { textAlign: "left" }]}>{PER_NAMES[m.per]}{filled(m) ? " · " + filled(m) : ""}{cur?.id === m.id ? " · playing" : " · saved"}</Text>
+                <Text style={[st.note, { textAlign: "left" }]}>{perLabel(m)}{filled(m) ? " · " + filled(m) : ""}{cur?.id === m.id ? " · playing" : " · saved"}</Text>
               </View>
               {cur?.id === m.id && <View style={st.check}><Text style={st.checkTxt}>✓</Text></View>}
             </Pressable>
           ))}
-          <Btn label="+ Add a map" onPress={() => { setMapMenu(false); setLib(true); }} />
+          <View style={st.row}>
+            <Btn flex primary label="+ New map" onPress={() => { setMapMenu(false); setEditing({}); }} />
+            <Btn flex label="From the library" onPress={() => { setMapMenu(false); setLib(true); }} />
+          </View>
         </ScrollView>
       </Modal>
       <Modal visible={lib} transparent animationType="slide" onRequestClose={() => setLib(false)}>
@@ -831,7 +837,7 @@ function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, set
   );
 }
 
-function MapTable({ ctx, m0, state, room, me, act, setBoardTouch, onRemoved }) {
+function MapTable({ ctx, m0, state, room, me, act, setBoardTouch, onRemoved, onEdit }) {
   const [selCard, setSelCard] = useState(null);
   const [selSpot, setSelSpot] = useState(null);
   const [arm, setArm] = useState(false);
@@ -867,7 +873,7 @@ function MapTable({ ctx, m0, state, room, me, act, setBoardTouch, onRemoved }) {
     const what = { missed: "Missed.", filled: "Played" + (selS.filled ? ": " + selS.filled.label : "") + ".", full: "Full.", skipped: "This was before you added the map.", waiting: "Waiting for the spots before it.", future: "Not open yet." }[stt]
       || (n ? `${n} card${n === 1 ? "" : "s"} in your hand fit. Tap one to play it here.` : "Open. Nothing in your hand fits.");
     info = `${describeAccepts(selS, cards)} · ${parseWhen(selS.when).label} · ${what}`;
-  } else info = `${PER_NAMES[m.per]} map · ${open} spot${open === 1 ? "" : "s"} open now. Tap a card to light up its spots, or tap a spot.`;
+  } else info = `${perLabel(m)} map · ${open} spot${open === 1 ? "" : "s"} open now. Tap a card to light up its spots, or tap a spot.`;
   const best = selH && fitsSpots([m], selH, now)[0];
   return (
     <View style={{ gap: 10 }}>
@@ -893,7 +899,7 @@ function MapTable({ ctx, m0, state, room, me, act, setBoardTouch, onRemoved }) {
         }) : <Text style={[st.note, { textAlign: "left" }]}>Your hand is empty. Cards you hold, and cards from missed spots, show up here.</Text>}
       </ScrollView>
       <View style={st.row}>
-        <Btn flex label={paused ? "Turn this map on" : "Pause map"} onPress={() => act(() => S.setMapActive(room, me, m0.id, paused), paused ? "Map on" : "Map paused")} />
+        <Btn flex label="✎ Edit map" onPress={onEdit} />
         <Btn flex danger={arm} label={arm ? "Tap again to remove" : "Remove map"} onPress={() => {
           if (!arm) return setArm(true);
           onRemoved(); act(() => S.deleteMap(room, me, m0.id), "Removed " + m0.name);
@@ -1328,6 +1334,176 @@ function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitc
   );
 }
 
+/* ---------------- map editor ---------------- */
+// Build or change a map: name, how long a round is, and groups of spots. Each spot takes a card
+// (or any card of a suit, or any card at all). Times are optional and tucked away: leave them and
+// the spot is open the whole round, so you're still just dealt cards one by one.
+const KINDS = [["ring", "Ring", "Spots around a circle"], ["path", "Path", "Spots in a line"], ["pool", "Pool", "Fill up to a target"]];
+const DAY_COUNTS = [2, 3, 4, 5, 6, 7, 10, 14, 21, 28];
+const START_HOURS = [0, 3, 4, 5, 6];
+const ymdLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function blankMap() {
+  const sid = "g" + newId();
+  return { name: "", per: "week", days: 7, startAt: ymdLocal(new Date()), startHour: 0, W: 1000, shapes: [{ id: sid, kind: "ring", label: "", sub: "", ordered: false, rot: 0, spots: [] }], spots: {} };
+}
+function MapEditor({ map, cards, decks, onClose, onSave }) {
+  const [d, setD] = useState(() => (map ? JSON.parse(JSON.stringify(map)) : blankMap()));
+  const [timing, setTiming] = useState(!!(map && (map.per === "days" || map.startHour)));
+  const [pick, setPick] = useState(null);     // spot id whose card is being chosen
+  const [openWhen, setOpenWhen] = useState({});
+  const [err, setErr] = useState("");
+  const cardsSorted = [...cards].sort((a, b) => a.label.localeCompare(b.label));
+  const deckOfCard = (c) => decks.find((x) => x.id === deckOf(c, c.owner));
+  const setShape = (id, patch) => setD((x) => ({ ...x, shapes: x.shapes.map((sh) => (sh.id === id ? { ...sh, ...patch } : sh)) }));
+  const setSpot = (sid, patch) => setD((x) => ({ ...x, spots: { ...x.spots, [sid]: { ...x.spots[sid], ...patch } } }));
+  const addSpot = (sh) => {
+    const sid = sh.id + "-" + newId();
+    const last = sh.spots.length ? d.spots[sh.spots[sh.spots.length - 1]] : null;
+    setD((x) => ({ ...x, spots: { ...x.spots, [sid]: { id: sid, shape: sh.id, i: sh.spots.length, label: "", accepts: last?.accepts || "any", when: "always", ...(sh.kind === "pool" ? { target: 10, unit: "" } : {}) } },
+      shapes: x.shapes.map((y) => (y.id === sh.id ? { ...y, spots: [...y.spots, sid] } : y)) }));
+  };
+  const removeSpot = (sh, sid) => setD((x) => { const spots = { ...x.spots }; delete spots[sid]; return { ...x, spots, shapes: x.shapes.map((y) => (y.id === sh.id ? { ...y, spots: y.spots.filter((z) => z !== sid) } : y)) }; });
+  const addShape = (kind) => setD((x) => ({ ...x, shapes: [...x.shapes, { id: "g" + newId(), kind, label: "", sub: "", ordered: false, rot: 0, spots: [] }] }));
+  const removeShape = (id) => setD((x) => { const sh = x.shapes.find((y) => y.id === id); const spots = { ...x.spots }; for (const sid of sh?.spots || []) delete spots[sid]; return { ...x, shapes: x.shapes.filter((y) => y.id !== id), spots }; });
+  const setKind = (sh, kind) => {
+    setShape(sh.id, { kind, cx: undefined, cy: undefined });
+    if (kind === "pool") { const keep = sh.spots.slice(0, 1); setD((x) => { const spots = { ...x.spots }; for (const sid of sh.spots.slice(1)) delete spots[sid]; if (keep[0]) spots[keep[0]] = { ...spots[keep[0]], target: spots[keep[0]].target || 10, unit: spots[keep[0]].unit || "" }; return { ...x, spots, shapes: x.shapes.map((y) => (y.id === sh.id ? { ...y, kind, spots: keep, cx: undefined, cy: undefined } : y)) }; }); }
+  };
+  const acceptsLabel = (a) => a === "any" ? "Any card" : a.startsWith("suit:") ? "Any " + SUIT_NAMES[a.slice(5)].toLowerCase() + " card" : (cards.find((c) => "card:" + c.id === a)?.label || "A card you no longer have");
+  const save = () => {
+    if (!d.name.trim()) return setErr("Give the map a name.");
+    const shapes = d.shapes.filter((sh) => sh.spots.length);
+    if (!shapes.length) return setErr("Add at least one spot.");
+    for (const sh of shapes) for (const sid of sh.spots) { const w = parseWhen(d.spots[sid].when); if (w.bad) return setErr(`${sh.label || "A group"}: ${w.bad}`); }
+    // Re-number spots and re-flow any group whose spot count or kind changed.
+    const spots = {};
+    const fixed = shapes.map((sh) => {
+      sh.spots.forEach((sid, i) => { spots[sid] = { ...d.spots[sid], shape: sh.id, i }; });
+      const before = map?.shapes.find((y) => y.id === sh.id);
+      const moved = !before || before.kind !== sh.kind || before.spots.length !== sh.spots.length;
+      return moved ? { ...sh, cx: undefined, cy: undefined } : sh;
+    });
+    const out = layoutMap({ ...d, name: d.name.trim(), shapes: fixed, spots });
+    onSave({ ...out, per: d.per, days: d.per === "days" ? d.days : undefined, startAt: d.per === "days" ? d.startAt : undefined, startHour: d.startHour || 0 });
+  };
+  const round = d.per === "days" ? "days" : d.per;
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={st.screen} edges={["top", "bottom", "left", "right"]}>
+        <View style={[st.row, { padding: 12, justifyContent: "space-between" }]}>
+          <Btn label="Cancel" onPress={onClose} />
+          <Text style={st.h3}>{map ? "Edit map" : "New map"}</Text>
+          <Btn primary label="Save" onPress={save} />
+        </View>
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
+          {!!err && <Text style={[st.note, { color: C.hot, textAlign: "left" }]}>{err}</Text>}
+          <Field label="Name" value={d.name} onChangeText={(v) => setD({ ...d, name: v })} placeholder="Morning routine" />
+          <View style={st.panel}>
+            <Text style={st.label}>A ROUND LASTS</Text>
+            <View style={st.chips}>
+              {[["day", "A day"], ["week", "A week"], ["month", "A month"], ["days", "Some days"]].map(([k, l]) => (
+                <Chip key={k} label={l} on={round === k} onPress={() => { setD({ ...d, per: k, days: k === "days" ? d.days || 3 : d.days }); if (k === "days") setTiming(true); }} />
+              ))}
+            </View>
+            {round === "days" && (
+              <>
+                <Text style={st.label}>HOW MANY DAYS</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                  {DAY_COUNTS.map((n) => <Chip key={n} label={String(n)} on={d.days === n} onPress={() => setD({ ...d, days: n })} />)}
+                </ScrollView>
+              </>
+            )}
+            <Text style={[st.note, { textAlign: "left" }]}>When a round ends, the map clears and starts over.</Text>
+            <Pressable onPress={() => setTiming(!timing)} hitSlop={8}><Text style={st.link}>{timing ? "Hide timing" : "Timing ▸"}</Text></Pressable>
+            {timing && (
+              <>
+                {round === "days" && (
+                  <>
+                    <Text style={st.label}>FIRST ROUND STARTS</Text>
+                    <View style={st.chips}>
+                      {[0, 1, 2, 3, 4, 5, 6].map((k) => { const day = new Date(); day.setDate(day.getDate() + k); const v = ymdLocal(day);
+                        return <Chip key={k} label={k === 0 ? "Today" : k === 1 ? "Tomorrow" : DAYNAME[day.getDay()] + " " + day.getDate()} on={d.startAt === v} onPress={() => setD({ ...d, startAt: v })} />; })}
+                    </View>
+                  </>
+                )}
+                <Text style={st.label}>A DAY STARTS AT</Text>
+                <View style={st.chips}>{START_HOURS.map((h) => <Chip key={h} label={h ? fmtMin(h * 60) : "Midnight"} on={(d.startHour || 0) === h} onPress={() => setD({ ...d, startHour: h })} />)}</View>
+                <Text style={[st.note, { textAlign: "left" }]}>For late nights: with 4 AM, 1 AM still counts as the day before.</Text>
+              </>
+            )}
+          </View>
+
+          {d.shapes.map((sh, gi) => (
+            <View key={sh.id} style={st.panel}>
+              <View style={[st.row, { justifyContent: "space-between" }]}>
+                <Text style={st.label}>GROUP {gi + 1}</Text>
+                <Pressable onPress={() => removeShape(sh.id)} hitSlop={8}><Text style={[st.link, { color: C.hot }]}>Remove group</Text></Pressable>
+              </View>
+              <Field label="Group name" value={sh.label} onChangeText={(v) => setShape(sh.id, { label: v })} placeholder={sh.kind === "pool" ? "Water" : "Evenings"} />
+              <View style={st.chips}>{KINDS.map(([k, l]) => <Chip key={k} label={l} on={sh.kind === k} onPress={() => setKind(sh, k)} />)}</View>
+              <Text style={[st.note, { textAlign: "left" }]}>{KINDS.find((k) => k[0] === sh.kind)[2]}.</Text>
+              {sh.kind !== "pool" && (
+                <View style={[st.row, { justifyContent: "space-between" }]}>
+                  <Text style={st.h3}>In order</Text>
+                  <Switch value={!!sh.ordered} onValueChange={(v) => setShape(sh.id, { ordered: v })} trackColor={{ true: C.accent }} />
+                </View>
+              )}
+              {sh.spots.map((sid, i) => {
+                const sp = d.spots[sid], w = parseWhen(sp.when);
+                return (
+                  <View key={sid} style={st.spotRow}>
+                    <View style={[st.row, { justifyContent: "space-between" }]}>
+                      <Text style={st.miniMeta}>{sh.kind === "pool" ? "FILLS WITH" : "SPOT " + (i + 1)}</Text>
+                      <Pressable onPress={() => removeSpot(sh, sid)} hitSlop={8}><Text style={[st.miniMeta, { color: C.hot }]}>✕</Text></Pressable>
+                    </View>
+                    <Pressable onPress={() => setPick(sid)} style={st.pickBtn} accessibilityRole="button" accessibilityLabel={"Takes " + acceptsLabel(sp.accepts) + ". Change"}>
+                      <Text style={st.h3} numberOfLines={1}>{acceptsLabel(sp.accepts)} ▾</Text>
+                    </Pressable>
+                    {sh.kind === "pool" && (
+                      <View style={st.row}>
+                        <View style={{ flex: 1 }}><Field label="Target" value={String(sp.target ?? "")} onChangeText={(v) => setSpot(sid, { target: Math.max(1, parseInt(v.replace(/\D/g, ""), 10) || 1) })} keyboardType="number-pad" /></View>
+                        <View style={{ flex: 1 }}><Field label="Unit" value={sp.unit || ""} onChangeText={(v) => setSpot(sid, { unit: v })} placeholder="ml" /></View>
+                      </View>
+                    )}
+                    {openWhen[sid] || !w.always ? (
+                      <>
+                        <Field label="Open when (optional)" value={sp.when === "always" ? "" : sp.when} onChangeText={(v) => setSpot(sid, { when: v.trim() ? v : "always" })} placeholder="mon wed fri 5 to 8pm" />
+                        <Text style={[st.miniMeta, w.bad && { color: C.hot }]}>{w.label}</Text>
+                      </>
+                    ) : (
+                      <Pressable onPress={() => setOpenWhen({ ...openWhen, [sid]: true })} hitSlop={8}><Text style={st.link}>Set a time</Text></Pressable>
+                    )}
+                  </View>
+                );
+              })}
+              {!(sh.kind === "pool" && sh.spots.length) && <Btn label={sh.kind === "pool" ? "+ What fills it" : "+ Add a spot"} onPress={() => addSpot(sh)} />}
+            </View>
+          ))}
+          <View style={st.row}>{KINDS.map(([k, l]) => <Btn key={k} flex label={"+ " + l} onPress={() => addShape(k)} />)}</View>
+        </ScrollView>
+        <Modal visible={!!pick} transparent animationType="slide" onRequestClose={() => setPick(null)}>
+          <Pressable style={st.scrim} onPress={() => setPick(null)} />
+          <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]}>
+            <Text style={st.h2}>This spot takes</Text>
+            <View style={st.chips}>
+              <Chip label="Any card" on={pick && d.spots[pick]?.accepts === "any"} onPress={() => { setSpot(pick, { accepts: "any" }); setPick(null); }} />
+              {SUITS.map((x) => <Chip key={x} label={SUIT[x] + " Any " + SUIT_NAMES[x].toLowerCase()} on={pick && d.spots[pick]?.accepts === "suit:" + x} onPress={() => { setSpot(pick, { accepts: "suit:" + x }); setPick(null); }} />)}
+            </View>
+            <Text style={st.label}>A CARD FROM YOUR DECKS</Text>
+            {cardsSorted.map((c) => (
+              <Pressable key={c.id} onPress={() => { setSpot(pick, { accepts: "card:" + c.id }); setPick(null); }} style={[st.deckRow, pick && d.spots[pick]?.accepts === "card:" + c.id && { borderColor: C.accent, borderWidth: 2 }]}>
+                <Text style={{ color: C.suit[c.suit], fontSize: 18, width: 22 }}>{SUIT[c.suit]}</Text>
+                <Text style={[st.h3, { flex: 1 }]} numberOfLines={1}>{c.label}</Text>
+                <Text style={st.miniMeta}>{deckEmoji(deckOfCard(c))} {deckOfCard(c)?.name || ""}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </Modal>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 /* ---------------- deck logo picker ---------------- */
 const EMOJIS = ["☀️", "🌙", "🏋️", "🏃", "🧘", "💧", "🥗", "🧹", "🏠", "💼", "📚", "🎸", "🎨", "🌱", "🐕", "💤", "🧠", "❤️", "⭐", "🔥", "⚡", "🎯", "🛠️", "💰"];
 function EmojiPicker({ value, onPick }) {
@@ -1667,6 +1843,8 @@ function makeStyles() { return StyleSheet.create({
   trayCloseTxt: { fontSize: 15, fontWeight: "800", color: C.muted },
   helpBtn: { position: "absolute", right: 18, width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 6 },
   helpTxt: { fontSize: 20, fontWeight: "800", color: C.ink },
+  spotRow: { gap: 8, padding: 10, borderRadius: 12, backgroundColor: C.paper },
+  pickBtn: { minHeight: 44, justifyContent: "center", paddingHorizontal: 12, borderRadius: 10, borderWidth: 1.5, borderColor: C.line },
   deckLogo: { position: "absolute", flexDirection: "row", gap: 2, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1.5, backgroundColor: C.paper },
   deckLogoTxt: { fontSize: 22 },
   emojiCell: { width: 44, height: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.paper, borderWidth: 2, borderColor: "transparent" },

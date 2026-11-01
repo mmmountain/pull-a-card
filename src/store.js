@@ -248,6 +248,22 @@ export const setStackPer = (room, me, per) => patchMe(room, me, { stackPer: per 
 /** Which of your decks this table deals from (null = all of them). */
 export const setUseDecks = (room, me, ids) => patchMe(room, me, { useDecks: ids });
 
+/** Save a map from the editor. New maps become the table's map. Returns its id. */
+export async function saveMap(room, me, mapId, draft) {
+  const id = mapId || me.id + ":" + newId();
+  const old = mapId ? await getDoc(room, "maps", mapId) : null;
+  const { id: _i, fresh, ...d } = draft;
+  // Keep what's been played this round on spots that still exist.
+  const spots = {};
+  for (const [sid, sp] of Object.entries(d.spots || {})) {
+    const prev = old?.spots?.[sid];
+    spots[sid] = prev ? { ...sp, filled: prev.filled, total: prev.total, pile: prev.pile, dealtMiss: prev.dealtMiss } : sp;
+  }
+  await upsert(room, "maps", id, { ...(old || {}), ...d, spots, owner: me.id, since: old?.since || new Date().toISOString(), active: old ? old.active : true });
+  if (!old) await useMap(room, me, id);
+  return id;
+}
+
 export async function setMapActive(room, me, mapId, active) {
   const m = await getDoc(room, "maps", mapId);
   if (m) await upsert(room, "maps", mapId, { ...m, active });

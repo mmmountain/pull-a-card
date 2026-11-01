@@ -4,7 +4,7 @@ import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDa
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./model.js";
 import { SUIT, SUITS, ago, fmtTime, heat, newId, parseLater } from "./model.js";
 import { DECK_LIBRARY, deckOf, everydayId, myDecks } from "./model.js";
-import { MAP_LIBRARY, PER_NAMES, canPlayAt, describeAccepts, fitsSpots, live, parseWhen, spotState } from "./maps.js";
+import { perLabel, MAP_LIBRARY, PER_NAMES, canPlayAt, describeAccepts, fitsSpots, live, parseWhen, spotState } from "./maps.js";
 import { boardSvg } from "./mapview.js";
 
 const $app = document.getElementById("app");
@@ -144,7 +144,7 @@ function mapView(m0) {
     const what = { missed: "Missed.", filled: "Played" + (selS.filled ? ": " + esc(selS.filled.label) : "") + ".", full: "Full.", skipped: "This was before you added the map.", waiting: "Waiting for the spots before it.", future: "Not open yet." }[st]
       || (n ? `${n} card${n === 1 ? "" : "s"} in your hand fit. Tap one to play it here.` : "Open. Nothing in your hand fits.");
     info = `<b>${esc(describeAccepts(selS, cards))}</b> · ${esc(parseWhen(selS.when).label)} · ${what}`;
-  } else info = `${PER_NAMES[m.per]} map · ${open} spot${open === 1 ? "" : "s"} open now. Tap a card to light up its spots, or tap a spot.`;
+  } else info = `${perLabel(m)} map · ${open} spot${open === 1 ? "" : "s"} open now. Tap a card to light up its spots, or tap a spot.`;
   const minis = hand.map((h) => {
     const cls = selS ? (canPlayAt(m, selS, h, now) ? "fits" : "dim") : "";
     return `<button class="mini mcard ${cls}" aria-pressed="${mSelCard === h.id}" data-mcard="${h.id}"><span class="a" style="color:${SUITC[h.suit]}">${SUIT[h.suit] || "●"}${h.fromMap ? " missed" : ""}</span><span class="l">${esc(h.label)}</span><span class="a"></span></button>`;
