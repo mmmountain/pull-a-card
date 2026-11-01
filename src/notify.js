@@ -265,3 +265,6 @@ export function testTakeover() {
 }
 export const canFullScreen = () => (Takeover ? Takeover.canFullScreen() : false);
 export const openFullScreenSettings = () => Takeover?.openFullScreenSettings();
+export const canDrawOver = () => (Takeover?.canDrawOverOtherApps ? Takeover.canDrawOverOtherApps() : false);
+export const openOverlaySettings = () => Takeover?.openOverlaySettings?.();
+export const consumeShowCard = () => (Takeover?.consumeShowCard ? Takeover.consumeShowCard() : false);

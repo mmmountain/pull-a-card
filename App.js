@@ -153,11 +153,15 @@ function Game({ profile, setProfile }) {
       await S.ensureDeck(room, me).catch(() => {});
       await N.claimDeliveredDeal(room, me).catch(() => {});
       await S.claimTakeover(room, me, prefs).catch(() => {});
+      if (N.consumeShowCard()) setTab("card");
       refresh();
     })();
     const sub = Notifications.addNotificationResponseReceivedListener(onResponse);
     const app = AppState.addEventListener("change", (s) => {
-      if (s === "active") N.claimDeliveredDeal(room, me).catch(() => {}).then(() => S.claimTakeover(room, me, prefs)).catch(() => {}).finally(refresh);
+      if (s === "active") {
+        if (N.consumeShowCard()) setTab("card");
+        N.claimDeliveredDeal(room, me).catch(() => {}).then(() => S.claimTakeover(room, me, prefs)).catch(() => {}).finally(refresh);
+      }
     });
     return () => { sub.remove(); app.remove(); };
   }, [room]);
@@ -664,7 +668,8 @@ function MeView({ profile, prefs, setProfile, act, state }) {
 /** Type a time like "9:30pm" or "2130"; stores "HH:MM". Empty clears it. */
 function TakeoverPanel({ act }) {
   const [ok, setOk] = useState(N.canFullScreen());
-  useEffect(() => { const sub = AppState.addEventListener("change", (s) => s === "active" && setOk(N.canFullScreen())); return () => sub.remove(); }, []);
+  const [over, setOver] = useState(N.canDrawOver());
+  useEffect(() => { const sub = AppState.addEventListener("change", (s) => { if (s === "active") { setOk(N.canFullScreen()); setOver(N.canDrawOver()); } }); return () => sub.remove(); }, []);
   return (
     <View style={st.panel}>
       <Text style={st.label}>FULL-SCREEN ALARMS</Text>
@@ -674,6 +679,8 @@ function TakeoverPanel({ act }) {
         <>
           <Text style={[st.note, { textAlign: "left" }]}>Cards with a takeover time, like Go to bed, ring full screen over other apps until you play them.</Text>
           {!ok && <Btn primary label="Allow full-screen alerts" onPress={() => N.openFullScreenSettings()} />}
+          {!over && <><Text style={[st.note, { textAlign: "left" }]}>Right now it only takes over the screen when your phone is locked. To have it take over while you're using the phone, allow "Display over other apps".</Text>
+            <Btn primary label="Allow over other apps" onPress={() => N.openOverlaySettings()} /></>}
           <Btn label="Test takeover (in 3 seconds)" onPress={() => act(async () => { N.testTakeover(); }, "Lock your phone or switch apps. It rings in 3 seconds.")} />
         </>
       )}

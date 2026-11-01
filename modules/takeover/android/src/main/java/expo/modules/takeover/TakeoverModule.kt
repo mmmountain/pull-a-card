@@ -26,6 +26,19 @@ class TakeoverModule : Module() {
     Function("canFullScreen") {
       if (Build.VERSION.SDK_INT >= 34) ctx.getSystemService(NotificationManager::class.java).canUseFullScreenIntent() else true
     }
+    Function("canDrawOverOtherApps") {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(ctx) else true
+    }
+    Function("openOverlaySettings") {
+      ctx.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + ctx.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+    // True once after "Open the card" on a takeover; the app then jumps to the Card view.
+    Function("consumeShowCard") {
+      val p = ctx.getSharedPreferences("pullacard_takeover_open", android.content.Context.MODE_PRIVATE)
+      val v = p.getBoolean("showCard", false)
+      if (v) p.edit().putBoolean("showCard", false).apply()
+      v
+    }
     Function("openFullScreenSettings") {
       val intent = if (Build.VERSION.SDK_INT >= 34)
         Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:" + ctx.packageName))

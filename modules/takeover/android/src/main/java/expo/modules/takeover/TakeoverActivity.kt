@@ -67,12 +67,16 @@ class TakeoverActivity : Activity() {
       setOnClickListener { onTap() }
     }
     val lp = { LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(58)).apply { topMargin = dp(14) } }
-    root.addView(button("Open the card", true) {
+    val isTest = id == "test"
+    root.addView(button(if (isTest) "Stop the test" else "Open the card", true) {
       TakeoverCore.cancel(this, id)
-      packageManager.getLaunchIntentForPackage(packageName)?.let { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+      if (!isTest) {
+        getSharedPreferences("pullacard_takeover_open", MODE_PRIVATE).edit().putBoolean("showCard", true).apply()
+        packageManager.getLaunchIntentForPackage(packageName)?.let { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+      }
       finish()
     }, lp().apply { topMargin = dp(28) })
-    root.addView(button("5 more minutes", false) {
+    if (!isTest) root.addView(button("5 more minutes", false) {
       TakeoverCore.snooze(this, id, 5)
       finish()
     }, lp())

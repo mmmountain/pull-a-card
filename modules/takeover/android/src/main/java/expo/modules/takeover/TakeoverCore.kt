@@ -86,6 +86,11 @@ object TakeoverCore {
       .build()
     n.flags = n.flags or android.app.Notification.FLAG_INSISTENT
     try { ctx.getSystemService(NotificationManager::class.java).notify(code(id), n) } catch (_: SecurityException) {}
+    // With "Display over other apps" allowed, take over the screen even while the phone is in use
+    // (otherwise Android only shows a banner when the screen is on).
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || android.provider.Settings.canDrawOverlays(ctx)) {
+      try { ctx.startActivity(Intent(ctx, TakeoverActivity::class.java).putExtra("id", id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
+    }
     val left = d.optInt("left", 0)
     val every = d.optInt("repeatMins", 0)
     if (left > 0 && every > 0) {
