@@ -22,6 +22,7 @@ import { SUIT_NAMES, MAP_LIBRARY, PER_NAMES, amountText, canPlayAt, describeAcce
 // Live color palette. applyTheme() swaps it in place and redraws the app.
 const C = { ...ORIGINAL, suit: { ...ORIGINAL.suit } };
 const THEME_KEY = "pac.theme.v1";
+const TRAY_KEY = "pac.cardTray.v1";
 let redraw = null;
 function applyTheme(t, save = true) {
   Object.assign(C, t, { suit: { ...t.suit } });
@@ -356,6 +357,10 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
   const sc = top ? C.suit[top.suit] : C.accent;
   const tint = mix(C.paper, sc, 0.3), ink2 = mix(sc, C.ink, 0.45);
   const [later, setLater] = useState(false);
+  // The tray can be closed (the card still swipes); "?" brings it back. Remembered on this phone.
+  const [tray, setTray] = useState(true);
+  useEffect(() => { AsyncStorage.getItem(TRAY_KEY).then((v) => { if (v === "0") setTray(false); }).catch(() => {}); }, []);
+  const showTray = (v) => { setTray(v); AsyncStorage.setItem(TRAY_KEY, v ? "1" : "0").catch(() => {}); };
   const setReminder = async (at) => {
     setLater(false);
     await act(async () => {
@@ -422,8 +427,16 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
               </View>
             </View>
           </SwipeCard>
-          <View pointerEvents="box-none" style={[st.cardControls, { bottom: padBottom - 6 }]}>
-            <View style={{ alignSelf: "stretch", gap: 2 }}>
+          {!tray && (
+            <Pressable onPress={() => showTray(true)} hitSlop={10} style={[st.helpBtn, { bottom: padBottom - 2 }]} accessibilityRole="button" accessibilityLabel="Show card controls and help">
+              <Text style={st.helpTxt}>?</Text>
+            </Pressable>
+          )}
+          {tray && <View pointerEvents="box-none" style={[st.cardControls, { bottom: padBottom - 6 }]}>
+            <Pressable onPress={() => showTray(false)} hitSlop={10} style={st.trayClose} accessibilityRole="button" accessibilityLabel="Close">
+              <Text style={st.trayCloseTxt}>✕</Text>
+            </Pressable>
+            <View style={{ alignSelf: "stretch", gap: 2, paddingHorizontal: 26 }}>
               {!countsHere && ctx.rooms.length > 1 && <Text style={[st.whereLine, { color: C.warm }]}>Pulled at {from} · doesn't count here</Text>}
               {where.map((w) => (
                 <Text key={w.room} style={st.whereLine} numberOfLines={1}>
@@ -439,7 +452,7 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
             </View>
             <Pressable onPress={() => setLater(true)} hitSlop={10}><Text style={st.link}>Snooze…</Text></Pressable>
             <Text style={st.swipeHint}>↑ play · ↓ hold · ← less often · → snooze 30 min</Text>
-          </View>
+          </View>}
         </>
       ) : ctx.paused.includes(room) ? (
         <View style={[st.home, { paddingTop: ins.top + padTop }]}>
@@ -1599,6 +1612,10 @@ function makeStyles() { return StyleSheet.create({
   whereLine: { fontSize: 14, fontWeight: "800", color: C.ink, textAlign: "center" },
   whereDim: { fontWeight: "500", color: C.muted },
   cardHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 10 },
+  trayClose: { position: "absolute", top: 6, right: 6, width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", zIndex: 2 },
+  trayCloseTxt: { fontSize: 15, fontWeight: "800", color: C.muted },
+  helpBtn: { position: "absolute", right: 18, width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 6 },
+  helpTxt: { fontSize: 20, fontWeight: "800", color: C.ink },
   deckLogo: { position: "absolute", flexDirection: "row", gap: 2, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1.5, backgroundColor: C.paper },
   deckLogoTxt: { fontSize: 22 },
   emojiCell: { width: 44, height: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.paper, borderWidth: 2, borderColor: "transparent" },
