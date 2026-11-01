@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions, ActivityIndicator, Alert, AppState, KeyboardAvoidingView, Modal, Platform, Pressable,
   ScrollView, StyleSheet, Switch, Text, TextInput, View,
-  Animated, PanResponder, Vibration,
+  Animated, PanResponder, Vibration, useWindowDimensions,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -373,58 +373,62 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
   const blocked = top && (!canPlay(locks, [top.cardId]) || !!wait);
   const padTop = 64, padBottom = ins.bottom + WHEEL_H + 44;
   const canPull = drawable(state.cards, state.players, state.hands, state.tables, me.id, state.decks, state.maps).length > 0;
+  const win = useWindowDimensions();
+  const topSpace = ins.top + 58, bottomSpace = padBottom + (tray && top ? 92 : 0);
+  const availH = win.height - topSpace - bottomSpace - 8;
+  const cw = Math.max(200, Math.min(win.width - 20, availH * 5 / 7)), ch = cw * 7 / 5;
+  const box = { left: (win.width - cw) / 2, top: topSpace + Math.max(0, (availH - ch) / 2), width: cw, height: ch };
+  const bandH = Math.round(ch * 0.15), footH = Math.round(ch * 0.08), k = cw / 360;
   return (
     <View style={StyleSheet.absoluteFill}>
       {top ? (
         <>
-          <SwipeCard key={top.drawnAt} t={top} tint={tint} say={say} blockedMsg={wait ? "Not yet. " + bufferMessage(wait) : blocked ? lockMessage(locks) : ""}
+          <SwipeCard key={top.drawnAt} t={top} tint={tint} box={box} say={say} blockedMsg={wait ? "Not yet. " + bufferMessage(wait) : blocked ? lockMessage(locks) : ""}
             onSwipe={(it) => act(async () => {
               const r = await M.swipeAll(ctx, from, top, it);
               if (r?.handId && r.remindAt) await N.scheduleReminder(from, r.handId, top, r.remindAt);
             }, swipeLabel(it) + ": " + top.label)}>
             {/* Suit color does the talking: a solid band up top, a tinted face, double rules and frame in a darker shade. */}
-            <View pointerEvents="none" style={[st.cardBand, { height: ins.top + padTop + 58, backgroundColor: sc }]}>
+            <View pointerEvents="none" style={[st.cardBand, { height: bandH, backgroundColor: sc }]}>
               <View style={[st.bandRule, { backgroundColor: ink2, bottom: 0 }]} />
               <View style={[st.bandRule, { backgroundColor: ink2, bottom: 5, height: 1 }]} />
             </View>
-            <View pointerEvents="none" style={[st.cardFrame, { top: ins.top + padTop + 70, bottom: padBottom + 130, borderColor: ink2 }]} />
-            <View pointerEvents="none" style={[st.cardFrame, { top: ins.top + padTop + 75, bottom: padBottom + 135, left: 17, right: 17, borderWidth: 1, borderColor: ink2, opacity: 0.6 }]} />
-            <View pointerEvents="none" style={[st.cardFoot, { height: padBottom + 118, backgroundColor: sc }]}>
+            <View pointerEvents="none" style={[st.cardFrame, { top: bandH + 10, bottom: footH + 10, left: 10, right: 10, borderColor: ink2 }]} />
+            <View pointerEvents="none" style={[st.cardFrame, { top: bandH + 15, bottom: footH + 15, left: 15, right: 15, borderWidth: 1, borderColor: ink2, opacity: 0.6 }]} />
+            <View pointerEvents="none" style={[st.cardFoot, { height: footH, backgroundColor: sc }]}>
               <View style={[st.bandRule, { backgroundColor: ink2, top: 0 }]} />
               <View style={[st.bandRule, { backgroundColor: ink2, top: 5, height: 1 }]} />
             </View>
-            <View style={[st.fullCardBody, { paddingTop: ins.top + padTop, paddingBottom: padBottom + 140 }]}>
-              <View style={st.cardHead}>
-                <View style={st.fullCorner}>
-                  <Text style={[st.fullSuit, { color: C.ink }]}>{SUIT[top.suit]}</Text>
-                  {!!beef && <Text style={[st.fullBeef, { color: C.ink }]}>{beef}</Text>}
-                </View>
-                <View style={[st.row, { gap: 12 }]}>
-                  <Text style={[st.cardKicker, { color: C.ink }]}>{(SUIT_NAMES[top.suit] || "").toUpperCase()}</Text>
-                  {!!card && (
-                    <Pressable onPress={() => onEdit(card.id, card.label)} hitSlop={10} style={[st.editBtn, { borderColor: C.ink }]} accessibilityRole="button" accessibilityLabel={"Edit " + top.label}>
-                      <Text style={[st.editIcon, { color: C.ink }]}>✎</Text>
-                    </Pressable>
-                  )}
-                </View>
+            <View style={[st.cardHead, { position: "absolute", left: 16, right: 14, top: 0, height: bandH - 6, paddingBottom: 0 }]}>
+              <View style={st.fullCorner}>
+                <Text style={[st.fullSuit, { color: C.ink, fontSize: 30 * k }]}>{SUIT[top.suit]}</Text>
+                {!!beef && <Text style={[st.fullBeef, { color: C.ink, fontSize: 52 * k, lineHeight: 58 * k }]}>{beef}</Text>}
               </View>
-              <View style={{ flex: 1, justifyContent: "center", alignItems: "center", gap: 14, paddingHorizontal: 14 }}>
-                <Text style={st.fullTitle}>{top.label}</Text>
-                <View style={[st.titleRule, { backgroundColor: ink2 }]}><View style={[st.titleDot, { backgroundColor: sc, borderColor: ink2 }]} /></View>
-                {!!top.variant && <Text style={[st.fullVar, { color: ink2 }]}>{top.variant}</Text>}
-                {!!card && !!quotaLabel(card, Date.now(), prefs) && <Text style={[st.fullVar, { fontSize: 14, color: ink2 }]}>{quotaLabel(card, Date.now(), prefs)}</Text>}
-                {!!locks.length && <Text style={[st.fullVar, { color: C.hot }]}>🔒 {lockMessage(locks)}</Text>}
-                {!!wait && <Text style={[st.fullVar, { color: C.hot }]}>⏳ {bufferMessage(wait)}</Text>}
+              <View style={[st.row, { gap: 10 }]}>
+                {!!emojis.length && (
+                  <View style={[st.deckLogo, { position: "relative", borderColor: ink2 }]} accessibilityLabel={"Deck " + emojis.join(" ")}>
+                    {emojis.map((e) => <Text key={e} style={st.deckLogoTxt}>{e}</Text>)}
+                  </View>
+                )}
+                <Text style={[st.cardKicker, { color: C.ink }]}>{(SUIT_NAMES[top.suit] || "").toUpperCase()}</Text>
+                {!!card && (
+                  <Pressable onPress={() => onEdit(card.id, card.label)} hitSlop={10} style={[st.editBtn, { borderColor: C.ink }]} accessibilityRole="button" accessibilityLabel={"Edit " + top.label}>
+                    <Text style={[st.editIcon, { color: C.ink }]}>✎</Text>
+                  </Pressable>
+                )}
               </View>
-              {!!emojis.length && (
-                <View style={[st.deckLogo, { left: 28, bottom: padBottom + 148, borderColor: ink2 }]} accessibilityLabel={"Deck " + emojis.join(" ")}>
-                  {emojis.map((e) => <Text key={e} style={st.deckLogoTxt}>{e}</Text>)}
-                </View>
-              )}
-              <View style={[st.fullCorner, { position: "absolute", right: 28, bottom: padBottom + 150, transform: [{ rotate: "180deg" }] }]}>
-                <Text style={[st.fullSuit, { fontSize: 24, color: sc }]}>{SUIT[top.suit]}</Text>
-                {!!beef && <Text style={[st.fullBeef, { fontSize: 30, lineHeight: 34, color: ink2 }]}>{beef}</Text>}
-              </View>
+            </View>
+            <View style={{ position: "absolute", left: 22, right: 22, top: bandH + 22, bottom: footH + 52, justifyContent: "center", alignItems: "center", gap: 12 * k }}>
+              <Text style={[st.fullTitle, { fontSize: Math.max(26, 42 * k) }]} adjustsFontSizeToFit numberOfLines={4}>{top.label}</Text>
+              <View style={[st.titleRule, { backgroundColor: ink2 }]}><View style={[st.titleDot, { backgroundColor: sc, borderColor: ink2 }]} /></View>
+              {!!top.variant && <Text style={[st.fullVar, { color: ink2 }]} numberOfLines={3}>{top.variant}</Text>}
+              {!!card && !!quotaLabel(card, Date.now(), prefs) && <Text style={[st.fullVar, { fontSize: 14, color: ink2 }]}>{quotaLabel(card, Date.now(), prefs)}</Text>}
+              {!!locks.length && <Text style={[st.fullVar, { color: C.hot }]} numberOfLines={2}>🔒 {lockMessage(locks)}</Text>}
+              {!!wait && <Text style={[st.fullVar, { color: C.hot }]} numberOfLines={2}>⏳ {bufferMessage(wait)}</Text>}
+            </View>
+            <View style={[st.fullCorner, { position: "absolute", right: 24, bottom: footH + 22, transform: [{ rotate: "180deg" }] }]}>
+              <Text style={[st.fullSuit, { fontSize: 22 * k, color: ink2 }]}>{SUIT[top.suit]}</Text>
+              {!!beef && <Text style={[st.fullBeef, { fontSize: 28 * k, lineHeight: 32 * k, color: ink2 }]}>{beef}</Text>}
             </View>
           </SwipeCard>
           {!tray && (
@@ -461,7 +465,7 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
           <Btn primary label="Enable this table" onPress={() => togglePauseRef(room)} />
         </View>
       ) : canPull ? (
-        <Pressable onPress={() => act(() => M.drawAll(ctx, prefs))} style={[st.fullBack, { top: ins.top + 6 }]} accessibilityRole="button" accessibilityLabel="Tap to pull a card">
+        <Pressable onPress={() => act(() => M.drawAll(ctx, prefs))} style={[st.fullBack, box]} accessibilityRole="button" accessibilityLabel="Tap to pull a card">
           <View style={st.fullBackInner}><View style={st.drawBtn}><Text style={st.drawTxt}>Tap to pull a card</Text></View></View>
         </Pressable>
       ) : (
@@ -591,7 +595,7 @@ function Stack({ s, fresh }) {
 }
 
 /* The top card, swipeable: up play · down hold · lean right "sooner/more" · lean left "later/less". */
-function SwipeCard({ t, tint, blockedMsg, onSwipe, say, children }) {
+function SwipeCard({ t, tint, box, blockedMsg, onSwipe, say, children }) {
   const ins = useSafeAreaInsets();
   const pos = useRef(new Animated.ValueXY()).current;
   const [intent, setIntent] = useState(null);
@@ -622,10 +626,10 @@ function SwipeCard({ t, tint, blockedMsg, onSwipe, say, children }) {
   const rotate = pos.x.interpolate({ inputRange: [-300, 0, 300], outputRange: ["-8deg", "0deg", "8deg"] });
   const tone = !intent ? null : intent.kind === "play" ? C.accent : intent.kind === "hold" ? C.suit.home : intent.kind === "soon" ? C.warm : C.muted;
   return (
-    <Animated.View {...pr.panHandlers} style={[st.fullCard, tint && { backgroundColor: tint }, { transform: [{ translateX: pos.x }, { translateY: pos.y }, { rotate }] }]}>
+    <Animated.View {...pr.panHandlers} style={[st.fullCard, box, tint && { backgroundColor: tint }, { transform: [{ translateX: pos.x }, { translateY: pos.y }, { rotate }] }]}>
       {children}
       {!!intent && (
-        <View pointerEvents="none" style={[st.swipeTag, { top: ins.top + 100, borderColor: tone }]}>
+        <View pointerEvents="none" style={[st.swipeTag, { top: (box?.height || 400) * 0.22, borderColor: tone }]}>
           <Text style={[st.swipeTagTxt, { color: C.ink }]}>{swipeLabel(intent)}</Text>
         </View>
       )}
@@ -1760,8 +1764,8 @@ function makeStyles() { return StyleSheet.create({
   home: { flex: 1, alignItems: "center", justifyContent: "center", gap: 18, padding: 16 },
   link: { color: C.muted, fontSize: 14, textDecorationLine: "underline" },
   handGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  miniGrid: { width: "31%", aspectRatio: undefined, minHeight: 150 },
-  miniAway: { width: "22%", aspectRatio: undefined, minHeight: 92, padding: 7, opacity: 0.6, elevation: 0, borderStyle: "dashed", borderColor: C.line, borderWidth: 2 },
+  miniGrid: { width: "31%", aspectRatio: 5 / 7 },
+  miniAway: { width: "22%", aspectRatio: 5 / 7, padding: 7, opacity: 0.6, elevation: 0, borderStyle: "dashed", borderColor: C.line, borderWidth: 2 },
   miniLabelAway: { fontSize: 12, fontWeight: "700", color: C.ink },
   awayTag: { alignSelf: "flex-start", maxWidth: "100%", backgroundColor: C.bg2, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 },
   awayTagTxt: { fontSize: 10, fontWeight: "700", color: C.muted },
@@ -1809,7 +1813,7 @@ function makeStyles() { return StyleSheet.create({
   lockTxt: { color: C.ink, fontWeight: "600", fontSize: 14 },
   swipeTag: { position: "absolute", top: 18, alignSelf: "center", backgroundColor: C.paper, borderWidth: 3, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6, elevation: 8 },
   swipeTagTxt: { fontSize: 16, fontWeight: "800" },
-  fullCard: { position: "absolute", left: 6, right: 6, top: 6, bottom: 6, backgroundColor: C.paper, borderRadius: 24, elevation: 6, overflow: "hidden" },
+  fullCard: { position: "absolute", backgroundColor: C.paper, borderRadius: 20, elevation: 8, overflow: "hidden" },
   fullCardBody: { flex: 1, paddingHorizontal: 22 },
   fullCorner: { flexDirection: "row", alignItems: "baseline", gap: 10 },
   fullSuit: { fontSize: 34 },
@@ -1821,7 +1825,7 @@ function makeStyles() { return StyleSheet.create({
   whereTable: { fontSize: 13, fontWeight: "800", color: C.ink },
   whereMap: { fontSize: 12, color: C.muted },
   cardControls: { position: "absolute", left: 16, right: 16, alignItems: "center", gap: 8, padding: 12, borderRadius: 20, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 10 },
-  fullBack: { position: "absolute", left: 6, right: 6, bottom: 6, borderRadius: 24, backgroundColor: C.paper, padding: 8, elevation: 6 },
+  fullBack: { position: "absolute", borderRadius: 20, backgroundColor: C.paper, padding: 8, elevation: 8 },
   fullBackInner: { flex: 1, borderRadius: 18, backgroundColor: C.accent, alignItems: "center", justifyContent: "center" },
   miniBeef: { fontSize: 18, fontWeight: "800", color: C.ink },
   wheel: { position: "absolute", left: 0, right: 0, bottom: 0 },
