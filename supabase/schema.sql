@@ -1,4 +1,4 @@
--- Pull a Card: one table holds every game document, keyed by table name (room).
+-- Prompt: one table holds every game document, keyed by table name (room).
 -- Paste this whole file into Supabase → SQL Editor → New query → Run.
 
 create table if not exists public.docs (

@@ -1,4 +1,4 @@
-# Pull a Card
+# Prompt
 
 A habit card game for Android. Cards get dealt to your phone as notifications;
 play them, hold them, or ask to be reminded later. Friends who enter the same

@@ -10,6 +10,7 @@ import * as Notifications from "expo-notifications";
 import * as Updates from "expo-updates";
 import * as S from "./src/store";
 import * as N from "./src/notify";
+import * as M from "./src/multi";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, randomTheme } from "./src/theme";
 import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./src/model";
@@ -29,33 +30,27 @@ function applyTheme(t, save = true) {
   redraw?.();
 }
 
-/* ---------------- room hook ---------------- */
-function useRoom(room) {
-  const [state, setState] = useState(null);
+/* ---------------- rooms hook ---------------- */
+// Every table you sit at stays loaded and live, so switching is instant and one pull can count at several.
+function useRooms(rooms) {
+  const [states, setStates] = useState({});
   const [error, setError] = useState("");
-  const timer = useRef(null);
-  const refresh = useCallback(async () => {
-    if (!room) return;
-    try {
-      setState(await S.fetchRoom(room));
-      setError("");
-    } catch (e) {
-      setError(String(e.message || e));
-    }
-  }, [room]);
+  const timers = useRef({});
+  const key = rooms.join("|");
+  const fetchOne = useCallback(async (r) => {
+    try { const st1 = await S.fetchRoom(r); setStates((x) => ({ ...x, [r]: st1 })); setError(""); }
+    catch (e) { setError(String(e.message || e)); }
+  }, []);
+  const refresh = useCallback(() => Promise.all(rooms.map(fetchOne)), [key]);
   useEffect(() => {
-    if (!room) return;
     refresh();
-    const off = S.subscribeRoom(room, () => {
-      clearTimeout(timer.current);
-      timer.current = setTimeout(refresh, 250);
-    });
-    return () => {
-      off();
-      clearTimeout(timer.current);
-    };
-  }, [room, refresh]);
-  return { state, error, refresh };
+    const offs = rooms.map((r) => S.subscribeRoom(r, () => {
+      clearTimeout(timers.current[r]);
+      timers.current[r] = setTimeout(() => fetchOne(r), 250);
+    }));
+    return () => { offs.forEach((off) => off()); Object.values(timers.current).forEach(clearTimeout); };
+  }, [key]);
+  return { states, error, refresh };
 }
 
 /* ---------------- app ---------------- */
@@ -113,7 +108,8 @@ function Join({ onDone, initial }) {
     try {
       const me = { id: initial?.me?.id || newId(), name: name.trim() };
       await S.joinRoom(r, me);
-      const p = { room: r, me, prefs: initial?.prefs || S.DEFAULT_PREFS };
+      const rooms = [...new Set([...(initial?.rooms || []), r])];
+      const p = { room: r, rooms, me, prefs: initial?.prefs || S.DEFAULT_PREFS };
       await S.saveProfile(p);
       onDone(p);
     } catch (e) {
@@ -123,7 +119,7 @@ function Join({ onDone, initial }) {
   return (
     <SafeAreaView style={st.screen}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, padding: 24, justifyContent: "center", gap: 14 }}>
-        <Text style={st.h1}>Pull a Card</Text>
+        <Text style={st.h1}>Prompt</Text>
         <Text style={st.note}>Pick a table name. Give the same name to a friend and you'll share a table.</Text>
         <Field label="Your name" value={name} onChangeText={setName} placeholder="Scott" />
         <Field label="Table name" value={room} onChangeText={setRoom} placeholder="scott-and-sam" autoCapitalize="none" />
@@ -137,8 +133,12 @@ function Join({ onDone, initial }) {
 /* ---------------- game shell ---------------- */
 function Game({ profile, setProfile }) {
   const { room, me } = profile;
+  const rooms = useMemo(() => [...new Set([...(profile.rooms || []), room])], [profile.rooms, room]);
   const prefs = { ...S.DEFAULT_PREFS, ...(profile.prefs || {}) };
-  const { state, error, refresh } = useRoom(room);
+  const { states, error, refresh } = useRooms(rooms);
+  const state = states[room];
+  const ctx = { rooms, states, room, me };
+  const [switcher, setSwitcher] = useState(false);
   const [tab, setTab] = useState("card");
   const [focusHand, setFocusHand] = useState(null);
   const [msg, setMsg] = useState("");
@@ -196,6 +196,33 @@ function Game({ profile, setProfile }) {
     return () => clearTimeout(t);
   }, [planKey]);
 
+  // A card that landed here some other way (a notification, a takeover) still counts at every table it applies to.
+  const mirrorKey = state && JSON.stringify([room, state.tables[me.id]?.drawnAt, state.tables[me.id]?.link, rooms.map((r) => !!states[r])]);
+  useEffect(() => {
+    const t = state?.tables[me.id];
+    if (!t || t.empty || t.link || rooms.some((r) => !states[r])) return;
+    if (rooms.some((r) => r !== room && states[r].tables[me.id] && !states[r].tables[me.id].empty)) return;
+    M.mirrorTop(ctx, room).then(refresh).catch(() => {});
+  }, [mirrorKey]);
+
+  const switchTo = async (r) => {
+    setSwitcher(false);
+    if (r === room) return;
+    const p = { ...profile, room: r, rooms };
+    await S.saveProfile(p);
+    setProfile(p);
+  };
+  const addTable = async (raw) => {
+    const r = raw.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+    if (r.length < 3) throw new Error("Table names need at least 3 letters.");
+    await S.joinRoom(r, me);
+    await S.ensureDeck(r, me).catch(() => {});
+    const p = { ...profile, room: r, rooms: [...new Set([...rooms, r])] };
+    await S.saveProfile(p);
+    setSwitcher(false);
+    setProfile(p);
+  };
+
   const act = async (fn, ok) => {
     try { await fn(); if (ok) say(ok); } catch (e) { say("Couldn't save: " + (e.message || e)); }
     refresh();
@@ -204,11 +231,18 @@ function Game({ profile, setProfile }) {
   if (!state) {
     return <Centered>{error ? <><Text style={st.h2}>Can't reach the table</Text><Text style={st.note}>{error}</Text><Btn label="Try again" onPress={refresh} /></> : <ActivityIndicator color={C.accent} />}</Centered>;
   }
-  const myHand = state.hands.filter((h) => h.seat === me.id);
+  const groups = M.handGroups(ctx);
+  const hereN = groups.filter((g) => g.here).length;
 
   return (
     <SafeAreaView style={st.screen} edges={["top", "left", "right"]}>
       <StatusBar style="dark" />
+      <Pressable onPress={() => setSwitcher(true)} style={st.tableBar} accessibilityRole="button" accessibilityLabel={"Table " + room + ". Switch tables"}>
+        <Text style={st.tableBarLbl}>TABLE</Text>
+        <Text style={st.tableBarName} numberOfLines={1}>{room}</Text>
+        {rooms.length > 1 && <Text style={st.tableBarLbl}>{rooms.indexOf(room) + 1} of {rooms.length}</Text>}
+        <Text style={st.tableBarCaret}>▾</Text>
+      </Pressable>
       <View style={st.header}>
         <View style={st.tabs}>
           {[["card", "Card"], ["hand", "Hand"], ["table", "Table"], ["deck", "Deck"], ["me", "Me"]].map(([k, l]) => (
@@ -217,50 +251,60 @@ function Game({ profile, setProfile }) {
             </Pressable>
           ))}
         </View>
-        <Text style={st.handCount}>HAND <Text style={st.handN}>{myHand.length}</Text></Text>
+        <Text style={st.handCount}>HAND <Text style={st.handN}>{hereN}</Text>{groups.length > hereN ? <Text style={st.handCount}> +{groups.length - hereN}</Text> : null}</Text>
       </View>
-      {tab === "card" ? <CardView state={state} room={room} me={me} act={act} goTo={setTab} prefs={prefs} say={say} /> : (
+      {tab === "card" ? <CardView ctx={ctx} state={state} room={room} me={me} act={act} goTo={setTab} prefs={prefs} say={say} /> : (
       <ScrollView scrollEnabled={!boardTouch} contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 18 }}>
-        {tab === "hand" && <HandView state={state} room={room} me={me} act={act} focusHand={focusHand} />}
-        {tab === "table" && <TableTab state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
+        {tab === "hand" && <HandView ctx={ctx} state={state} room={room} me={me} act={act} focusHand={focusHand} />}
+        {tab === "table" && <TableTab ctx={ctx} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
         {tab === "deck" && <DeckView state={state} room={room} me={me} act={act} />}
-        {tab === "me" && <MeView profile={profile} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
+        {tab === "me" && <MeView profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
       </ScrollView>)}
       {!!msg && <View style={st.toast}><Text style={st.toastTxt}>{msg}</Text></View>}
+      <TableSwitcher open={switcher} ctx={ctx} onClose={() => setSwitcher(false)} onPick={switchTo} onAdd={addTable} />
     </SafeAreaView>
   );
 }
 
 /* ---------------- card (home) ---------------- */
 // Just the card in front of you. Tap to pull one, then play it or hold it.
-function CardView({ state, room, me, act, goTo, prefs, say }) {
-  const t = state.tables[me.id];
-  const top = t && !t.empty ? t : null;
+function CardView({ ctx, state, room, me, act, goTo, prefs, say }) {
+  // One top card across all your tables. It may have come from another table and not count here.
+  const found = M.findTop(ctx);
+  const top = found?.t || null, from = found?.room || room;
+  const fromState = ctx.states[from] || state;
+  const counts = top ? M.topTables(ctx, from, top) : [];
+  const countsHere = counts.includes(room);
   const [later, setLater] = useState(false);
   const setReminder = async (at) => {
     setLater(false);
     await act(async () => {
-      const handId = await S.holdCard(room, me, top, at);
-      await N.scheduleReminder(room, handId, top, at);
+      const handId = await M.holdTop(ctx, from, top, at);
+      await N.scheduleReminder(from, handId, top, at);
     }, "Held. Reminder at " + fmtTime(at));
   };
-  const locks = activeLocks(state.cards, state.hands, me.id);
-  const wait = top && bufferBlock(state.cards.find((c) => c.id === top.cardId), state.plays, me.id);
+  const locks = activeLocks(fromState.cards, fromState.hands, me.id);
+  const wait = top && bufferBlock(fromState.cards.find((c) => c.id === top.cardId), fromState.plays, me.id);
   const blocked = top && (!canPlay(locks, [top.cardId]) || !!wait);
   return (
     <View style={st.home}>
       {!!locks.length && <LockBanner locks={locks} />}
       {top ? (
         <>
-          <SwipeCard key={top.drawnAt} t={top} say={say} quota={quotaLabel(state.cards.find((c) => c.id === top.cardId) || {}, Date.now(), prefs)}
+          <SwipeCard key={top.drawnAt} t={top} say={say} quota={quotaLabel(fromState.cards.find((c) => c.id === top.cardId) || {}, Date.now(), prefs)}
             blockedMsg={wait ? "Not yet. " + bufferMessage(wait) : blocked ? lockMessage(locks) : ""}
             onSwipe={(it) => act(async () => {
-              const r = await S.swipeTop(room, me, top, it);
-              if (r.handId && r.remindAt) await N.scheduleReminder(room, r.handId, top, r.remindAt);
+              const r = await M.swipeAll(ctx, from, top, it);
+              if (r?.handId && r.remindAt) await N.scheduleReminder(from, r.handId, top, r.remindAt);
             }, swipeLabel(it) + ": " + top.label)} />
+          {ctx.rooms.length > 1 && (
+            <View style={[st.countsAt, !countsHere && st.countsAtOff]}>
+              <Text style={st.countsAtTxt}>{countsHere ? "Counts at " + counts.join(" · ") : "Pulled at " + from + " · doesn't count here"}</Text>
+            </View>
+          )}
           <View style={[st.row, { width: 280, maxWidth: "80%" }]}>
-            <Btn primary flex label={wait ? "Wait" : blocked ? "Locked" : "Play"} disabled={blocked} onPress={() => act(() => S.playCard(room, me, top), "Played: " + top.label)} />
-            <Btn flex label="Hold" onPress={() => act(() => S.holdCard(room, me, top), "Held: " + top.label)} />
+            <Btn primary flex label={wait ? "Wait" : blocked ? "Locked" : "Play"} disabled={blocked} onPress={() => act(() => M.playTop(ctx, from, top), "Played: " + top.label)} />
+            <Btn flex label="Hold" onPress={() => act(() => M.holdTop(ctx, from, top), "Held: " + top.label)} />
           </View>
           {!!wait && <Text style={[st.note, { maxWidth: 300 }]}>⏳ {bufferMessage(wait)}</Text>}
           <Pressable onPress={() => setLater(true)} hitSlop={10}><Text style={st.link}>Remind me later</Text></Pressable>
@@ -268,14 +312,14 @@ function CardView({ state, room, me, act, goTo, prefs, say }) {
       ) : !drawable(state.cards, state.players, state.hands, state.tables, me.id, state.decks).length ? (
         <View style={{ alignItems: "center", gap: 12, maxWidth: 300 }}>
           <Text style={[st.h2, { textAlign: "center" }]}>Nothing left to pull</Text>
-          <Text style={st.note}>{state.hands.some((h) => h.seat === me.id) ? "Every card in your deck is in your hand. Play or discard some to put them back in the deck." : "Your deck is empty or switched off. Add a card in the Deck tab."}</Text>
+          <Text style={st.note}>{state.hands.some((h) => h.seat === me.id) ? "Every card in your deck is in your hand. Play or discard some to put them back in the deck." : "Your deck at this table is empty or switched off. Add a card in the Deck tab."}</Text>
           <View style={st.row}>
             <Btn flex primary label="Open hand" onPress={() => goTo("hand")} />
             <Btn flex label="Add a card" onPress={() => goTo("deck")} />
           </View>
         </View>
       ) : (
-        <Pressable onPress={() => act(() => S.draw(room, me, prefs))} style={st.deckStack} accessibilityRole="button" accessibilityLabel="Tap to pull a card">
+        <Pressable onPress={() => act(() => M.drawAll(ctx, prefs))} style={st.deckStack} accessibilityRole="button" accessibilityLabel="Tap to pull a card">
           <View style={[st.back, { transform: [{ rotate: "-4deg" }], opacity: 0.6 }]} />
           <View style={[st.back, { transform: [{ rotate: "3deg" }], opacity: 0.8 }]} />
           <View style={st.back} />
@@ -289,64 +333,89 @@ function CardView({ state, room, me, act, goTo, prefs, say }) {
 
 /* ---------------- hand ---------------- */
 // Select one card to play, remind or discard; select several to play them together.
-function HandView({ state, room, me, act, focusHand }) {
-  const hand = state.hands.filter((h) => h.seat === me.id).sort((a, b) => (a.heldAt || "").localeCompare(b.heldAt || ""));
-  const [sel, setSel] = useState(focusHand ? [focusHand] : []);
+// Cards held at this table are full size; cards held only at your other tables shrink and fade,
+// tagged with where they're parked. Switch tables and different cards grow.
+function HandView({ ctx, state, room, me, act, focusHand }) {
+  const groups = M.handGroups(ctx);
+  const here = groups.filter((g) => g.here), away = groups.filter((g) => !g.here);
+  const keyOfHand = (id) => groups.find((g) => g.places.some((p) => p.room === room && p.h.id === id))?.key;
+  const [sel, setSel] = useState(focusHand ? [keyOfHand(focusHand)].filter(Boolean) : []);
   const [later, setLater] = useState(null);
-  useEffect(() => { if (focusHand) setSel([focusHand]); }, [focusHand]);
-  const picked = hand.filter((h) => sel.includes(h.id));
-  const toggle = (id) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  useEffect(() => { const k = focusHand && keyOfHand(focusHand); if (k) setSel([k]); }, [focusHand]);
+  useEffect(() => { setSel([]); }, [room]);
+  const picked = groups.filter((g) => sel.includes(g.key));
+  const toggle = (k) => setSel((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
   const myTurn = state.game.active === me.id;
   const locks = activeLocks(state.cards, state.hands, me.id);
-  const waitOf = (h) => bufferBlock(state.cards.find((c) => c.id === h.cardId), state.plays, me.id);
+  const waitOf = (g) => { const st1 = ctx.states[g.places[0].room]; return st1 && bufferBlock(st1.cards.find((c) => c.id === g.places[0].h.cardId), st1.plays, me.id); };
   const waiting = picked.map(waitOf).find(Boolean);
-  const blocked = picked.length > 0 && (!canPlay(locks, picked.map((h) => h.cardId)) || !!waiting);
+  const hereCardIds = picked.map((g) => g.places.find((p) => p.room === room)?.h.cardId).filter(Boolean);
+  const blocked = picked.length > 0 && (!canPlay(locks, hereCardIds) || !!waiting);
+  const mixed = picked.length > 1 && picked.some((g) => !g.here);
   const setReminder = async (at) => {
-    const h = later; setLater(null);
-    await act(async () => { await S.setRemind(room, h.id, at); await N.scheduleReminder(room, h.id, h, at); }, "Reminder at " + fmtTime(at));
+    const g = later; setLater(null);
+    const p = g.places.find((x) => x.room === room) || g.places[0];
+    await act(async () => { await S.setRemind(p.room, p.h.id, at); await N.scheduleReminder(p.room, p.h.id, p.h, at); }, "Reminder at " + fmtTime(at));
   };
-  if (!hand.length) return <View style={{ paddingTop: 60, gap: 8 }}><Text style={st.h2}>Empty hand.</Text><Text style={[st.note, { textAlign: "left" }]}>Cards you hold show up here.</Text></View>;
+  if (!groups.length) return <View style={{ paddingTop: 60, gap: 8 }}><Text style={st.h2}>Empty hand.</Text><Text style={[st.note, { textAlign: "left" }]}>Cards you hold show up here.</Text></View>;
+  const tile = (g) => {
+    const h = g.h, hot = heat(h), on = sel.includes(g.key), w = waitOf(g);
+    const remind = h.remindAt && Date.parse(h.remindAt) > Date.now();
+    const elsewhere = g.places.map((p) => p.room).filter((r) => r !== room);
+    return (
+      <Pressable key={g.key} onPress={() => toggle(g.key)} accessibilityState={{ selected: on }}
+        accessibilityLabel={h.label + (g.here ? "" : ", held at " + elsewhere.join(" and "))}
+        style={[st.mini, g.here ? st.miniGrid : st.miniAway, hot === "warm" && { borderColor: C.warm }, hot === "hot" && { borderColor: C.hot }, on && st.miniSel]}>
+        <View style={[st.row, { justifyContent: "space-between" }]}>
+          <Text style={[st.miniMeta, { color: C.suit[h.suit] }]}>{SUIT[h.suit]} <Text style={st.miniMeta}>{h.imm}</Text></Text>
+          {on && <View style={st.check}><Text style={st.checkTxt}>✓</Text></View>}
+        </View>
+        <Text style={g.here ? st.miniLabel : st.miniLabelAway} numberOfLines={g.here ? 3 : 2}>{h.label}</Text>
+        {g.here && !!h.variant && <Text style={st.miniMeta} numberOfLines={2}>{h.variant}</Text>}
+        {g.here ? (
+          <Text style={st.miniMeta}>{w ? "⏳ " + fmtTime(new Date(w.until)) : remind ? "⏰ " + fmtTime(h.remindAt) : "held " + ago(h.heldAt)}{elsewhere.length ? "  ⇄ " + elsewhere.length : ""}</Text>
+        ) : (
+          <View style={st.awayTag}><Text style={st.awayTagTxt} numberOfLines={1}>↗ {elsewhere.join(", ")}</Text></View>
+        )}
+      </Pressable>
+    );
+  };
   return (
     <>
       {!!locks.length && <LockBanner locks={locks} />}
-      <Text style={st.label}>{hand.length} HELD · TAP TO SELECT{picked.length > 1 ? " · " + picked.length + " SELECTED" : ""}</Text>
-      <View style={st.handGrid}>
-        {hand.map((h) => {
-          const hot = heat(h), on = sel.includes(h.id);
-          const remind = h.remindAt && Date.parse(h.remindAt) > Date.now();
-          return (
-            <Pressable key={h.id} onPress={() => toggle(h.id)} accessibilityState={{ selected: on }}
-              style={[st.mini, st.miniGrid, hot === "warm" && { borderColor: C.warm }, hot === "hot" && { borderColor: C.hot }, on && st.miniSel]}>
-              <View style={[st.row, { justifyContent: "space-between" }]}>
-                <Text style={[st.miniMeta, { color: C.suit[h.suit] }]}>{SUIT[h.suit]} <Text style={st.miniMeta}>{h.imm}</Text></Text>
-                {on && <View style={st.check}><Text style={st.checkTxt}>✓</Text></View>}
-              </View>
-              <Text style={st.miniLabel}>{h.label}</Text>
-              {!!h.variant && <Text style={st.miniMeta} numberOfLines={2}>{h.variant}</Text>}
-              <Text style={st.miniMeta}>{waitOf(h) ? "⏳ " + fmtTime(new Date(waitOf(h).until)) : remind ? "⏰ " + fmtTime(h.remindAt) : "held " + ago(h.heldAt)}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      <Text style={st.label}>{here.length} AT THIS TABLE · TAP TO SELECT{picked.length > 1 ? " · " + picked.length + " SELECTED" : ""}</Text>
+      {here.length ? <View style={st.handGrid}>{here.map(tile)}</View> : <Text style={[st.note, { textAlign: "left" }]}>Nothing held at this table.</Text>}
+      {!!away.length && (
+        <>
+          <Text style={st.label}>{away.length} AT YOUR OTHER TABLES</Text>
+          <View style={st.handGrid}>{away.map(tile)}</View>
+        </>
+      )}
       {!!waiting && <Text style={[st.note, { textAlign: "left" }]}>⏳ {bufferMessage(waiting)}</Text>}
       {picked.length === 1 && (
-        <View style={st.row}>
-          <Btn primary flex label={blocked ? "Locked" : "Play it"} disabled={blocked} onPress={() => { setSel([]); act(() => S.playCombo(room, me, [picked[0].id]), "Played: " + picked[0].label); }} />
-          <Btn flex label="Remind" onPress={() => setLater(picked[0])} />
-          <Btn flex label="Discard" onPress={() => { setSel([]); act(() => S.discardFromHand(room, me, picked[0].id), "Discarded: " + picked[0].label); }} />
+        <View style={{ gap: 8 }}>
+          {!picked[0].here && <Text style={[st.note, { textAlign: "left" }]}>Doesn't count at this table. Playing it counts at {picked[0].places.map((p) => p.room).join(" · ")}.</Text>}
+          <View style={st.row}>
+            <Btn primary flex label={blocked ? "Locked" : "Play it"} disabled={blocked} onPress={() => { const g = picked[0]; setSel([]); act(() => M.playGroup(ctx, g), "Played: " + g.h.label); }} />
+            <Btn flex label="Remind" onPress={() => setLater(picked[0])} />
+            <Btn flex label="Discard" onPress={() => { const g = picked[0]; setSel([]); act(() => M.discardGroup(ctx, g), "Discarded: " + g.h.label); }} />
+          </View>
         </View>
       )}
       {picked.length > 1 && (
         <View style={{ gap: 8 }}>
-          <Text style={[st.note, { textAlign: "left" }]}>{picked.map((h) => h.label).join(" + ")}</Text>
-          <View style={st.row}>
-            <Btn primary flex label={blocked ? "Locked" : "Play " + picked.length + " together"} disabled={blocked} onPress={() => { const ids = picked.map((h) => h.id); setSel([]); act(() => S.playCombo(room, me, ids), "Played together"); }} />
-            <Btn flex label="Clear" onPress={() => setSel([])} />
-          </View>
-          {!myTurn && <Text style={[st.note, { textAlign: "left" }]}>It's not your turn, but you can still play.</Text>}
+          <Text style={[st.note, { textAlign: "left" }]}>{picked.map((g) => g.h.label).join(" + ")}</Text>
+          {mixed ? <Text style={[st.note, { textAlign: "left" }]}>Only cards held at this table can be played together here.</Text> : (
+            <View style={st.row}>
+              <Btn primary flex label={blocked ? "Locked" : "Play " + picked.length + " together"} disabled={blocked} onPress={() => { const gs = picked; setSel([]); act(() => M.playGroupsTogether(ctx, gs), "Played together"); }} />
+              <Btn flex label="Clear" onPress={() => setSel([])} />
+            </View>
+          )}
+          {mixed && <Btn label="Clear" onPress={() => setSel([])} />}
+          {!myTurn && !mixed && <Text style={[st.note, { textAlign: "left" }]}>It's not your turn, but you can still play.</Text>}
         </View>
       )}
-      <LaterSheet open={!!later} label={later?.label} onClose={() => setLater(null)} onPick={setReminder} />
+      <LaterSheet open={!!later} label={later?.h.label} onClose={() => setLater(null)} onPick={setReminder} />
     </>
   );
 }
@@ -463,7 +532,7 @@ function LaterSheet({ open, label, onClose, onPick }) {
 
 /* ---------------- table ---------------- */
 /* ---------------- table: players + maps ---------------- */
-function TableTab({ state, room, me, act, say, setBoardTouch }) {
+function TableTab({ ctx, state, room, me, act, say, setBoardTouch }) {
   const maps = (state.maps || []).filter((m) => m.owner === me.id);
   const [selId, setSel] = useState(null);
   const [lib, setLib] = useState(false);
@@ -476,7 +545,7 @@ function TableTab({ state, room, me, act, say, setBoardTouch }) {
         {maps.map((m) => <Chip key={m.id} label={(m.active === false ? "○ " : "") + m.name} on={cur?.id === m.id} onPress={() => setSel(m.id)} />)}
         <Chip label="+ Map" on={false} onPress={() => setLib(true)} />
       </View>
-      {cur ? <MapTable key={cur.id} m0={cur} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} onRemoved={() => setSel(null)} /> : <TableView state={state} me={me} />}
+      {cur ? <MapTable key={cur.id} ctx={ctx} m0={cur} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} onRemoved={() => setSel(null)} /> : <TableView state={state} me={me} />}
       <Modal visible={lib} transparent animationType="slide" onRequestClose={() => setLib(false)}>
         <Pressable style={st.scrim} onPress={() => setLib(false)} />
         <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]}>
@@ -499,7 +568,7 @@ function TableTab({ state, room, me, act, say, setBoardTouch }) {
   );
 }
 
-function MapTable({ m0, state, room, me, act, setBoardTouch, onRemoved }) {
+function MapTable({ ctx, m0, state, room, me, act, setBoardTouch, onRemoved }) {
   const [selCard, setSelCard] = useState(null);
   const [selSpot, setSelSpot] = useState(null);
   const [arm, setArm] = useState(false);
@@ -514,7 +583,7 @@ function MapTable({ m0, state, room, me, act, setBoardTouch, onRemoved }) {
   const play = (h, sid) => {
     const sh = m.shapes.find((x) => x.spots.includes(sid));
     setSelCard(null); setSelSpot(null);
-    act(() => S.playToSpot(room, me, h.id, m0.id, sid), `Played ${h.label} on ${sh?.label || m.name}`);
+    act(async () => { if (await S.playToSpot(room, me, h.id, m0.id, sid)) await M.playCopiesElsewhere(ctx, h); }, `Played ${h.label} on ${sh?.label || m.name}`);
   };
   const tapSpot = (sid) => {
     if (selH) {
@@ -927,7 +996,7 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
 }
 
 /* ---------------- me / settings ---------------- */
-function MeView({ profile, prefs, setProfile, act, state }) {
+function MeView({ profile, rooms, prefs, setProfile, act, state }) {
   const [plan, setPlan] = useState([]);
   useEffect(() => {
     Notifications.getAllScheduledNotificationsAsync().then((all) => {
@@ -943,7 +1012,8 @@ function MeView({ profile, prefs, setProfile, act, state }) {
   };
   const leave = async () => {
     await N.cancelKind("deal");
-    const p = { ...profile, room: null };
+    const left = rooms.filter((r) => r !== profile.room);
+    const p = { ...profile, room: left[0] || null, rooms: left };
     await S.saveProfile(p);
     setProfile(p);
   };
@@ -977,9 +1047,51 @@ function MeView({ profile, prefs, setProfile, act, state }) {
         </View>
       </View>
       <TakeoverPanel act={act} />
-      <Btn label="Leave this table" onPress={leave} />
+      <Btn label={"Leave “" + profile.room + "”"} onPress={leave} />
       <Text style={st.note}>Version {Updates.createdAt ? Updates.createdAt.toLocaleString() : "built-in"}{Updates.isEmbeddedLaunch ? "" : " · updated"}</Text>
     </>
+  );
+}
+
+/* ---------------- table switcher ---------------- */
+// Your tables, each with what's waiting there. Add another by name; a friend who types the same name sits with you.
+function TableSwitcher({ open, ctx, onClose, onPick, onAdd }) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const add = async () => {
+    setBusy(true); setErr("");
+    try { await onAdd(name); setName(""); } catch (e) { setErr(String(e.message || e)); } finally { setBusy(false); }
+  };
+  return (
+    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={st.scrim} onPress={onClose} />
+      <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]} keyboardShouldPersistTaps="handled">
+        <Text style={st.h2}>Your tables</Text>
+        <Text style={[st.note, { textAlign: "left" }]}>Each table runs on its own. Your top card counts at every table it applies to.</Text>
+        {ctx.rooms.map((r) => {
+          const s1 = ctx.states[r], on = r === ctx.room;
+          const t = s1?.tables[ctx.me.id], held = (s1?.hands || []).filter((h) => h.seat === ctx.me.id).length;
+          const maps = (s1?.maps || []).filter((m) => m.owner === ctx.me.id && m.active !== false).length;
+          const others = (s1?.players || []).filter((p) => p.id !== ctx.me.id).length;
+          return (
+            <Pressable key={r} onPress={() => onPick(r)} style={[st.tableRow, on && st.tableRowOn]} accessibilityRole="button" accessibilityState={{ selected: on }}>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={st.h3} numberOfLines={1}>{r}</Text>
+                <Text style={[st.note, { textAlign: "left" }]} numberOfLines={1}>
+                  {!s1 ? "Loading…" : [t && !t.empty ? "▶ " + t.label : null, held + " held", maps ? maps + (maps === 1 ? " map" : " maps") : null, others ? "+" + others + (others === 1 ? " player" : " players") : "solo"].filter(Boolean).join(" · ")}
+                </Text>
+              </View>
+              {on && <View style={st.check}><Text style={st.checkTxt}>✓</Text></View>}
+            </Pressable>
+          );
+        })}
+        <Text style={st.label}>ADD A TABLE</Text>
+        <Field label="Table name" value={name} onChangeText={setName} placeholder="morning-routine" autoCapitalize="none" />
+        {!!err && <Text style={[st.note, { color: C.hot, textAlign: "left" }]}>{err}</Text>}
+        <Btn primary label={busy ? "Joining…" : "Sit down at this table"} disabled={busy || !name.trim()} onPress={add} />
+      </ScrollView>
+    </Modal>
   );
 }
 
@@ -1116,6 +1228,19 @@ function makeStyles() { return StyleSheet.create({
   link: { color: C.muted, fontSize: 14, textDecorationLine: "underline" },
   handGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   miniGrid: { width: "31%", aspectRatio: undefined, minHeight: 150 },
+  miniAway: { width: "22%", aspectRatio: undefined, minHeight: 92, padding: 7, opacity: 0.6, elevation: 0, borderStyle: "dashed", borderColor: C.line, borderWidth: 2 },
+  miniLabelAway: { fontSize: 12, fontWeight: "700", color: C.ink },
+  awayTag: { alignSelf: "flex-start", maxWidth: "100%", backgroundColor: C.bg2, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 },
+  awayTagTxt: { fontSize: 10, fontWeight: "700", color: C.muted },
+  tableBar: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 16, marginTop: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, backgroundColor: C.bg2, minHeight: 44 },
+  tableBarLbl: { fontSize: 11, color: C.muted, letterSpacing: 1.2, fontWeight: "600" },
+  tableBarName: { flex: 1, fontSize: 16, fontWeight: "800", color: C.ink },
+  tableBarCaret: { fontSize: 16, color: C.ink },
+  tableRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 12, backgroundColor: C.bg2, borderWidth: 2, borderColor: "transparent", minHeight: 56 },
+  tableRowOn: { borderColor: C.accent },
+  countsAt: { backgroundColor: C.bg2, borderRadius: 999, paddingVertical: 5, paddingHorizontal: 12, maxWidth: "85%" },
+  countsAtOff: { borderWidth: 1, borderColor: C.warm, borderStyle: "dashed" },
+  countsAtTxt: { fontSize: 12, fontWeight: "600", color: C.muted, textAlign: "center" },
   check: { width: 20, height: 20, borderRadius: 10, backgroundColor: C.accent, alignItems: "center", justifyContent: "center" },
   checkTxt: { fontSize: 12, fontWeight: "800", color: C.ink },
   stackEdge: { position: "absolute", left: 0, width: 72, height: 100, borderRadius: 8, backgroundColor: C.paper, borderWidth: 1, borderColor: C.line, borderTopWidth: 3, elevation: 1 },

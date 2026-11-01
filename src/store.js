@@ -122,6 +122,9 @@ export async function draw(room, me, win = {}) {
   return t;
 }
 
+/** Overwrite your face-up card (used to stamp a cross-table link on it). */
+export async function setTop(room, me, t) { await upsert(room, "tables", me.id, t); }
+
 /** Put a specific card (e.g. from a fired notification) face-up, if the table is empty. */
 export async function placeOnTable(room, me, t) {
   const cur = await getDoc(room, "tables", me.id);
@@ -330,7 +333,7 @@ export async function ensureDeck(room, me) {
 }
 
 /** Act on a swipe of the top card. Returns { handId, remindAt } for holds so the app can set a reminder. */
-export async function swipeTop(room, me, t, it) {
+export async function swipeTop(room, me, t, it, handId = newId()) {
   const card = await getDoc(room, "cards", t.cardId);
   const saveCard = async (patch) => { if (card) await upsert(room, "cards", t.cardId, { ...card, ...patch }); };
   // Undo the deal in the card's count, so "not now" doesn't eat into today's target.
@@ -347,7 +350,7 @@ export async function swipeTop(room, me, t, it) {
   }
   if (it.kind === "hold") {
     const remindAt = holdReminder(it);
-    const handId = await holdCard(room, me, t, remindAt);
+    await holdCard(room, me, t, remindAt, handId);
     return { handId, remindAt };
   }
   await upsert(room, "tables", me.id, { empty: true });

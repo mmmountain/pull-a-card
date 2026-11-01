@@ -1,4 +1,4 @@
-// Pull a Card dealer — Supabase Edge Function.
+// Prompt dealer — Supabase Edge Function.
 // Runs every 10 minutes (see supabase/dealer-cron.sql). For each phone that turned on
 // web notifications, it deals a card when one is due and sends reminders that are due.
 // Android app players are not touched: their phones deal to themselves.

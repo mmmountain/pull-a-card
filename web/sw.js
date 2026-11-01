@@ -5,7 +5,7 @@ self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 self.addEventListener("push", (event) => {
   let d = {};
   try { d = event.data ? event.data.json() : {}; } catch { d = { title: event.data && event.data.text() }; }
-  event.waitUntil(self.registration.showNotification(d.title || "Pull a Card", {
+  event.waitUntil(self.registration.showNotification(d.title || "Prompt", {
     body: d.body || "",
     tag: d.tag || "pac",
     renotify: true,

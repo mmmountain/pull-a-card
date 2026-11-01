@@ -1,4 +1,4 @@
-// Pull a Card — maps. Shared by the Android app and the web app (CI copies this file into web/).
+// Prompt — maps. Shared by the Android app and the web app (CI copies this file into web/).
 // A map is a free-form board of shapes (rings, paths, pools) with spots. Each spot takes a kind of card
 // during a time window. Maps repeat every day, week or month ("rounds"); a new round starts empty.
 //

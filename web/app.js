@@ -49,7 +49,7 @@ async function refresh() {
 /* ---------------- views ---------------- */
 function joinView() {
   return `<div style="display:flex;flex-direction:column;gap:14px;padding-top:12vh">
-    <h1>Pull a Card</h1>
+    <h1>Prompt</h1>
     <p class="note left">Enter the same table name as your friend to share a table.</p>
     <label><span class="lbl">Your name</span><input type="text" id="jName" value="${esc(profile?.me?.name || "")}" placeholder="Sam" autocomplete="name"></label>
     <label><span class="lbl">Table name</span><input type="text" id="jRoom" value="${esc(profile?.room || "")}" placeholder="scott-and-sam" autocapitalize="none" autocorrect="off"></label>
@@ -280,7 +280,7 @@ function meView() {
   let notif;
   if (isIOS && !standalone) {
     notif = `<p class="note left">To get cards as notifications on iPhone, install this first:</p>
-      <ol class="steps note left"><li>Tap the Share button in Safari.</li><li>Tap <b>Add to Home Screen</b>, then Add.</li><li>Open Pull a Card from your home screen and come back to this tab.</li></ol>`;
+      <ol class="steps note left"><li>Tap the Share button in Safari.</li><li>Tap <b>Add to Home Screen</b>, then Add.</li><li>Open Prompt from your home screen and come back to this tab.</li></ol>`;
   } else if (!canPush) {
     notif = `<p class="note left">This browser can't receive notifications.</p>`;
   } else if (pushInfo) {
@@ -378,7 +378,7 @@ function urlB64(b64) {
 async function swReg() { return navigator.serviceWorker.register("sw.js"); }
 async function pushOn() {
   const perm = await Notification.requestPermission();
-  if (perm !== "granted") { toast("Notifications are blocked. Allow them in Settings → Notifications → Pull a Card."); return; }
+  if (perm !== "granted") { toast("Notifications are blocked. Allow them in Settings → Notifications → Prompt."); return; }
   const reg = await swReg();
   const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64(S.VAPID_PUBLIC) }));
   await S.savePush(profile.room, profile.me, sub.toJSON(), { ...S.DEFAULT_PREFS, ...(profile.prefs || {}) });

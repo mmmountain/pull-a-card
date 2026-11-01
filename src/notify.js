@@ -171,8 +171,10 @@ export async function handleResponse(resp) {
   const action = resp.actionIdentifier;
   const profile = await S.loadProfile();
   if (!profile?.room || !profile?.me) return null;
-  const { room, me } = profile;
-  if (data.room && data.room !== room) return null;
+  const { me } = profile;
+  // Notifications from any table you sit at still work after you switch tables.
+  if (data.room && !(profile.rooms || [profile.room]).includes(data.room)) return null;
+  const room = data.room || profile.room;
   // The background task and the in-app listener can both see the same press; act once.
   const key = n.request.identifier + "|" + action + "|" + (resp.userText || "");
   if (action !== DEFAULT_ACTION) {
