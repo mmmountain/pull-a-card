@@ -14,21 +14,8 @@ const APP_URL = "https://mmmountain.github.io/pull-a-card/";
 
 type Doc = { room: string; coll: string; id: string; data: Record<string, any> };
 
-const hoursSince = (ts?: string, now = Date.now()) => (ts ? (now - Date.parse(ts)) / 36e5 : 999);
-
-function pickCard(cards: any[], exclude: string[], chaos: number, now = Date.now()) {
-  const ex = new Set(exclude);
-  const pool = cards.filter((c) => c.active !== false && !ex.has(c.id));
-  if (!pool.length) return null;
-  const c = chaos / 100;
-  const scored = pool.map((k) => ({ k, d: Math.max(0.05, hoursSince(k.lastDrawn, now) / (k.every || 4)) * (1 + ((k.imm || 3) - 1) * 0.2) }));
-  if (c < 0.05) return scored.sort((a, b) => b.d - a.d)[0].k;
-  const exp = (1 - c) * 4;
-  const w = scored.map((s) => Math.pow(Math.min(s.d, 20), exp));
-  let r = Math.random() * w.reduce((a, b) => a + b, 0);
-  for (let i = 0; i < w.length; i++) { r -= w[i]; if (r <= 0) return scored[i].k; }
-  return scored[scored.length - 1].k;
-}
+// Same picking and quota rules as the apps (CI copies src/model.js next to this file).
+import { hoursSince, markDrawn, pickCard } from "./model.js";
 
 const line = (t: any) => `${SUIT[t.suit] || "●"} ${t.label}${t.variant ? " — " + t.variant : ""}`;
 
@@ -112,13 +99,13 @@ Deno.serve(async (req) => {
       await send("Still up: " + line(top), `Turn ${game.turn || 1} · Play, hold, or later`, "deal");
     } else {
       const busy: string[] = []; // repeats allowed; this player's table is empty here
-      const k = pickCard(cards, busy, chaos, now.getTime());
+      const k = pickCard(cards, busy, chaos, now.getTime(), Math.random, { ...(p.prefs || {}), tz });
       if (k) {
         const vs = (k.variants || []).filter(Boolean);
         const t = { cardId: k.id, label: k.label, variant: vs.length ? vs[Math.floor(Math.random() * vs.length)] : "", suit: k.suit || "body", imm: k.imm || 3, every: k.every || 4, drawnAt: now.toISOString() };
         await upsert(room, "tables", player, t);
         const { id, ...cd } = k;
-        await upsert(room, "cards", id, { ...cd, lastDrawn: t.drawnAt });
+        await upsert(room, "cards", id, { ...cd, ...markDrawn(cd, t.drawnAt) });
         await send(line(t), `Turn ${game.turn || 1} · Play, hold, or later`, "deal");
       }
     }

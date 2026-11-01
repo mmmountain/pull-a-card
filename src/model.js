@@ -19,15 +19,12 @@ export function ago(ts, now = Date.now()) {
 }
 
 /** Same weighting as the web page: overdue × immediacy, flattened by chaos. */
-export function pickCard(cards, excludeIds, chaos, now = Date.now(), rand = Math.random) {
+export function pickCard(cards, excludeIds, chaos, now = Date.now(), rand = Math.random, win = {}) {
   const ex = new Set(excludeIds);
-  const pool = cards.filter((c) => c.active !== false && !ex.has(c.id));
+  const pool = cards.filter((c) => c.active !== false && !ex.has(c.id) && quotaState(c, now, win).open);
   if (!pool.length) return null;
   const c = chaos / 100;
-  const scored = pool.map((k) => ({
-    k,
-    d: Math.max(0.05, hoursSince(k.lastDrawn, now) / (k.every || 4)) * (1 + ((k.imm || 3) - 1) * 0.2),
-  }));
+  const scored = pool.map((k) => ({ k, d: dueScore(k, now, win) * (1 + ((k.imm || 3) - 1) * 0.2) }));
   if (c < 0.05) return scored.sort((a, b) => b.d - a.d)[0].k;
   const exp = (1 - c) * 4;
   const w = scored.map((s) => Math.pow(Math.min(s.d, 20), exp));
@@ -37,6 +34,74 @@ export function pickCard(cards, excludeIds, chaos, now = Date.now(), rand = Math
     if (r <= 0) return scored[i].k;
   }
   return scored[scored.length - 1].k;
+}
+
+/* ---------- quotas: exactly N per hour / day / week ---------- */
+// card.quota = { n, per: "hour" | "day" | "week" }. Counts how many times the card was dealt.
+export const PERIODS = { hour: "this hour", day: "today", week: "this week" };
+
+// Period math runs on the player's clock. Phones use their own time zone;
+// the server dealer passes win.tz (e.g. "America/Chicago").
+function tzOffsetMs(now, tz) {
+  if (!tz) return -new Date(now).getTimezoneOffset() * 6e4;
+  try {
+    const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      .formatToParts(new Date(now)).map((x) => [x.type, x.value]));
+    return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - Math.floor(now / 1000) * 1000;
+  } catch { return -new Date(now).getTimezoneOffset() * 6e4; }
+}
+
+export function periodStart(per, now = Date.now(), win = {}) {
+  const off = tzOffsetMs(now, win.tz);
+  const d = new Date(now + off); // UTC fields of d = local wall clock
+  if (per === "hour") d.setUTCMinutes(0, 0, 0);
+  else {
+    d.setUTCHours(0, 0, 0, 0);
+    if (per === "week") d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // weeks start Monday
+  }
+  return new Date(d.getTime() - off);
+}
+
+/** How far through the period we are, 0..1. Days and weeks only count waking hours. */
+function periodProgress(per, now, win) {
+  const t = new Date(now + tzOffsetMs(now, win.tz));
+  if (per === "hour") return t.getUTCMinutes() / 60;
+  const start = win.startHour ?? 8, end = win.endHour ?? 21;
+  const h = t.getUTCHours() + t.getUTCMinutes() / 60;
+  const dayFrac = Math.min(1, Math.max(0, (h - start) / Math.max(1, end - start)));
+  if (per === "day") return dayFrac;
+  return (((t.getUTCDay() + 6) % 7) + dayFrac) / 7;
+}
+
+export function quotaState(card, now = Date.now(), win = {}) {
+  const q = card.quota;
+  if (!q || !(q.n > 0) || !PERIODS[q.per]) return { open: true, on: false };
+  const since = periodStart(q.per, now, win).getTime();
+  const drawn = (card.drawLog || []).filter((ts) => { const x = Date.parse(ts); return x >= since && x <= now; }).length;
+  const expected = q.n * periodProgress(q.per, now, win);
+  return { on: true, n: q.n, per: q.per, drawn, remaining: Math.max(0, q.n - drawn), expected, open: drawn < q.n };
+}
+
+/** How overdue a card is. Quota cards are paced to land exactly N in the period. */
+function dueScore(k, now, win) {
+  const q = quotaState(k, now, win);
+  if (q.on) {
+    const behind = q.expected - q.drawn; // > 0 means behind pace
+    return Math.max(0.05, Math.min(20, behind >= 0 ? 1 + behind * 3 : Math.exp(behind * 2)));
+  }
+  return Math.max(0.05, hoursSince(k.lastDrawn, now) / (k.every || 4));
+}
+
+/** Fields to save on a card when it's dealt. Keeps about a week of history. */
+export function markDrawn(card, at = new Date().toISOString()) {
+  const cutoff = Date.parse(at) - 8 * 864e5;
+  const log = [...(card.drawLog || []).filter((ts) => Date.parse(ts) >= cutoff), at].slice(-300);
+  return { lastDrawn: at, drawLog: log };
+}
+
+export function quotaLabel(card, now = Date.now(), win = {}) {
+  const q = quotaState(card, now, win);
+  return q.on ? `${q.drawn}/${q.n} ${PERIODS[q.per]}` : "";
 }
 
 export function dealFrom(card, now = Date.now(), rand = Math.random) {

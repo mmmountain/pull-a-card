@@ -1,7 +1,7 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { cardLine, fmtTime, parseLater, pickCard, planDealTimes, dealFrom, hoursSince, myChaos, myDeck } from "./model";
+import { cardLine, fmtTime, parseLater, pickCard, planDealTimes, dealFrom, hoursSince, markDrawn, myChaos, myDeck } from "./model";
 import * as S from "./store";
 
 export const DEAL_CAT = "deal";
@@ -82,9 +82,9 @@ export async function rescheduleDeals(room, me, prefs, state) {
   const busy = up && !up.empty ? [up.cardId] : [];
   const out = [];
   for (const when of times) {
-    const k = pickCard(cards, busy, chaos, when.getTime());
+    const k = pickCard(cards, busy, chaos, when.getTime(), Math.random, prefs);
     if (!k) break;
-    k.lastDrawn = when.toISOString();
+    Object.assign(k, markDrawn(k, when.toISOString()));
     const t = dealFrom(k, when.getTime());
     const urgent = (t.imm || 3) >= 4;
     await Notifications.scheduleNotificationAsync({

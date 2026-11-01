@@ -2,7 +2,7 @@ import "react-native-url-polyfill/auto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config";
-import { SEED_CARDS, activeLocks, canPlay, dealFrom, lockMessage, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
+import { SEED_CARDS, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -106,16 +106,16 @@ async function advance(room, me) {
   await upsert(room, "game", "main", nextTurn(players, g, me.id));
 }
 
-export async function draw(room, me) {
+export async function draw(room, me, win = {}) {
   const [cards, hands, tables, players] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), listColl(room, "players")]);
   const up = tables.find((t) => t.id === me.id);
   const busy = up && !up.empty ? [up.cardId] : [];
-  const k = pickCard(myDeck(cards, players, me.id), busy, myChaos(players, me.id));
+  const k = pickCard(myDeck(cards, players, me.id), busy, myChaos(players, me.id), Date.now(), Math.random, win);
   if (!k) return null;
   const t = dealFrom(k);
   await upsert(room, "tables", me.id, t);
   const { id, ...cd } = k;
-  await upsert(room, "cards", id, { ...cd, lastDrawn: t.drawnAt });
+  await upsert(room, "cards", id, { ...cd, ...markDrawn(cd, t.drawnAt) });
   return t;
 }
 
@@ -125,7 +125,7 @@ export async function placeOnTable(room, me, t) {
   if (cur && !cur.empty) return cur;
   await upsert(room, "tables", me.id, t);
   const card = await getDoc(room, "cards", t.cardId);
-  if (card) await upsert(room, "cards", t.cardId, { ...card, lastDrawn: t.drawnAt });
+  if (card) await upsert(room, "cards", t.cardId, { ...card, ...markDrawn(card, t.drawnAt) });
   return t;
 }
 
