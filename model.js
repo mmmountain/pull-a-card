@@ -173,6 +173,7 @@ export function dealFrom(card, now = Date.now(), rand = Math.random, win = {}) {
     variant: vs.length ? vs[Math.floor(rand() * vs.length)] : "",
     suit: card.suit || "body",
     imm: card.imm || 3,
+    beef: card.beef || null,
     every: intervalHours(card, win),
     drawnAt: new Date(now).toISOString(),
   };
