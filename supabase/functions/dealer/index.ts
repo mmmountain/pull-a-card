@@ -48,7 +48,8 @@ Deno.serve(async (req) => {
     const players = get("players").sort((x: any, y: any) => (x.joined || "").localeCompare(y.joined || ""));
     const first = players[0]?.id;
     // Personal decks: only this player's cards (old ownerless cards belong to the first player).
-    const cards = get("cards").filter((c: any) => (c.owner || first) === player), hands = get("hands");
+    const decksOn = new Set(get("decks").filter((d: any) => d.owner === player && d.active === false).map((d: any) => d.id));
+    const cards = get("cards").filter((c: any) => (c.owner || first) === player && !decksOn.has(c.deck || player + ":everyday")), hands = get("hands");
     const tables = Object.fromEntries(all.filter((r) => r.coll === "tables").map((r) => [r.id, r.data]));
     const me = players.find((x: any) => x.id === player) as any;
     const chaos = typeof me?.chaos === "number" ? me.chaos : (all.find((r) => r.coll === "config" && r.id === "main")?.data?.chaos ?? 30);

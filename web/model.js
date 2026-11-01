@@ -267,9 +267,13 @@ const firstPlayer = (players) => [...(players || [])].sort((a, b) => (a.joined |
 export function deckOwner(card, players) {
   return card.owner || firstPlayer(players);
 }
-export function myDeck(cards, players, meId) {
+/** Your cards. Pass `decks` to keep only cards from decks that are switched on (what gets dealt). */
+export function myDeck(cards, players, meId, decks = null) {
   const first = firstPlayer(players);
-  return cards.filter((c) => (c.owner || first) === meId);
+  const mine = cards.filter((c) => (c.owner || first) === meId);
+  if (!decks) return mine;
+  const on = new Set(myDecks(decks, meId).filter((d) => d.active).map((d) => d.id));
+  return mine.filter((c) => on.has(deckOf(c, meId)));
 }
 export function myChaos(players, meId, fallback = 30) {
   const p = (players || []).find((x) => x.id === meId);
@@ -301,10 +305,10 @@ export function lastMove(plays) {
 }
 
 /** Cards you could pull right now: your active cards not already in a hand or face up. */
-export function drawable(cards, players, hands, tables, meId) {
+export function drawable(cards, players, hands, tables, meId, decks = null) {
   // Repeats are allowed: a card you're holding can be pulled again. Only the face-up card is out.
   const up = tables?.[meId];
-  return myDeck(cards, players, meId).filter((c) => c.active !== false && !(up && !up.empty && up.cardId === c.id));
+  return myDeck(cards, players, meId, decks || []).filter((c) => c.active !== false && !(up && !up.empty && up.cardId === c.id));
 }
 
 /* ---------- lock rule ---------- */
@@ -412,3 +416,45 @@ export function takeoverActive(card, now = Date.now(), win = {}) {
 export function playedToday(card, now = Date.now(), win = {}) {
   return !!card.lastPlayed && Date.parse(card.lastPlayed) >= periodStart("day", now, win).getTime();
 }
+
+/* ---------- several decks ---------- */
+// Deck docs live in the "decks" collection: { owner, name, active, key? }. Cards carry card.deck.
+// Cards with no deck belong to your Everyday deck, which exists even before it has a doc.
+export const everydayId = (meId) => meId + ":everyday";
+export const deckOf = (card, meId) => card.deck || everydayId(meId);
+export function myDecks(decks, meId) {
+  const mine = (decks || []).filter((d) => d.owner === meId);
+  const list = mine.some((d) => d.id === everydayId(meId)) ? [] : [{ id: everydayId(meId), owner: meId, name: "Everyday", active: true }];
+  return [...list, ...mine].map((d) => ({ ...d, active: d.active !== false }));
+}
+
+/** Ready-made decks you can add from the library. Targets are per day or week; tweak them after adding. */
+export const DECK_LIBRARY = [
+  {
+    key: "powerlifting",
+    name: "Powerlifting sprint",
+    about: "A month of squat, bench and deadlift with accessories, cardio, fuel and recovery. Body is training, home is fuel, mind is recovery, work is tracking.",
+    cards: [
+      { key: "squat", label: "Squat 5×5", suit: "body", imm: 3, quota: { n: 2, per: "week" }, buffer: { self: 2880 } },
+      { key: "bench", label: "Bench 5×5", suit: "body", imm: 3, quota: { n: 2, per: "week" }, buffer: { self: 2880 } },
+      { key: "dead", label: "Deadlift 3×5", suit: "body", imm: 3, quota: { n: 1, per: "week" } },
+      { key: "pull", label: "Pull-ups", suit: "body", imm: 2, quota: { n: 2, per: "week" } },
+      { key: "row", label: "Barbell rows 4×8", suit: "body", imm: 2, quota: { n: 1, per: "week" } },
+      { key: "lunge", label: "Walking lunges", suit: "body", imm: 2, quota: { n: 1, per: "week" } },
+      { key: "core", label: "Core circuit", suit: "body", imm: 2, quota: { n: 2, per: "week" } },
+      { key: "z2", label: "Zone 2 cardio 30 min", suit: "body", imm: 2, quota: { n: 2, per: "week" } },
+      { key: "protein", label: "g protein", amounts: [20, 30, 40], suit: "home", imm: 4, quota: { n: 160, per: "day" }, buffer: { self: 120 } },
+      { key: "water", label: "ml water", amounts: [250, 500], suit: "home", imm: 4, quota: { n: 3000, per: "day" }, buffer: { self: 30 } },
+      { key: "creatine", label: "Creatine 5 g", suit: "home", imm: 2, quota: { n: 1, per: "day" } },
+      { key: "stretch", label: "Stretch 10 min", suit: "mind", imm: 2, quota: { n: 1, per: "day" } },
+      { key: "roll", label: "Foam roll", suit: "mind", imm: 2, quota: { n: 3, per: "week" } },
+      { key: "breath", label: "Breathing 5 min", suit: "mind", imm: 2, quota: { n: 1, per: "day" } },
+      { key: "heat", label: "Hot shower or sauna", suit: "mind", imm: 1, quota: { n: 3, per: "week" }, opensAt: "17:00" },
+      { key: "weigh", label: "Weigh in", suit: "work", imm: 3, quota: { n: 1, per: "week" } },
+      { key: "log", label: "Log the session", suit: "work", imm: 2, quota: { n: 4, per: "week" } },
+      { key: "rm_s", label: "Squat 1-rep max", suit: "body", imm: 3, quota: { n: 1, per: "month" } },
+      { key: "rm_b", label: "Bench 1-rep max", suit: "body", imm: 3, quota: { n: 1, per: "month" } },
+      { key: "rm_d", label: "Deadlift 1-rep max", suit: "body", imm: 3, quota: { n: 1, per: "month" } },
+    ],
+  },
+];

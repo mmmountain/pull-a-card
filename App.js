@@ -15,6 +15,7 @@ import { ORIGINAL, randomTheme } from "./src/theme";
 import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./src/model";
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
+import { DECK_LIBRARY, deckOf, everydayId, myDecks } from "./src/model";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
 const C = { ...ORIGINAL, suit: { ...ORIGINAL.suit } };
@@ -178,7 +179,8 @@ function Game({ profile, setProfile }) {
 
   // Keep this phone's upcoming deals in step with the deck, randomness and your settings.
   const planKey = useMemo(() => state && JSON.stringify([
-    myDeck(state.cards, state.players, me.id).map((c) => [c.id, c.label, c.every, c.imm, c.active, c.quota, c.amounts, (c.drawLog || []).length]),
+    myDeck(state.cards, state.players, me.id).map((c) => [c.id, c.label, c.every, c.imm, c.active, c.quota, c.amounts, (c.drawLog || []).length, c.deck]),
+    (state.decks || []).map((d) => [d.id, d.active]),
     myChaos(state.players, me.id, state.config.chaos), prefs, state.hands.length, state.plays.length,
   ]), [state, profile.prefs]);
   useEffect(() => {
@@ -256,7 +258,7 @@ function CardView({ state, room, me, act, goTo, prefs, say }) {
           {!!wait && <Text style={[st.note, { maxWidth: 300 }]}>⏳ {bufferMessage(wait)}</Text>}
           <Pressable onPress={() => setLater(true)} hitSlop={10}><Text style={st.link}>Remind me later</Text></Pressable>
         </>
-      ) : !drawable(state.cards, state.players, state.hands, state.tables, me.id).length ? (
+      ) : !drawable(state.cards, state.players, state.hands, state.tables, me.id, state.decks).length ? (
         <View style={{ alignItems: "center", gap: 12, maxWidth: 300 }}>
           <Text style={[st.h2, { textAlign: "center" }]}>Nothing left to pull</Text>
           <Text style={st.note}>{state.hands.some((h) => h.seat === me.id) ? "Every card in your deck is in your hand. Play or discard some to put them back in the deck." : "Your deck is empty or switched off. Add a card in the Deck tab."}</Text>
@@ -459,7 +461,7 @@ function TableView({ state, me }) {
   const mine = players.find((p) => p.id === me.id);
   const lastPlay = state.plays.reduce((a, p) => (!a || p.at > a.at ? p : a), null);
   const topDis = state.discards.reduce((a, d) => (!a || d.at > a.at ? d : a), null);
-  const drawN = Math.max(0, myDeck(state.cards, state.players, me.id).filter((c) => c.active !== false).length - state.hands.filter((h) => h.seat === me.id).length);
+  const drawN = Math.max(0, myDeck(state.cards, state.players, me.id, state.decks).filter((c) => c.active !== false).length - state.hands.filter((h) => h.seat === me.id).length);
   const active = players.find((p) => p.id === state.game.active);
   const Side = ({ p }) => {
     if (!p) return <View style={st.side}><Text style={[st.h3, { color: C.muted }]}>Open seat</Text><Text style={st.note}>Give a friend your table name so they can sit here.</Text></View>;
@@ -508,7 +510,16 @@ function TableView({ state, me }) {
 /* ---------------- deck ---------------- */
 function DeckView({ state, room, me, act }) {
   const [edit, setEdit] = useState(null);
-  const cards = myDeck(state.cards, state.players, me.id).sort((a, b) => a.label.localeCompare(b.label));
+  const [lib, setLib] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [arm, setArm] = useState(false);
+  const decks = myDecks(state.decks, me.id);
+  const [selId, setSel] = useState(everydayId(me.id));
+  const deck = decks.find((d) => d.id === selId) || decks[0];
+  const all = myDeck(state.cards, state.players, me.id);
+  const count = (d) => all.filter((c) => deckOf(c, me.id) === d.id).length;
+  const cards = all.filter((c) => deckOf(c, me.id) === deck.id).sort((a, b) => a.label.localeCompare(b.label));
+  const pick = (id) => { setSel(id); setArm(false); };
   const chaos = myChaos(state.players, me.id, state.config.chaos);
   return (
     <>
@@ -518,7 +529,27 @@ function DeckView({ state, room, me, act }) {
         <Text style={[st.note, { textAlign: "left" }]}>Steady deals whatever is most overdue, on a regular clock. Wild picks any card at uneven times.</Text>
       </View>
       <View style={{ gap: 8 }}>
-        <Text style={st.label}>YOUR DECK · ONLY YOU SEE IT</Text>
+        <Text style={st.label}>YOUR DECKS · ONLY YOU SEE THEM</Text>
+        <View style={st.chips}>
+          {decks.map((d) => <Chip key={d.id} label={(d.active ? "" : "○ ") + d.name + " · " + count(d)} on={d.id === deck.id} onPress={() => pick(d.id)} />)}
+          <Chip label="+ Add deck" on={false} onPress={() => setLib(true)} />
+        </View>
+        <View style={st.panel}>
+          <View style={[st.row, { justifyContent: "space-between" }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={st.h3}>{deck.name}</Text>
+              <Text style={[st.note, { textAlign: "left" }]}>{deck.active ? "Cards are dealt from this deck." : "Paused. Nothing is dealt from this deck."}</Text>
+            </View>
+            <Switch value={deck.active} onValueChange={(v) => act(() => S.setDeckActive(room, me, deck, v), (v ? "Dealing from " : "Paused ") + deck.name)} trackColor={{ true: C.accent }} />
+          </View>
+          {deck.id !== everydayId(me.id) && (
+            <Btn danger={arm} label={arm ? "Tap again to delete " + deck.name + " and its cards" : "Delete deck"} onPress={() => {
+              if (!arm) return setArm(true);
+              setArm(false); setSel(everydayId(me.id));
+              act(() => S.deleteDeck(room, me, deck), "Deleted " + deck.name);
+            }} />
+          )}
+        </View>
         {cards.map((c) => (
           <Pressable key={c.id} onPress={() => setEdit(c)} style={[st.deckRow, c.active === false && { opacity: 0.5 }]}>
             <Text style={{ color: C.suit[c.suit], fontSize: 18, width: 22 }}>{SUIT[c.suit]}</Text>
@@ -526,8 +557,35 @@ function DeckView({ state, room, me, act }) {
             <Text style={st.miniMeta}>{quotaLabel(c)} · {"●".repeat(c.imm || 3)}</Text>
           </Pressable>
         ))}
-        <Btn primary label="New card" onPress={() => setEdit({ label: "", suit: "body", imm: 3, active: true, plays: 0, quota: { n: 1, per: "day" } })} />
+        <Btn primary label="New card" onPress={() => setEdit({ label: "", suit: "body", imm: 3, active: true, plays: 0, quota: { n: 1, per: "day" }, deck: deck.id })} />
       </View>
+      <Modal visible={lib} transparent animationType="slide" onRequestClose={() => setLib(false)}>
+        <Pressable style={st.scrim} onPress={() => setLib(false)} />
+        <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]} keyboardShouldPersistTaps="handled">
+          <Text style={st.h2}>Add a deck</Text>
+          {DECK_LIBRARY.map((t) => {
+            const have = decks.some((d) => d.key === t.key);
+            return (
+              <View key={t.key} style={st.panel}>
+                <Text style={st.h3}>{t.name} · {t.cards.length} cards</Text>
+                <Text style={[st.note, { textAlign: "left" }]}>{t.about}</Text>
+                <Btn primary={!have} disabled={have} label={have ? "Added" : "Add " + t.name} onPress={() => {
+                  setLib(false); setSel(me.id + ":" + t.key);
+                  act(() => S.addLibraryDeck(room, me, t.key), "Added " + t.name);
+                }} />
+              </View>
+            );
+          })}
+          <View style={st.panel}>
+            <Text style={st.h3}>Empty deck</Text>
+            <Field label="Name" value={newName} onChangeText={setNewName} placeholder="Reading month" />
+            <Btn label="Make it" disabled={!newName.trim()} onPress={() => {
+              const name = newName.trim(); setNewName(""); setLib(false);
+              act(async () => setSel(await S.newDeck(room, me, name)), "Made " + name);
+            }} />
+          </View>
+        </ScrollView>
+      </Modal>
       <CardEditor card={edit} onClose={() => setEdit(null)} onSave={(c) => { setEdit(null); act(() => S.saveCard(room, me, c), "Saved " + c.label); }}
         onDelete={(c) => { setEdit(null); act(() => S.deleteCard(room, c.id), "Deleted " + c.label); }} />
     </>

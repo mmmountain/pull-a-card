@@ -2,7 +2,7 @@ import "react-native-url-polyfill/auto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config";
-import { SEED_CARDS, BEDTIME_CARD, takeoverActive, nudgedTempo, holdReminder, bufferBlock, bufferMessage, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
+import { DECK_LIBRARY, everydayId, myDecks, SEED_CARDS, BEDTIME_CARD, takeoverActive, nudgedTempo, holdReminder, bufferBlock, bufferMessage, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -57,10 +57,11 @@ export async function fetchRoom(room) {
 }
 
 export function shape(rows) {
-  const s = { cards: [], players: [], tables: {}, hands: [], plays: [], discards: [], config: { chaos: 30 }, game: { turn: 1, active: null } };
+  const s = { decks: [], cards: [], players: [], tables: {}, hands: [], plays: [], discards: [], config: { chaos: 30 }, game: { turn: 1, active: null } };
   for (const r of rows) {
     const d = { id: r.id, ...r.data };
-    if (r.coll === "cards") s.cards.push(d);
+    if (r.coll === "decks") s.decks.push(d);
+    else if (r.coll === "cards") s.cards.push(d);
     else if (r.coll === "players") s.players.push(d);
     else if (r.coll === "tables") s.tables[r.id] = r.data;
     else if (r.coll === "hands") s.hands.push(d);
@@ -107,10 +108,10 @@ async function advance(room, me) {
 }
 
 export async function draw(room, me, win = {}) {
-  const [cards, hands, tables, players, plays] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), listColl(room, "players"), listColl(room, "plays")]);
+  const [cards, hands, tables, players, plays, decks] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), listColl(room, "players"), listColl(room, "plays"), listColl(room, "decks")]);
   const up = tables.find((t) => t.id === me.id);
   const busy = up && !up.empty ? [up.cardId] : [];
-  const k = pickCard(myDeck(cards, players, me.id), busy, myChaos(players, me.id), Date.now(), Math.random, { ...win, plays, meId: me.id });
+  const k = pickCard(myDeck(cards, players, me.id, decks), busy, myChaos(players, me.id), Date.now(), Math.random, { ...win, plays, meId: me.id });
   if (!k) return null;
   const t = dealFrom(k, Date.now(), Math.random, win);
   await upsert(room, "tables", me.id, t);
@@ -275,8 +276,42 @@ export async function swipeTop(room, me, t, it) {
 
 /** If a takeover card is due and nothing is face up, put it on the table. */
 export async function claimTakeover(room, me, win = {}) {
-  const [cards, players, table] = await Promise.all([listColl(room, "cards"), listColl(room, "players"), getDoc(room, "tables", me.id)]);
+  const [cards, players, table, decks] = await Promise.all([listColl(room, "cards"), listColl(room, "players"), getDoc(room, "tables", me.id), listColl(room, "decks")]);
   if (table && !table.empty) return null;
-  if (!myDeck(cards, players, me.id).some((c) => takeoverActive(c, Date.now(), win))) return null;
+  if (!myDeck(cards, players, me.id, decks).some((c) => takeoverActive(c, Date.now(), win))) return null;
   return draw(room, me, win);
+}
+
+/* ---------- decks ---------- */
+export async function addLibraryDeck(room, me, key) {
+  const tpl = DECK_LIBRARY.find((d) => d.key === key);
+  if (!tpl) throw new Error("That deck isn't in the library.");
+  const deckId = me.id + ":" + key;
+  await upsert(room, "decks", deckId, { owner: me.id, name: tpl.name, key, active: true });
+  const existing = new Set((await listColl(room, "cards")).map((c) => c.id));
+  for (const c of tpl.cards) {
+    const { key: ck, ...data } = c;
+    const id = me.id + "-" + key + "-" + ck;
+    if (!existing.has(id)) await upsert(room, "cards", id, { ...data, owner: me.id, deck: deckId, active: true, plays: 0 });
+  }
+  return deckId;
+}
+export async function setDeckActive(room, me, deck, active) {
+  const { id, ...data } = deck;
+  await upsert(room, "decks", id, { ...data, owner: me.id, name: deck.name, active });
+}
+export async function renameDeck(room, me, deck, name) {
+  const { id, ...data } = deck;
+  await upsert(room, "decks", id, { ...data, owner: me.id, name });
+}
+export async function newDeck(room, me, name) {
+  const id = me.id + ":" + newId();
+  await upsert(room, "decks", id, { owner: me.id, name, active: true });
+  return id;
+}
+/** Deletes the deck and its cards. Your Everyday deck can't be deleted. */
+export async function deleteDeck(room, me, deck) {
+  if (deck.id === everydayId(me.id)) throw new Error("The Everyday deck can't be deleted.");
+  for (const c of await listColl(room, "cards")) if (c.deck === deck.id) await remove(room, "cards", c.id);
+  await remove(room, "decks", deck.id);
 }
