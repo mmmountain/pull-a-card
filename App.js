@@ -12,7 +12,7 @@ import * as S from "./src/store";
 import * as N from "./src/notify";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, randomTheme } from "./src/theme";
-import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel } from "./src/model";
+import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./src/model";
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 
@@ -152,11 +152,12 @@ function Game({ profile, setProfile }) {
       if (last) await onResponse(last);
       await S.ensureDeck(room, me).catch(() => {});
       await N.claimDeliveredDeal(room, me).catch(() => {});
+      await S.claimTakeover(room, me, prefs).catch(() => {});
       refresh();
     })();
     const sub = Notifications.addNotificationResponseReceivedListener(onResponse);
     const app = AppState.addEventListener("change", (s) => {
-      if (s === "active") N.claimDeliveredDeal(room, me).catch(() => {}).finally(refresh);
+      if (s === "active") N.claimDeliveredDeal(room, me).catch(() => {}).then(() => S.claimTakeover(room, me, prefs)).catch(() => {}).finally(refresh);
     });
     return () => { sub.remove(); app.remove(); };
   }, [room]);
@@ -174,7 +175,7 @@ function Game({ profile, setProfile }) {
   // Keep this phone's upcoming deals in step with the deck, randomness and your settings.
   const planKey = useMemo(() => state && JSON.stringify([
     myDeck(state.cards, state.players, me.id).map((c) => [c.id, c.label, c.every, c.imm, c.active, c.quota, c.amounts, (c.drawLog || []).length]),
-    myChaos(state.players, me.id, state.config.chaos), prefs, state.hands.length,
+    myChaos(state.players, me.id, state.config.chaos), prefs, state.hands.length, state.plays.length,
   ]), [state, profile.prefs]);
   useEffect(() => {
     if (!state) return;
@@ -576,6 +577,10 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
         <Text style={st.label}>IMMEDIACY</Text>
         <View style={st.chips}>{[1, 2, 3, 4, 5].map((i) => <Chip key={i} label={String(i)} on={c.imm === i} onPress={() => setC({ ...c, imm: i })} />)}</View>
         <Text style={[st.note, { textAlign: "left" }]}>4 and 5 ring louder and show over the lock screen.</Text>
+        <Text style={st.label}>TIMING (OPTIONAL)</Text>
+        <TimeField label="Can be dealt from" value={c.opensAt} onChange={(v) => setC({ ...c, opensAt: v })} placeholder="9:30pm" />
+        <TimeField label="Takes over the screen at" value={c.takeover} onChange={(v) => setC({ ...c, takeover: v })} placeholder="10:30pm" />
+        <Text style={[st.note, { textAlign: "left" }]}>{c.takeover ? `From ${fmtTime(hmDate(c.takeover))} until you play it, it's the only card you can play and it rings full screen every few minutes.` : "Leave empty for a normal card."}</Text>
         <Text style={st.label}>WAIT BETWEEN PLAYS</Text>
         {[["self", "After this same card"], ["suit", "After any " + SUIT[c.suit] + " " + c.suit + " card"], ["any", "After any card"]].map(([k, l]) => (
           <View key={k} style={{ gap: 6 }}>
@@ -648,6 +653,7 @@ function MeView({ profile, prefs, setProfile, act, state }) {
           <Btn flex label="Original" onPress={() => applyTheme(ORIGINAL)} />
         </View>
       </View>
+      <TakeoverPanel act={act} />
       <Btn label="Leave this table" onPress={leave} />
       <Text style={st.note}>Version {Updates.createdAt ? Updates.createdAt.toLocaleString() : "built-in"}{Updates.isEmbeddedLaunch ? "" : " · updated"}</Text>
     </>
@@ -655,6 +661,44 @@ function MeView({ profile, prefs, setProfile, act, state }) {
 }
 
 /* ---------------- small parts ---------------- */
+/** Type a time like "9:30pm" or "2130"; stores "HH:MM". Empty clears it. */
+function TakeoverPanel({ act }) {
+  const [ok, setOk] = useState(N.canFullScreen());
+  useEffect(() => { const sub = AppState.addEventListener("change", (s) => s === "active" && setOk(N.canFullScreen())); return () => sub.remove(); }, []);
+  return (
+    <View style={st.panel}>
+      <Text style={st.label}>FULL-SCREEN ALARMS</Text>
+      {!N.takeoverAvailable() ? (
+        <Text style={[st.note, { textAlign: "left" }]}>This needs the newer app version. Install the latest APK from the GitHub releases page.</Text>
+      ) : (
+        <>
+          <Text style={[st.note, { textAlign: "left" }]}>Cards with a takeover time, like Go to bed, ring full screen over other apps until you play them.</Text>
+          {!ok && <Btn primary label="Allow full-screen alerts" onPress={() => N.openFullScreenSettings()} />}
+          <Btn label="Test takeover (in 3 seconds)" onPress={() => act(async () => { N.testTakeover(); }, "Lock your phone or switch apps. It rings in 3 seconds.")} />
+        </>
+      )}
+    </View>
+  );
+}
+
+function TimeField({ label, value, onChange, placeholder }) {
+  const [txt, setTxt] = useState(value ? fmtTime(hmDate(value)) : "");
+  const [bad, setBad] = useState(false);
+  const commit = () => {
+    if (!txt.trim()) { setBad(false); return onChange(null); }
+    const d = parseLater(txt, new Date(2026, 0, 1, 0, 0));
+    if (!d) return setBad(true);
+    setBad(false); setTxt(fmtTime(d)); onChange(toHM(d));
+  };
+  return (
+    <View style={{ gap: 4 }}>
+      <Text style={[st.note, { textAlign: "left", color: C.ink }]}>{label}</Text>
+      <TextInput value={txt} onChangeText={setTxt} onBlur={commit} onSubmitEditing={commit} placeholder={placeholder} placeholderTextColor={C.muted} style={[st.input, bad && { borderColor: C.hot }]} />
+      {bad && <Text style={[st.note, { textAlign: "left", color: C.hot }]}>Try a time like 9:30pm.</Text>}
+    </View>
+  );
+}
+
 function Btn({ label, onPress, primary, danger, flex, disabled }) {
   return (
     <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button"

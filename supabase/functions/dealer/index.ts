@@ -15,7 +15,7 @@ const APP_URL = "https://mmmountain.github.io/pull-a-card/";
 type Doc = { room: string; coll: string; id: string; data: Record<string, any> };
 
 // Same picking and quota rules as the apps (CI copies src/model.js next to this file).
-import { dealFrom, hoursSince, markDrawn, pickCard } from "./model.js";
+import { dealFrom, hoursSince, markDrawn, pickCard, takeoverActive } from "./model.js";
 
 const line = (t: any) => `${SUIT[t.suit] || "●"} ${t.label}${t.variant ? " — " + t.variant : ""}`;
 
@@ -75,9 +75,23 @@ Deno.serve(async (req) => {
 
     // Deals: check every run, deal only when a card is behind its target.
     if (p.prefs?.notify === false) continue;
-    const h = localHour(now, tz);
-    if (h < (p.prefs?.startHour ?? 8) || h >= (p.prefs?.endHour ?? 21)) continue;
     const win = { ...(p.prefs || {}), tz, onlyDue: true, plays: get("plays"), meId: player };
+    // Takeover cards (Go to bed): past their time and still unplayed → nag every run (every 10 minutes).
+    const urgent = cards.find((c: any) => takeoverActive(c, now.getTime(), win));
+    if (urgent) {
+      const top0 = tables[player];
+      if (!top0 || top0.empty) {
+        const t = dealFrom(urgent, now.getTime(), Math.random, win);
+        await upsert(room, "tables", player, t);
+        const { id, ...cd } = urgent as any;
+        await upsert(room, "cards", id, { ...cd, ...markDrawn(cd, t.drawnAt, t.amount) });
+      }
+      await send(urgent.label.toUpperCase(), "Play this card to make it stop.", "takeover");
+      continue;
+    }
+    const h = localHour(now, tz);
+    const late = Math.max(...cards.map((c: any) => (c.opensAt ? (+c.opensAt.slice(0, 2) + 1) : 0)));
+    if (h < (p.prefs?.startHour ?? 8) || h >= Math.max(p.prefs?.endHour ?? 21, late)) continue;
     const top = tables[player];
     if (top && !top.empty) {
       // Something is already face up: nudge at most every 2 hours.

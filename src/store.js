@@ -2,7 +2,7 @@ import "react-native-url-polyfill/auto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config";
-import { SEED_CARDS, nudgedTempo, holdReminder, bufferBlock, bufferMessage, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
+import { SEED_CARDS, BEDTIME_CARD, takeoverActive, nudgedTempo, holdReminder, bufferBlock, bufferMessage, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -225,8 +225,15 @@ export async function playCombo(room, me, handIds) {
 /** Give a player starter cards if they have no deck of their own yet. */
 export async function ensureDeck(room, me) {
   const [cards, players] = await Promise.all([listColl(room, "cards"), listColl(room, "players")]);
-  if (!players.some((p) => p.id === me.id)) return false;
+  const meP = players.find((p) => p.id === me.id);
+  if (!meP) return false;
   const mine = myDeck(cards, players, me.id);
+  // One-time: everyone gets a Go to bed card (delete it if you don't want it; it won't come back).
+  if (mine.length && !meP.bedSeeded) {
+    if (!mine.some((c) => /go to bed/i.test(c.label))) { const { id, ...data } = BEDTIME_CARD; await upsert(room, "cards", me.id + "-bed", { ...data, owner: me.id }); }
+    const { id: _pid, ...pd } = meP;
+    await upsert(room, "players", me.id, { ...pd, bedSeeded: true });
+  }
   if (mine.length) {
     // One-time: Drink water locks at 3 unless you've set something else.
     for (const c of mine) if (c.lockAt === undefined && /drink water/i.test(c.label)) { const { id, ...d } = c; await upsert(room, "cards", id, { ...d, owner: d.owner || me.id, lockAt: 3 }); }
@@ -264,4 +271,12 @@ export async function swipeTop(room, me, t, it) {
   if (it.kind === "soon") await saveCard({ ...unDeal(), dueAt: new Date(Date.now() + 30 * 6e4).toISOString() });
   if (it.kind === "later") await saveCard({ ...unDeal(), tempo: nudgedTempo(card?.tempo, it), dueAt: null });
   return {};
+}
+
+/** If a takeover card is due and nothing is face up, put it on the table. */
+export async function claimTakeover(room, me, win = {}) {
+  const [cards, players, table] = await Promise.all([listColl(room, "cards"), listColl(room, "players"), getDoc(room, "tables", me.id)]);
+  if (table && !table.empty) return null;
+  if (!myDeck(cards, players, me.id).some((c) => takeoverActive(c, Date.now(), win))) return null;
+  return draw(room, me, win);
 }

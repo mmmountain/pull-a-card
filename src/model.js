@@ -3,10 +3,14 @@
 export const SUIT = { body: "●", home: "■", mind: "▲", work: "◆" };
 export const SUITS = ["body", "home", "mind", "work"];
 
+// Dealt from 9:30 PM, takes over the screen at 10:30 PM until you play it.
+export const BEDTIME_CARD = { id: "bed", label: "Go to bed", suit: "mind", imm: 5, active: true, plays: 0, quota: { n: 1, per: "day" }, opensAt: "21:30", takeover: "22:30" };
+
 export const SEED_CARDS = [
   { id: "water", label: "Drink water", suit: "body", imm: 5, active: true, plays: 0, lockAt: 3, quota: { n: 8, per: "day" } },
   { id: "squats", label: "squats", amounts: [5, 10, 20], suit: "body", imm: 3, active: true, plays: 0, quota: { n: 50, per: "day" } },
   { id: "clean", label: "Clean for an hour", suit: "home", imm: 1, active: true, plays: 0, quota: { n: 3, per: "week" } },
+  BEDTIME_CARD,
 ];
 
 export const hoursSince = (ts, now = Date.now()) => (ts ? (now - Date.parse(ts)) / 36e5 : 999);
@@ -21,8 +25,10 @@ export function ago(ts, now = Date.now()) {
 /** Same weighting as the web page: overdue × immediacy, flattened by chaos. */
 export function pickCard(cards, excludeIds, chaos, now = Date.now(), rand = Math.random, win = {}) {
   const ex = new Set(excludeIds);
-  const pool = cards.filter((c) => c.active !== false && !ex.has(c.id) && quotaState(c, now, win).open && !(win.plays && bufferBlock(c, win.plays, win.meId, now)));
+  const pool = cards.filter((c) => c.active !== false && !ex.has(c.id) && quotaState(c, now, win).open && !notOpenYet(c, now, win) && !(win.plays && bufferBlock(c, win.plays, win.meId, now)));
   if (!pool.length) return null;
+  const urgent = pool.find((c) => takeoverActive(c, now, win));
+  if (urgent) return urgent;
   // Scheduled deals (win.onlyDue) only happen when some card has fallen at least half a deal behind its pace.
   if (win.onlyDue && !pool.some((k) => isDue(k, now, win))) return null;
   const c = chaos / 100;
@@ -124,6 +130,7 @@ export const DUE_AT = 0.5;
 /** Due: half a deal behind pace, or anything still owed in the last stretch of the period. */
 export function isDue(k, now = Date.now(), win = {}) {
   if (k.dueAt && now >= Date.parse(k.dueAt)) return true; // "not now, bring it back soon"
+  if (k.opensAt && !notOpenYet(k, now, win) && quotaState(k, now, win).open) return true; // deal it as soon as it opens
   const q = quotaState(k, now, win);
   return q.open && ((q.expected - q.drawn) / q.unit >= DUE_AT || q.progress >= 0.9);
 }
@@ -131,7 +138,8 @@ export function isDue(k, now = Date.now(), win = {}) {
 /** Weight for picking: cards further behind pace are much more likely. */
 function dueScore(k, now, win) {
   const q = quotaState(k, now, win);
-  const b = (q.expected - q.drawn) / q.unit + (q.progress >= 0.9 ? q.remaining / q.unit : 0) + (k.dueAt && now >= Date.parse(k.dueAt) ? 4 : 0);
+  const opened = k.opensAt && !notOpenYet(k, now, win) && q.open;
+  const b = (q.expected - q.drawn) / q.unit + (q.progress >= 0.9 ? q.remaining / q.unit : 0) + (k.dueAt && now >= Date.parse(k.dueAt) ? 4 : 0) + (opened ? 6 : 0);
   return Math.max(0.02, Math.min(20, b >= 0 ? (b + 0.5) ** 2 : Math.exp(b * 3) * 0.25));
 }
 
@@ -301,11 +309,14 @@ export function drawable(cards, players, hands, tables, meId) {
 
 /* ---------- lock rule ---------- */
 // A card with lockAt = N: while you hold N or more copies of it, it's the only card you can play.
-export function activeLocks(cards, hands, meId) {
+export function activeLocks(cards, hands, meId, now = Date.now(), win = {}) {
   const counts = {};
   for (const h of hands) if (h.seat === meId) counts[h.cardId] = (counts[h.cardId] || 0) + 1;
-  return cards.filter((c) => c.lockAt > 0 && (counts[c.id] || 0) >= c.lockAt)
+  const held = cards.filter((c) => c.lockAt > 0 && (counts[c.id] || 0) >= c.lockAt)
     .map((c) => ({ cardId: c.id, label: c.label, count: counts[c.id], lockAt: c.lockAt }));
+  const urgent = cards.filter((c) => (!c.owner || c.owner === meId) && takeoverActive(c, now, win))
+    .map((c) => ({ cardId: c.id, label: c.label, takeover: c.takeover }));
+  return [...urgent, ...held];
 }
 export function canPlay(locks, cardIds) {
   if (!locks.length) return true;
@@ -314,6 +325,8 @@ export function canPlay(locks, cardIds) {
 }
 export function lockMessage(locks) {
   if (!locks.length) return "";
+  const t = locks.find((l) => l.takeover);
+  if (t) return `It's past ${fmtTime(hmDate(t.takeover))}: ${t.label} is the only card you can play.`;
   const names = locks.map((l) => `${l.count} × ${l.label}`).join(" and ");
   return `Locked: you're holding ${names}. Play ${locks.map((l) => l.label).join(" or ")} first.`;
 }
@@ -377,4 +390,25 @@ export function holdReminder(it, now = new Date()) {
   if (it.tilt > 0) return new Date(now.getTime() + 60 * 6e4);
   const t = new Date(now); t.setHours(20, 0, 0, 0);
   return t.getTime() - now.getTime() > 30 * 6e4 ? t : new Date(now.getTime() + 2 * 36e5);
+}
+
+/* ---------- card timing: when it can be dealt, when it takes over the screen ---------- */
+// card.opensAt / card.takeover are "HH:MM" on the player's clock.
+export const hmMinutes = (hm) => (hm ? +hm.slice(0, 2) * 60 + +hm.slice(3, 5) : null);
+export const hmDate = (hm, now = new Date()) => { const d = new Date(now); d.setHours(+hm.slice(0, 2), +hm.slice(3, 5), 0, 0); return d; };
+export const toHM = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+function localMinutes(now, win = {}) {
+  const t = new Date(now + tzOffsetMs(now, win.tz));
+  return t.getUTCHours() * 60 + t.getUTCMinutes();
+}
+export function notOpenYet(card, now = Date.now(), win = {}) {
+  return !!card.opensAt && localMinutes(now, win) < hmMinutes(card.opensAt);
+}
+/** Past its takeover time today and still owed: it's the only card you can play. */
+export function takeoverActive(card, now = Date.now(), win = {}) {
+  return !!card.takeover && card.active !== false && localMinutes(now, win) >= hmMinutes(card.takeover) && !playedToday(card, now, win);
+}
+/** Played since midnight (on the player's clock)? Dealing or holding it doesn't count. */
+export function playedToday(card, now = Date.now(), win = {}) {
+  return !!card.lastPlayed && Date.parse(card.lastPlayed) >= periodStart("day", now, win).getTime();
 }

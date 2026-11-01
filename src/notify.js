@@ -1,6 +1,8 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Takeover from "../modules/takeover";
+import { playedToday, hmMinutes, hmDate } from "./model";
 import { cardLine, fmtTime, parseLater, pickCard, planChecks, dealFrom, hoursSince, markDrawn, myChaos, myDeck } from "./model";
 const C_ACCENT = "#ff7eb6";
 import * as S from "./store";
@@ -80,10 +82,13 @@ export async function rescheduleDeals(room, me, prefs, state) {
   const chaos = myChaos(state.players, me.id, state.config?.chaos ?? 30);
   const win = { startHour: prefs.startHour, endHour: prefs.endHour, onlyDue: true, plays: state.plays, meId: me.id };
   const cards = myDeck(state.cards, state.players, me.id).map((c) => ({ ...c }));
+  await scheduleTakeovers(cards, prefs);
   const up = state.tables[me.id];
   if (up && !up.empty) return []; // a card is already face up; deal again once it's played or held
+  // Late cards (like Go to bed at 9:30 PM) stretch the checking window past your usual end of day.
+  const lateEnd = Math.min(24, Math.max(prefs.endHour, ...cards.map((c) => Math.ceil(((hmMinutes(c.takeover) ?? hmMinutes(c.opensAt) ?? 0) + 30) / 60))));
   const out = [];
-  for (const when of planChecks({ now: new Date(), stepMins: 20, startHour: prefs.startHour, endHour: prefs.endHour, hours: 24 })) {
+  for (const when of planChecks({ now: new Date(), stepMins: 20, startHour: prefs.startHour, endHour: lateEnd, hours: 24 })) {
     if (out.length >= 24) break;
     const k = pickCard(cards, [], chaos, when.getTime(), Math.random, win);
     if (!k) continue;
@@ -228,3 +233,35 @@ export async function claimDeliveredDeal(room, me) {
   if (hoursSince(t.drawnAt) > 24) return null;
   return S.placeOnTable(room, me, t);
 }
+
+/* ---------- full-screen takeover (Android, needs the app build that includes it) ---------- */
+export const takeoverAvailable = () => !!Takeover;
+
+/** Keep one alarm per takeover card: at its time today while it's still owed, gone once it's played. */
+export async function scheduleTakeovers(cards, prefs = {}) {
+  if (!Takeover) return;
+  const now = Date.now();
+  const existing = new Set(Takeover.ids());
+  const wanted = new Set();
+  for (const c of cards) {
+    if (!c.takeover || c.active === false) continue;
+    const id = "card-" + c.id;
+    if (playedToday(c, now, prefs)) continue; // already played today
+    wanted.add(id);
+    let at = hmDate(c.takeover).getTime();
+    if (at <= now) {
+      if (existing.has(id)) continue; // already ringing / repeating
+      at = now + 10 * 60e3;            // still owed: nag again in 10 minutes
+    }
+    Takeover.schedule(id, at, c.label.toUpperCase(), `It's ${fmtTime(hmDate(c.takeover))}. Play this card to make it stop.`, 3, 10);
+  }
+  for (const id of existing) if (id !== "test" && !wanted.has(id)) Takeover.cancel(id);
+}
+
+export function testTakeover() {
+  if (!Takeover) return false;
+  Takeover.showNow("GO TO BED", "This is a test. Tap a button to stop it.");
+  return true;
+}
+export const canFullScreen = () => (Takeover ? Takeover.canFullScreen() : false);
+export const openFullScreenSettings = () => Takeover?.openFullScreenSettings();
