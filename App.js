@@ -11,6 +11,7 @@ import * as S from "./src/store";
 import * as N from "./src/notify";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, randomTheme } from "./src/theme";
+import { bufferBlock, bufferMessage, BUFFER_STEPS } from "./src/model";
 import { myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
 
@@ -229,7 +230,8 @@ function CardView({ state, room, me, act, goTo, prefs }) {
     }, "Held. Reminder at " + fmtTime(at));
   };
   const locks = activeLocks(state.cards, state.hands, me.id);
-  const blocked = top && !canPlay(locks, [top.cardId]);
+  const wait = top && bufferBlock(state.cards.find((c) => c.id === top.cardId), state.plays, me.id);
+  const blocked = top && (!canPlay(locks, [top.cardId]) || !!wait);
   return (
     <View style={st.home}>
       {!!locks.length && <LockBanner locks={locks} />}
@@ -237,9 +239,10 @@ function CardView({ state, room, me, act, goTo, prefs }) {
         <>
           <BigCard t={top} quota={quotaLabel(state.cards.find((c) => c.id === top.cardId) || {}, Date.now(), prefs)} />
           <View style={[st.row, { width: 280, maxWidth: "80%" }]}>
-            <Btn primary flex label={blocked ? "Locked" : "Play"} disabled={blocked} onPress={() => act(() => S.playCard(room, me, top), "Played: " + top.label)} />
+            <Btn primary flex label={wait ? "Wait" : blocked ? "Locked" : "Play"} disabled={blocked} onPress={() => act(() => S.playCard(room, me, top), "Played: " + top.label)} />
             <Btn flex label="Hold" onPress={() => act(() => S.holdCard(room, me, top), "Held: " + top.label)} />
           </View>
+          {!!wait && <Text style={[st.note, { maxWidth: 300 }]}>⏳ {bufferMessage(wait)}</Text>}
           <Pressable onPress={() => setLater(true)} hitSlop={10}><Text style={st.link}>Remind me later</Text></Pressable>
         </>
       ) : !drawable(state.cards, state.players, state.hands, state.tables, me.id).length ? (
@@ -275,7 +278,9 @@ function HandView({ state, room, me, act, focusHand }) {
   const toggle = (id) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   const myTurn = state.game.active === me.id;
   const locks = activeLocks(state.cards, state.hands, me.id);
-  const blocked = picked.length > 0 && !canPlay(locks, picked.map((h) => h.cardId));
+  const waitOf = (h) => bufferBlock(state.cards.find((c) => c.id === h.cardId), state.plays, me.id);
+  const waiting = picked.map(waitOf).find(Boolean);
+  const blocked = picked.length > 0 && (!canPlay(locks, picked.map((h) => h.cardId)) || !!waiting);
   const setReminder = async (at) => {
     const h = later; setLater(null);
     await act(async () => { await S.setRemind(room, h.id, at); await N.scheduleReminder(room, h.id, h, at); }, "Reminder at " + fmtTime(at));
@@ -298,11 +303,12 @@ function HandView({ state, room, me, act, focusHand }) {
               </View>
               <Text style={st.miniLabel}>{h.label}</Text>
               {!!h.variant && <Text style={st.miniMeta} numberOfLines={2}>{h.variant}</Text>}
-              <Text style={st.miniMeta}>{remind ? "⏰ " + fmtTime(h.remindAt) : "held " + ago(h.heldAt)}</Text>
+              <Text style={st.miniMeta}>{waitOf(h) ? "⏳ " + fmtTime(new Date(waitOf(h).until)) : remind ? "⏰ " + fmtTime(h.remindAt) : "held " + ago(h.heldAt)}</Text>
             </Pressable>
           );
         })}
       </View>
+      {!!waiting && <Text style={[st.note, { textAlign: "left" }]}>⏳ {bufferMessage(waiting)}</Text>}
       {picked.length === 1 && (
         <View style={st.row}>
           <Btn primary flex label={blocked ? "Locked" : "Play it"} disabled={blocked} onPress={() => { setSel([]); act(() => S.playCombo(room, me, [picked[0].id]), "Played: " + picked[0].label); }} />
@@ -513,6 +519,14 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
         <Text style={st.label}>IMMEDIACY</Text>
         <View style={st.chips}>{[1, 2, 3, 4, 5].map((i) => <Chip key={i} label={String(i)} on={c.imm === i} onPress={() => setC({ ...c, imm: i })} />)}</View>
         <Text style={[st.note, { textAlign: "left" }]}>4 and 5 ring louder and show over the lock screen.</Text>
+        <Text style={st.label}>WAIT BETWEEN PLAYS</Text>
+        {[["self", "After this same card"], ["suit", "After any " + SUIT[c.suit] + " " + c.suit + " card"], ["any", "After any card"]].map(([k, l]) => (
+          <View key={k} style={{ gap: 6 }}>
+            <Text style={[st.note, { textAlign: "left", color: C.ink }]}>{l}</Text>
+            <View style={st.chips}>{BUFFER_STEPS.map(([m, ml]) => <Chip key={m} label={ml} on={(c.buffer?.[k] || 0) === m} onPress={() => setC({ ...c, buffer: { ...(c.buffer || {}), [k]: m || null } })} />)}</View>
+          </View>
+        ))}
+        <Text style={[st.note, { textAlign: "left" }]}>It can still be held, but it can't be played or dealt until the wait is over.</Text>
         <Text style={st.label}>LOCK WHEN HOLDING</Text>
         <View style={st.chips}>{[0, 2, 3, 4, 5].map((k) => <Chip key={k} label={k ? k + " held" : "Never"} on={(c.lockAt || 0) === k} onPress={() => setC({ ...c, lockAt: k || null })} />)}</View>
         <Text style={[st.note, { textAlign: "left" }]}>While you hold this many, it's the only card you can play.</Text>

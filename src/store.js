@@ -2,7 +2,7 @@ import "react-native-url-polyfill/auto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config";
-import { SEED_CARDS, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
+import { SEED_CARDS, bufferBlock, bufferMessage, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -107,10 +107,10 @@ async function advance(room, me) {
 }
 
 export async function draw(room, me, win = {}) {
-  const [cards, hands, tables, players] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), listColl(room, "players")]);
+  const [cards, hands, tables, players, plays] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), listColl(room, "players"), listColl(room, "plays")]);
   const up = tables.find((t) => t.id === me.id);
   const busy = up && !up.empty ? [up.cardId] : [];
-  const k = pickCard(myDeck(cards, players, me.id), busy, myChaos(players, me.id), Date.now(), Math.random, win);
+  const k = pickCard(myDeck(cards, players, me.id), busy, myChaos(players, me.id), Date.now(), Math.random, { ...win, plays, meId: me.id });
   if (!k) return null;
   const t = dealFrom(k, Date.now(), Math.random, win);
   await upsert(room, "tables", me.id, t);
@@ -141,9 +141,14 @@ async function logPlay(room, me, t, combo = null) {
 
 /** Throws if a lock card in your hand blocks playing these cards. */
 async function guardLock(room, me, cardIds) {
-  const [cards, hands] = await Promise.all([listColl(room, "cards"), listColl(room, "hands")]);
+  const [cards, hands, plays] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "plays")]);
   const locks = activeLocks(cards, hands, me.id);
   if (!canPlay(locks, cardIds)) throw new Error(lockMessage(locks));
+  for (const id of cardIds) {
+    const card = cards.find((c) => c.id === id);
+    const block = card && bufferBlock(card, plays, me.id);
+    if (block) throw new Error(`Not yet: ${card.label}. ${bufferMessage(block)}`);
+  }
 }
 
 async function clearTableIf(room, me, cardId) {

@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
     if (p.prefs?.notify === false) continue;
     const h = localHour(now, tz);
     if (h < (p.prefs?.startHour ?? 8) || h >= (p.prefs?.endHour ?? 21)) continue;
-    const win = { ...(p.prefs || {}), tz, onlyDue: true };
+    const win = { ...(p.prefs || {}), tz, onlyDue: true, plays: get("plays"), meId: player };
     const top = tables[player];
     if (top && !top.empty) {
       // Something is already face up: nudge at most every 2 hours.
