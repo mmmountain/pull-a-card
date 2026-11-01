@@ -369,7 +369,7 @@ export function bufferMessage(block) {
 /* ---------- swiping the top card ---------- */
 // Up/down picks the action, leaning right means "sooner / more", leaning left "later / less".
 //   up: play (lean = how often it should come)   down: hold (lean = when to remind you)
-//   right: not now, back in 30 min               left: too soon, a bit less often
+//   right: snooze, back in 30 min                left: less often (skip it, deal it a bit less)
 export function swipeIntent(dx, dy, min = 80) {
   if (Math.hypot(dx, dy) < min) return null;
   const a = (Math.atan2(dx, -dy) * 180) / Math.PI; // 0 = up, 90 = right, ±180 = down
@@ -383,7 +383,7 @@ export function swipeLabel(it) {
   const amt = Math.abs(it.tilt) > 0.55 ? "" : "a bit ";
   if (it.kind === "play") return it.tilt > 0 ? `Play · ${amt}more often` : it.tilt < 0 ? `Play · ${amt}less often` : "Play";
   if (it.kind === "hold") return it.tilt > 0 ? "Hold · remind me in 1 h" : it.tilt < 0 ? "Hold · remind me tonight" : "Hold";
-  return it.kind === "soon" ? "Not now · back in 30 min" : "Too soon · less often";
+  return it.kind === "soon" ? "Snooze · back in 30 min" : "Less often · skip it";
 }
 /** How a swipe changes the card's pace: up to ±15% per play swipe, −10% for "too soon". Stays within ½× to 2×. */
 export function nudgedTempo(tempo, it) {
@@ -427,6 +427,23 @@ export function myDecks(decks, meId) {
   const mine = (decks || []).filter((d) => d.owner === meId);
   const list = mine.some((d) => d.id === everydayId(meId)) ? [] : [{ id: everydayId(meId), owner: meId, name: "Everyday", active: true }];
   return [...list, ...mine].map((d) => ({ ...d, active: d.active !== false }));
+}
+
+/** A deck's little logo: the emoji you picked, else a default for the built-in decks. */
+const DECK_EMOJI = { everyday: "☀️", powerlifting: "🏋️", mindful: "🧘" };
+export function deckEmoji(deck) {
+  if (!deck) return "";
+  if (deck.emoji) return deck.emoji;
+  if (deck.key && DECK_EMOJI[deck.key]) return DECK_EMOJI[deck.key];
+  return /:everyday$/.test(deck.id || "") ? DECK_EMOJI.everyday : "";
+}
+/** Emojis of every deck that has a card with this name (a card can sit in more than one deck). */
+export function cardEmojis(state, meId, label) {
+  if (!state) return [];
+  const want = String(label || "").trim().toLowerCase();
+  const decks = myDecks(state.decks, meId);
+  const ids = new Set(myDeck(state.cards, state.players, meId).filter((c) => c.label.trim().toLowerCase() === want).map((c) => deckOf(c, meId)));
+  return [...new Set(decks.filter((d) => ids.has(d.id)).map(deckEmoji).filter(Boolean))];
 }
 
 /** Ready-made decks you can add from the library. Targets are per day or week; tweak them after adding. */
