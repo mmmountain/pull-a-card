@@ -268,13 +268,20 @@ const firstPlayer = (players) => [...(players || [])].sort((a, b) => (a.joined |
 export function deckOwner(card, players) {
   return card.owner || firstPlayer(players);
 }
-/** Your cards. Pass `decks` to keep only cards from decks that are switched on (what gets dealt). */
-export function myDeck(cards, players, meId, decks = null) {
+/**
+ * Your cards. Pass `decks` to keep only what this table deals: cards from decks that are switched on
+ * and that this table uses (your player doc's useDecks; unset = all), plus any card the table's current
+ * map needs (pass `maps`), even if its deck is off.
+ */
+export function myDeck(cards, players, meId, decks = null, maps = null) {
   const first = firstPlayer(players);
   const mine = cards.filter((c) => (c.owner || first) === meId);
   if (!decks) return mine;
-  const on = new Set(myDecks(decks, meId).filter((d) => d.active).map((d) => d.id));
-  return mine.filter((c) => on.has(deckOf(c, meId)));
+  const use = (players || []).find((p) => p.id === meId)?.useDecks;
+  const on = new Set(myDecks(decks, meId).filter((d) => d.active && (!Array.isArray(use) || use.includes(d.id))).map((d) => d.id));
+  const need = new Set();
+  for (const m of maps || []) if (m.owner === meId && m.active !== false) for (const sp of Object.values(m.spots || {})) if (sp.accepts?.startsWith("card:")) need.add(sp.accepts.slice(5));
+  return mine.filter((c) => on.has(deckOf(c, meId)) || need.has(c.id));
 }
 export function myChaos(players, meId, fallback = 30) {
   const p = (players || []).find((x) => x.id === meId);
@@ -306,10 +313,10 @@ export function lastMove(plays) {
 }
 
 /** Cards you could pull right now: your active cards not already in a hand or face up. */
-export function drawable(cards, players, hands, tables, meId, decks = null) {
+export function drawable(cards, players, hands, tables, meId, decks = null, maps = null) {
   // Repeats are allowed: a card you're holding can be pulled again. Only the face-up card is out.
   const up = tables?.[meId];
-  return myDeck(cards, players, meId, decks || []).filter((c) => c.active !== false && !(up && !up.empty && up.cardId === c.id));
+  return myDeck(cards, players, meId, decks || [], maps).filter((c) => c.active !== false && !(up && !up.empty && up.cardId === c.id));
 }
 
 /* ---------- lock rule ---------- */
