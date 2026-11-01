@@ -1,6 +1,6 @@
 // Same document store the Android app uses: one Supabase table, docs(room, coll, id, data).
 import { createClient } from "./supabase.js";
-import { SEED_CARDS, dealFrom, myChaos, myDeck, newId, nextTurn, pickCard } from "./model.js";
+import { SEED_CARDS, activeLocks, canPlay, dealFrom, lockMessage, myChaos, myDeck, newId, nextTurn, pickCard } from "./model.js";
 
 export const SUPABASE_URL = "https://znhbphohxomvldyvewyj.supabase.co";
 export const SUPABASE_KEY = "sb_publishable_B9UMRmmdVo9HSRwVuUEEhw_hEOyGToB";
@@ -85,7 +85,8 @@ async function advance(room, me) {
 
 export async function draw(room, me) {
   const [cards, hands, tables, players] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), listColl(room, "players")]);
-  const busy = [...hands.map((h) => h.cardId), ...tables.filter((t) => !t.empty).map((t) => t.cardId)];
+  const up = tables.find((t) => t.id === me.id);
+  const busy = up && !up.empty ? [up.cardId] : [];
   const k = pickCard(myDeck(cards, players, me.id), busy, myChaos(players, me.id));
   if (!k) return null;
   const t = dealFrom(k);
@@ -102,9 +103,16 @@ async function logPlay(room, me, t, combo = null) {
   const card = await getDoc(room, "cards", t.cardId);
   if (card) await upsert(room, "cards", t.cardId, { ...card, lastPlayed: now, plays: (card.plays || 0) + 1 });
 }
+/** Throws if a lock card in your hand blocks playing these cards. */
+async function guardLock(room, me, cardIds) {
+  const [cards, hands] = await Promise.all([listColl(room, "cards"), listColl(room, "hands")]);
+  const locks = activeLocks(cards, hands, me.id);
+  if (!canPlay(locks, cardIds)) throw new Error(lockMessage(locks));
+}
+
 async function clearTable(room, me) { await upsert(room, "tables", me.id, { empty: true }); }
 
-export async function playCard(room, me, t) { await logPlay(room, me, t); await clearTable(room, me); await advance(room, me); }
+export async function playCard(room, me, t) { await guardLock(room, me, [t.cardId]); await logPlay(room, me, t); await clearTable(room, me); await advance(room, me); }
 export async function holdCard(room, me, t, remindAt = null) {
   const { empty, id, ...card } = t;
   await upsert(room, "hands", newId(), { ...card, seat: me.id, heldAt: new Date().toISOString(), remindAt: remindAt ? remindAt.toISOString() : null });
@@ -113,6 +121,7 @@ export async function holdCard(room, me, t, remindAt = null) {
 }
 export async function playFromHand(room, me, handId) {
   const h = await getDoc(room, "hands", handId);
+  if (h) await guardLock(room, me, [h.cardId]);
   if (!h) return;
   await remove(room, "hands", handId);
   await logPlay(room, me, h);
@@ -152,6 +161,8 @@ export const getPush = (room, me) => getDoc(room, "push", me.id);
 
 /** Play several held cards at once, as one move. */
 export async function playCombo(room, me, handIds) {
+  const held = (await listColl(room, "hands")).filter((h) => handIds.includes(h.id));
+  await guardLock(room, me, held.map((h) => h.cardId));
   const combo = handIds.length > 1 ? newId() : null;
   for (const id of handIds) {
     const h = await getDoc(room, "hands", id);
@@ -165,7 +176,13 @@ export async function playCombo(room, me, handIds) {
 /** Give a player starter cards if they have no deck of their own yet. */
 export async function ensureDeck(room, me) {
   const [cards, players] = await Promise.all([listColl(room, "cards"), listColl(room, "players")]);
-  if (!players.some((p) => p.id === me.id) || myDeck(cards, players, me.id).length) return false;
+  if (!players.some((p) => p.id === me.id)) return false;
+  const mine = myDeck(cards, players, me.id);
+  if (mine.length) {
+    // One-time: Drink water locks at 3 unless you've set something else.
+    for (const c of mine) if (c.lockAt === undefined && /drink water/i.test(c.label)) { const { id, ...d } = c; await upsert(room, "cards", id, { ...d, owner: d.owner || me.id, lockAt: 3 }); }
+    return false;
+  }
   for (const c of SEED_CARDS) {
     const { id, ...data } = c;
     await upsert(room, "cards", me.id + "-" + id, { ...data, owner: me.id });

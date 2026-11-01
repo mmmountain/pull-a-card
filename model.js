@@ -4,7 +4,7 @@ export const SUIT = { body: "●", home: "■", mind: "▲", work: "◆" };
 export const SUITS = ["body", "home", "mind", "work"];
 
 export const SEED_CARDS = [
-  { id: "water", label: "Drink water", variants: [], suit: "body", every: 1.5, imm: 5, active: true, plays: 0 },
+  { id: "water", label: "Drink water", variants: [], suit: "body", every: 1.5, imm: 5, active: true, plays: 0, lockAt: 3 },
   { id: "squats", label: "10 squats", variants: [], suit: "body", every: 4, imm: 3, active: true, plays: 0 },
   { id: "clean", label: "Clean for an hour", variants: [], suit: "home", every: 48, imm: 1, active: true, plays: 0 },
 ];
@@ -183,6 +183,26 @@ export function lastMove(plays) {
 
 /** Cards you could pull right now: your active cards not already in a hand or face up. */
 export function drawable(cards, players, hands, tables, meId) {
-  const busy = new Set([...hands.map((h) => h.cardId), ...Object.values(tables || {}).filter((t) => t && !t.empty).map((t) => t.cardId)]);
-  return myDeck(cards, players, meId).filter((c) => c.active !== false && !busy.has(c.id));
+  // Repeats are allowed: a card you're holding can be pulled again. Only the face-up card is out.
+  const up = tables?.[meId];
+  return myDeck(cards, players, meId).filter((c) => c.active !== false && !(up && !up.empty && up.cardId === c.id));
+}
+
+/* ---------- lock rule ---------- */
+// A card with lockAt = N: while you hold N or more copies of it, it's the only card you can play.
+export function activeLocks(cards, hands, meId) {
+  const counts = {};
+  for (const h of hands) if (h.seat === meId) counts[h.cardId] = (counts[h.cardId] || 0) + 1;
+  return cards.filter((c) => c.lockAt > 0 && (counts[c.id] || 0) >= c.lockAt)
+    .map((c) => ({ cardId: c.id, label: c.label, count: counts[c.id], lockAt: c.lockAt }));
+}
+export function canPlay(locks, cardIds) {
+  if (!locks.length) return true;
+  const ok = new Set(locks.map((l) => l.cardId));
+  return cardIds.length > 0 && cardIds.every((id) => ok.has(id));
+}
+export function lockMessage(locks) {
+  if (!locks.length) return "";
+  const names = locks.map((l) => `${l.count} × ${l.label}`).join(" and ");
+  return `Locked: you're holding ${names}. Play ${locks.map((l) => l.label).join(" or ")} first.`;
 }
