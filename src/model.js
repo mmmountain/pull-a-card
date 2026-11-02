@@ -473,7 +473,7 @@ export function myDecks(decks, meId) {
 }
 
 /** A deck's little logo: the emoji you picked, else a default for the built-in decks. */
-const DECK_EMOJI = { everyday: "☀️", powerlifting: "🏋️", mindful: "🧘" };
+const DECK_EMOJI = { everyday: "☀️", powerlifting: "🏋️", mindful: "🧘", artists: "🎨" };
 export function deckEmoji(deck) {
   if (!deck) return "";
   if (deck.emoji) return deck.emoji;
@@ -531,6 +531,19 @@ export const DECK_LIBRARY = [
       { key: "stretch", label: "Slow stretch", suit: "body", imm: 2, quota: { n: 1, per: "day" } },
       { key: "read", label: "Read 20 min", suit: "mind", imm: 2, quota: { n: 1, per: "day" } },
       { key: "gratitude", label: "Write three good things", suit: "mind", imm: 2, quota: { n: 1, per: "day" } },
+    ],
+  },
+  {
+    key: "artists",
+    name: "The Artist's Way",
+    about: "Julia Cameron's 12-week creativity course: three longhand pages every morning, a solo artist date each week, the week's chapter and exercises, and a check-in.",
+    cards: [
+      { key: "pages", label: "Morning pages", variants: ["Three pages, longhand, no rereading", "Three pages: whatever's on your mind", "Three pages before anything else"], suit: "mind", imm: 4, beef: 3, quota: { n: 1, per: "day" } },
+      { key: "date", label: "Artist date", variants: ["An hour or two, alone, somewhere that delights you", "Go somewhere new, by yourself", "Fill the well: wander, look, listen"], suit: "mind", imm: 2, beef: 4, quota: { n: 1, per: "week" } },
+      { key: "chapter", label: "Read this week's chapter", suit: "work", imm: 2, beef: 2, quota: { n: 1, per: "week" } },
+      { key: "task", label: "Do one of this week's exercises", suit: "work", imm: 2, beef: 2, quota: { n: 3, per: "week" } },
+      { key: "walk", label: "Walk alone 20 min", suit: "body", imm: 1, beef: 1, quota: { n: 1, per: "week" } },
+      { key: "checkin", label: "Weekly check-in", variants: ["Pages every day this week? Artist date? What came up?"], suit: "work", imm: 3, beef: 1, quota: { n: 1, per: "week" } },
     ],
   },
 ];

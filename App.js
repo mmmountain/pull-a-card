@@ -827,7 +827,7 @@ function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, set
           <Text style={[st.note, { textAlign: "left" }]}>Cards you play land on the right spot by themselves; a missed spot gets an X and sends its card to your hand. The new map becomes this table's map.</Text>
           {MAP_LIBRARY.map((t) => (
             <View key={t.key} style={st.panel}>
-              <Text style={st.h3}>{t.name} · {PER_NAMES[t.per].toLowerCase()}</Text>
+              <Text style={st.h3}>{t.name} · {perLabel(t).toLowerCase()}</Text>
               <Text style={[st.note, { textAlign: "left" }]}>{t.about}</Text>
               {t.deckKey !== "everyday" && <Text style={[st.note, { textAlign: "left" }]}>Adds the {DECK_LIBRARY.find((d) => d.key === t.deckKey)?.name} deck if you don't have it.</Text>}
               <Btn primary={!have.has(t.key)} disabled={have.has(t.key)} label={have.has(t.key) ? "Added" : "Add " + t.name} onPress={() => {
