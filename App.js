@@ -689,7 +689,7 @@ function ModeWheel({ mode, onPick, handN, handMore }) {
             const on = i === mod3(cur);
             return (
               <View key={k} style={[st.wheelSlot, { opacity: 0.55 + 0.45 * front, zIndex: Math.round(front * 10),
-                transform: [{ translateX: RX * Math.sin(th) }, { translateY: RY * (1 - Math.cos(th)) }, { rotate: (Math.sin(th) * 10) + "deg" }, { scaleX: 0.82 + 0.18 * front }, { scaleY: 0.62 + 0.13 * front }] }]}>
+                transform: [{ translateX: RX * Math.sin(th) }, { translateY: RY * (1 - Math.cos(th)) }, { rotate: (Math.sin(th) * 10) + "deg" }, { scaleX: 0.86 + 0.14 * front }, { scaleY: 0.8 + 0.12 * front }] }]}>
                 <Pressable onPress={() => !on && go(mod3(i - cur) === 1 ? 1 : -1)} hitSlop={10} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={l}>
                   <Text style={[st.wheelTxt, on && st.wheelTxtOn]}>
                     {l}{k === "hand" ? <Text style={st.wheelCount}> {handN}{handMore > 0 ? "+" + handMore : ""}</Text> : null}
@@ -1854,9 +1854,9 @@ function makeStyles() { return StyleSheet.create({
   wheelArrow: { width: 34, height: 34, marginBottom: 14, alignItems: "center", justifyContent: "center", borderRadius: 20, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 3 },
   wheelArrowTxt: { fontSize: 20, fontWeight: "800", color: C.ink, marginTop: -2 },
   wheelSlot: { position: "absolute", left: 0, right: 0, top: 14, alignItems: "center" },
-  wheelTxt: { fontSize: 14, fontWeight: "700", color: C.muted, letterSpacing: 1.5, textTransform: "uppercase" },
-  wheelTxtOn: { fontSize: 17, fontWeight: "800", color: C.ink, letterSpacing: 2.5 },
-  wheelCount: { fontSize: 12, fontWeight: "800", color: C.accent },
+  wheelTxt: { fontFamily: Platform.select({ ios: "Georgia", default: "serif" }), fontSize: 16, fontWeight: "400", fontStyle: "italic", color: C.muted, letterSpacing: 0.3 },
+  wheelTxtOn: { fontSize: 20, fontStyle: "normal", color: C.ink, letterSpacing: 0.5 },
+  wheelCount: { fontSize: 13, fontStyle: "normal", color: C.accent },
   wheelDot: { position: "absolute", top: 4, width: 6, height: 6, marginLeft: -3, borderRadius: 3, backgroundColor: C.accent },
   cardFrame: { position: "absolute", left: 12, right: 12, borderRadius: 14, borderWidth: 2, borderColor: C.line },
   cardBand: { position: "absolute", left: 0, right: 0, top: 0 },
