@@ -641,7 +641,7 @@ function SwipeCard({ t, tint, box, blockedMsg, onSwipe, say, children }) {
 // Table, Card and Hand sit 120° apart on one wheel, seen tilted so its rim is a wide, shallow ellipse.
 // Changing view turns the wheel a third of a turn. It loops: no first view, no last.
 const MODES = [["table", "Table"], ["card", "Card"], ["hand", "Hand"]];
-const WHEEL_H = 96;
+const WHEEL_H = 56;
 const mod3 = (n) => ((n % 3) + 3) % 3;
 /** Blend two "#rrggbb" colors: t=0 → a, t=1 → b. */
 const mix = (a, b, t) => { const p = (h) => { const x = String(h).replace("#", ""); const n = parseInt(x.length === 3 ? x.replace(/./g, "$&$&") : x, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
@@ -651,7 +651,7 @@ const fade = (hex, a) => { const h = String(hex).replace("#", ""); const n = par
 function ModeWheel({ mode, onPick, handN, handMore }) {
   const ins = useSafeAreaInsets();
   const W = Dimensions.get("window").width;
-  const RX = W * 0.34, RY = 66;             // a big rim seen at a steep angle: side words swing low
+  const RX = W * 0.36, RY = 14;             // a big rim seen nearly edge-on: low and flat
   const want = Math.max(0, MODES.findIndex((m) => m[0] === mode));
   const [cur, setCur] = useState(want);     // unbounded, so the wheel always turns the short way
   const [pos, setPos] = useState(want);     // animated position, in thirds of a turn
@@ -670,11 +670,11 @@ function ModeWheel({ mode, onPick, handN, handMore }) {
     onPanResponderRelease: (_, g) => { if (Math.abs(g.dx) > 40) live.current(g.dx < 0 ? 1 : -1); },
   })).current;
   return (
-    <View style={[st.wheel, { height: WHEEL_H + ins.bottom + 40, paddingBottom: ins.bottom + 8 }]} {...swipe.panHandlers}>
+    <View style={[st.wheel, { height: WHEEL_H + ins.bottom + 44, paddingBottom: ins.bottom + 4 }]} {...swipe.panHandlers}>
       {/* Fog: the screen behind the menu fades out toward the bottom. */}
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
         {Array.from({ length: 14 }, (_, i) => (
-          <View key={i} style={{ flex: 1, backgroundColor: fade(C.bg, Math.min(0.96, Math.pow((i + 1) / 14, 1.6))) }} />
+          <View key={i} style={{ flex: 1, backgroundColor: fade(C.bg, Math.min(0.97, Math.pow((i + 1) / 14, 0.8))) }} />
         ))}
       </View>
       <View style={[st.row, { flex: 1, alignItems: "flex-end", paddingHorizontal: 10 }]}>
@@ -689,7 +689,7 @@ function ModeWheel({ mode, onPick, handN, handMore }) {
             const on = i === mod3(cur);
             return (
               <View key={k} style={[st.wheelSlot, { opacity: 0.55 + 0.45 * front, zIndex: Math.round(front * 10),
-                transform: [{ translateX: RX * Math.sin(th) }, { translateY: RY * (1 - Math.cos(th)) }, { rotate: (Math.sin(th) * 24) + "deg" }, { scale: 0.82 + 0.18 * front }] }]}>
+                transform: [{ translateX: RX * Math.sin(th) }, { translateY: RY * (1 - Math.cos(th)) }, { rotate: (Math.sin(th) * 10) + "deg" }, { scaleX: 0.82 + 0.18 * front }, { scaleY: 0.62 + 0.13 * front }] }]}>
                 <Pressable onPress={() => !on && go(mod3(i - cur) === 1 ? 1 : -1)} hitSlop={10} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={l}>
                   <Text style={[st.wheelTxt, on && st.wheelTxtOn]}>
                     {l}{k === "hand" ? <Text style={st.wheelCount}> {handN}{handMore > 0 ? "+" + handMore : ""}</Text> : null}
@@ -1851,13 +1851,13 @@ function makeStyles() { return StyleSheet.create({
   fullBackInner: { flex: 1, borderRadius: 18, backgroundColor: C.accent, alignItems: "center", justifyContent: "center" },
   miniBeef: { fontSize: 18, fontWeight: "800", color: C.ink },
   wheel: { position: "absolute", left: 0, right: 0, bottom: 0 },
-  wheelArrow: { width: 40, height: 40, marginBottom: 22, alignItems: "center", justifyContent: "center", borderRadius: 20, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 3 },
-  wheelArrowTxt: { fontSize: 24, fontWeight: "800", color: C.ink, marginTop: -3 },
-  wheelSlot: { position: "absolute", left: 0, right: 0, top: 4, alignItems: "center" },
+  wheelArrow: { width: 34, height: 34, marginBottom: 14, alignItems: "center", justifyContent: "center", borderRadius: 20, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 3 },
+  wheelArrowTxt: { fontSize: 20, fontWeight: "800", color: C.ink, marginTop: -2 },
+  wheelSlot: { position: "absolute", left: 0, right: 0, top: 14, alignItems: "center" },
   wheelTxt: { fontSize: 14, fontWeight: "700", color: C.muted, letterSpacing: 1.5, textTransform: "uppercase" },
-  wheelTxtOn: { fontSize: 16, fontWeight: "800", color: C.ink },
+  wheelTxtOn: { fontSize: 17, fontWeight: "800", color: C.ink, letterSpacing: 2.5 },
   wheelCount: { fontSize: 12, fontWeight: "800", color: C.accent },
-  wheelDot: { position: "absolute", top: 8, width: 6, height: 6, marginLeft: -3, borderRadius: 3, backgroundColor: C.accent },
+  wheelDot: { position: "absolute", top: 4, width: 6, height: 6, marginLeft: -3, borderRadius: 3, backgroundColor: C.accent },
   cardFrame: { position: "absolute", left: 12, right: 12, borderRadius: 14, borderWidth: 2, borderColor: C.line },
   cardBand: { position: "absolute", left: 0, right: 0, top: 0 },
   cardFoot: { position: "absolute", left: 0, right: 0, bottom: 0 },
