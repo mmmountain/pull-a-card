@@ -176,6 +176,7 @@ export function dealFrom(card, now = Date.now(), rand = Math.random, win = {}) {
     suit: card.suit || "body",
     imm: card.imm || 3,
     beef: card.beef || null,
+    each: card.each || null,
     every: intervalHours(card, win),
     drawnAt: new Date(now).toISOString(),
   };
