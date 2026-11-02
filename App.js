@@ -732,7 +732,7 @@ function LaterSheet({ open, label, onClose, onPick }) {
         <Text style={st.h2}>{label}</Text>
         <View style={st.chips}>{quick.map(([l, d]) => <Chip key={l} label={l} onPress={() => onPick(d)} />)}</View>
         <View style={st.row}>
-          <TextInput value={txt} onChangeText={setTxt} placeholder="3pm, 5:30, in 2h" placeholderTextColor={C.muted} style={[st.input, { flex: 1 }]} onSubmitEditing={submit} returnKeyType="done" />
+          <TextInput value={txt} onChangeText={setTxt} placeholder={hint("3pm, 5:30, in 2h")} placeholderTextColor={hintColor()} style={[st.input, { flex: 1 }]} onSubmitEditing={submit} returnKeyType="done" />
           <Btn primary label="Set" onPress={submit} />
         </View>
         {!!err && <Text style={[st.note, { color: C.hot, textAlign: "left" }]}>{err}</Text>}
@@ -1675,7 +1675,7 @@ function EmojiPicker({ value, onPick }) {
         ))}
       </View>
       <View style={st.row}>
-        <TextInput value={txt} onChangeText={setTxt} placeholder="Or type any emoji" placeholderTextColor={C.muted} style={[st.input, { flex: 1 }]} maxLength={8} />
+        <TextInput value={txt} onChangeText={setTxt} placeholder="Or type any emoji" placeholderTextColor={hintColor()} style={[st.input, { flex: 1 }]} maxLength={8} />
         <Btn label="Use" disabled={!txt.trim()} onPress={() => { onPick(txt.trim()); setTxt(""); }} />
       </View>
     </View>
@@ -1821,7 +1821,7 @@ function TimeField({ label, value, onChange, placeholder }) {
   return (
     <View style={{ gap: 4 }}>
       <Text style={[st.note, { textAlign: "left", color: C.ink }]}>{label}</Text>
-      <TextInput value={txt} onChangeText={setTxt} onBlur={commit} onSubmitEditing={commit} placeholder={placeholder} placeholderTextColor={C.muted} style={[st.input, bad && { borderColor: C.hot }]} />
+      <TextInput value={txt} onChangeText={setTxt} onBlur={commit} onSubmitEditing={commit} placeholder={hint(placeholder)} placeholderTextColor={hintColor()} style={[st.input, bad && { borderColor: C.hot }]} />
       {bad && <Text style={[st.note, { textAlign: "left", color: C.hot }]}>Try a time like 9:30pm.</Text>}
     </View>
   );
@@ -1838,11 +1838,15 @@ function Btn({ label, onPress, primary, danger, flex, disabled }) {
 function Chip({ label, on, onPress }) {
   return <Pressable onPress={onPress} style={[st.chip, on && st.chipOn]}><Text style={st.chipTxt}>{label}</Text></Pressable>;
 }
-function Field({ label, ...props }) {
+/** Example text in an empty field: lighter than real text and marked "e.g." (instructions like "Search…" stay as they are). */
+const HINT_INSTR = /^(or |search|type |pick |tap )/i;
+const hint = (t) => (!t ? t : HINT_INSTR.test(t) || /^e\.g\./i.test(t) ? t : "e.g., " + t);
+const hintColor = () => mix(C.muted, C.paper, 0.55);
+function Field({ label, placeholder, ...props }) {
   return (
     <View style={{ gap: 4 }}>
       <Text style={st.label}>{label.toUpperCase()}</Text>
-      <TextInput {...props} placeholderTextColor={C.muted} style={[st.input, props.multiline && { minHeight: 70, textAlignVertical: "top" }]} />
+      <TextInput {...props} placeholder={hint(placeholder)} placeholderTextColor={hintColor()} style={[st.input, props.multiline && { minHeight: 70, textAlignVertical: "top" }]} />
     </View>
   );
 }
