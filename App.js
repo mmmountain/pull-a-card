@@ -1207,10 +1207,8 @@ function DeckView({ state, room, me, act, editReq, clearEditReq, onQuick }) {
             }} />
           )}
         </View>
-        <View style={st.row}>
-          <Btn flex primary label="+ Paste cards" onPress={() => setBulk("paste")} />
-          <Btn flex label="Series ___" onPress={() => setBulk("series")} />
-        </View>
+        <Fork a="New card" b="New multi-card" aSub="one at a time" bSub="paste a list or a series"
+          onA={() => setEdit({ label: "", suit: "body", imm: 3, active: true, plays: 0, quota: { n: 1, per: "day" }, deck: deck.id })} onB={() => setBulk("pick")} />
         <View style={[st.row, { justifyContent: "space-between" }]}>
           <Text style={st.label}>{cards.length} CARDS{picking ? " · " + picked.length + " SELECTED" : ""}</Text>
           {!!cards.length && <Pressable onPress={() => { setPicking(!picking); setPicked([]); }} hitSlop={8}><Text style={st.link}>{picking ? "Done selecting" : "Select"}</Text></Pressable>}
@@ -1254,7 +1252,6 @@ function DeckView({ state, room, me, act, editReq, clearEditReq, onQuick }) {
             </Pressable>
           );
         })}
-        <Btn primary label="New card" onPress={() => setEdit({ label: "", suit: "body", imm: 3, active: true, plays: 0, quota: { n: 1, per: "day" }, deck: deck.id })} />
       </View>
       <Modal visible={lib} transparent animationType="slide" onRequestClose={() => setLib(false)}>
         <Pressable style={st.scrim} onPress={() => setLib(false)} />
@@ -1620,11 +1617,30 @@ function MapEditor({ map, cards, decks, onClose, onSave }) {
   );
 }
 
+/* ---------------- either / or ---------------- */
+// Two choices side by side: black or white. Used wherever a decision splits in two.
+// Without `pick` it's a pair of doors (tap one to go); with `pick` it's a switch showing the current side.
+function Fork({ a, b, aSub, bSub, onA, onB, pick, tall }) {
+  const side = (label, sub, dark, on, onPress) => (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={pick ? { selected: on } : undefined}
+      style={[st.forkSide, tall && { minHeight: 150 }, dark ? st.forkDark : st.forkLight, pick && !on && { opacity: 0.35 }]}>
+      <Text style={[st.forkTxt, { color: dark ? C.paper : C.ink }]}>{label}</Text>
+      {!!sub && <Text style={[st.forkSub, { color: dark ? C.paper : C.muted }]}>{sub}</Text>}
+    </Pressable>
+  );
+  return (
+    <View style={st.fork}>
+      {side(a, aSub, true, pick === "a", onA)}
+      {side(b, bSub, false, pick === "b", onB)}
+    </View>
+  );
+}
+
 /* ---------------- many cards at once ---------------- */
 // Paste a list (or an AI's answer), or fill in a series like "Play ___ in open D". Preview, then add.
 const BULK_PERS = [[1, "day"], [3, "day"], [1, "week"], [2, "week"], [1, "month"]];
 function BulkAdd({ mode, deck, onClose, onSave }) {
-  const [tab, setTab] = useState(mode);
+  const [tab, setTab] = useState(mode === "pick" ? null : mode);
   const [text, setText] = useState("");
   const [tpl, setTpl] = useState("");
   const [fills, setFills] = useState("");
@@ -1644,11 +1660,11 @@ function BulkAdd({ mode, deck, onClose, onSave }) {
           <Btn primary disabled={!res.cards.length} label={"Add " + res.cards.length} onPress={() => onSave(res.cards)} />
         </View>
         <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
-          <View style={st.chips}>
-            <Chip label="Paste a list" on={tab === "paste"} onPress={() => setTab("paste")} />
-            <Chip label="Series ___" on={tab === "series"} onPress={() => setTab("series")} />
-            <Chip label="Ask your AI" on={tab === "ai"} onPress={() => setTab("ai")} />
-          </View>
+          {!tab ? (
+            <Fork a="Paste a list" b="Series ___" aSub="one card per line, from anywhere, or from your AI" bSub="one card, a blank, a list of fills" onA={() => setTab("paste")} onB={() => setTab("series")} tall />
+          ) : (
+            <Pressable onPress={() => setTab(null)} hitSlop={8}><Text style={st.link}>‹ {tab === "series" ? "Series" : tab === "ai" ? "Ask your AI" : "Paste a list"} · change</Text></Pressable>
+          )}
           {tab === "ai" && (
             <View style={st.panel}>
               <Text style={[st.note, { textAlign: "left" }]}>1. Say what the deck is about. 2. Send the prompt to ChatGPT, Claude or any AI. 3. Copy its answer and paste it under “Paste a list”.</Text>
@@ -1661,6 +1677,7 @@ function BulkAdd({ mode, deck, onClose, onSave }) {
           )}
           {tab === "paste" && (
             <>
+              <Pressable onPress={() => setTab("ai")} hitSlop={8}><Text style={st.link}>No list yet? Get one from your AI ›</Text></Pressable>
               <Field label="One card per line" value={text} onChangeText={setText} placeholder={"Wipe the mirror\nClean the toilet | 2/week\nsquats | 20/day | body | 5,10,20"} multiline />
               <Text style={[st.note, { textAlign: "left" }]}>After a “|”, add any of: 2/week · body, home, mind or work · 5,10,20 (amounts) · beef 3 · from 7am · until 11am · v: one; two · note: a tip.</Text>
               <Field label="Start every card with (optional)" value={prefix} onChangeText={setPrefix} placeholder="Play" />
@@ -1672,14 +1689,14 @@ function BulkAdd({ mode, deck, onClose, onSave }) {
               <Field label="Fill the blank with (one per line)" value={fills} onChangeText={setFills} placeholder={"I–IV–V\nii–V–I\nI–vi–IV–V"} multiline />
             </>
           )}
-          {tab !== "ai" && (
+          {!!tab && tab !== "ai" && (
             <View style={st.panel}>
               <Text style={st.label}>UNLESS A LINE SAYS OTHERWISE</Text>
               <View style={st.chips}>{SUITS.map((x) => <Chip key={x} label={SUIT[x] + " " + SUIT_NAMES[x]} on={suit === x} onPress={() => setSuit(x)} />)}</View>
               <View style={st.chips}>{BULK_PERS.map(([n, per]) => <Chip key={n + per} label={n + "/" + per} on={q[0] === n && q[1] === per} onPress={() => setQ([n, per])} />)}</View>
             </View>
           )}
-          {tab !== "ai" && (
+          {!!tab && tab !== "ai" && (
             <View style={{ gap: 6 }}>
               <Text style={st.label}>PREVIEW · {res.cards.length} CARDS</Text>
               {res.bad.map((b, i) => <Text key={"b" + i} style={[st.note, { textAlign: "left", color: C.hot }]}>Line {b.line}: {b.why} “{b.text}” (skipped that part)</Text>)}
@@ -2030,10 +2047,8 @@ function FilterSheet({ allowNotify, decks, cards, onClose, onAdd }) {
       <Pressable style={st.scrim} onPress={onClose} />
       <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]} keyboardShouldPersistTaps="handled">
         <Text style={st.h2}>New filter</Text>
-        <View style={st.chips}>
-          <Chip label="No" on={mode === "no" || what === "notify"} onPress={() => setMode("no")} />
-          <Chip label="Only" on={mode === "only" && what !== "notify"} onPress={() => { setMode("only"); if (what === "notify") setWhat("suit:body"); }} />
-        </View>
+        <Fork a="No" b="Only" aSub="skip these" bSub="nothing but these" pick={mode === "only" && what !== "notify" ? "b" : "a"}
+          onA={() => setMode("no")} onB={() => { setMode("only"); if (what === "notify") setWhat("suit:body"); }} />
         <Text style={st.label}>WHAT</Text>
         <View style={st.chips}>
           {allowNotify && mode === "no" && <Chip label="🔕 Notifications" on={what === "notify"} onPress={() => setWhat("notify")} />}
@@ -2426,6 +2441,12 @@ function makeStyles() { return StyleSheet.create({
   qpHand: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: C.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, gap: 6, maxHeight: "75%" },
   qpStackCard: { height: 200, borderRadius: 14, paddingHorizontal: 16, paddingTop: 7, borderWidth: 1.5, borderColor: C.paper, elevation: 4 },
   qpStackTxt: { fontSize: 15, fontWeight: "700", color: C.ink },
+  fork: { flexDirection: "row", borderRadius: 16, overflow: "hidden", borderWidth: 2, borderColor: C.ink },
+  forkSide: { flex: 1, minHeight: 84, padding: 14, justifyContent: "center", alignItems: "center", gap: 4 },
+  forkDark: { backgroundColor: C.ink },
+  forkLight: { backgroundColor: C.paper },
+  forkTxt: { fontSize: 18, fontWeight: "800", textAlign: "center" },
+  forkSub: { fontSize: 12, textAlign: "center", opacity: 0.85 },
   deckLogo: { position: "absolute", flexDirection: "row", gap: 2, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1.5, backgroundColor: C.paper },
   deckLogoTxt: { fontSize: 22 },
   emojiCell: { width: 44, height: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.paper, borderWidth: 2, borderColor: "transparent" },
