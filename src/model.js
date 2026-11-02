@@ -590,3 +590,80 @@ export const DECK_LIBRARY = [
     ],
   },
 ];
+
+/* ---------- making many cards at once ---------- */
+// One card per line. A plain line is just its name; anything after "|" is optional, in any order:
+//   Wipe the mirror
+//   Clean the toilet | 2/week
+//   squats | 20/day | body | 5,10,20 | beef 3
+//   Morning pages | 1/day | mind | from 5am | until 11am | v: three pages; no rereading | note: longhand
+// Targets: "2/week", "3 a day", "daily", "weekly", "monthly". Suits: body, home, mind, work (or ● ■ ▲ ◆).
+// Amounts: numbers with commas. "beef 3" or "b3". "v:" variations split by ";". "note:" a note.
+// Lines starting with "#" or "//" are skipped, and so are list bullets and numbering ("- ", "1. ").
+const SUIT_WORDS = { body: "body", home: "home", mind: "mind", work: "work", "●": "body", "■": "home", "▲": "mind", "◆": "work" };
+const PER_WORDS = { d: "day", day: "day", days: "day", daily: "day", w: "week", wk: "week", week: "week", weeks: "week", weekly: "week", m: "month", mo: "month", month: "month", months: "month", monthly: "month" };
+function readClock(t) {
+  const m = String(t).trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm|a|p)?$/);
+  if (!m) return null;
+  let h = +m[1]; const min = +(m[2] || 0);
+  if (m[3]) { h = h % 12 + (m[3][0] === "p" ? 12 : 0); }
+  if (h > 23 || min > 59) return null;
+  return String(h).padStart(2, "0") + ":" + String(min).padStart(2, "0");
+}
+export function parseCardList(text, defaults = {}) {
+  const base = { suit: defaults.suit || "body", quota: defaults.quota || { n: 1, per: "day" }, imm: 3 };
+  const out = [], bad = [];
+  String(text || "").split(/\r?\n/).forEach((raw, i) => {
+    let line = raw.replace(/\t/g, " | ").trim();
+    if (!line || /^(#|\/\/)/.test(line)) return;
+    line = line.replace(/^([-*•]|\d+[.)])\s+/, "");
+    const [name0, ...parts] = line.split("|").map((x) => x.trim());
+    const name = (defaults.prefix ? defaults.prefix.trim() + " " : "") + name0 + (defaults.suffix ? " " + defaults.suffix.trim() : "");
+    if (!name0) { bad.push({ line: i + 1, text: raw, why: "no name" }); return; }
+    const c = { label: name.trim(), suit: base.suit, imm: base.imm, quota: { ...base.quota }, active: true, plays: 0 };
+    for (const p0 of parts) {
+      const p = p0.toLowerCase();
+      if (!p) continue;
+      let m;
+      if (SUIT_WORDS[p]) c.suit = SUIT_WORDS[p];
+      else if ((m = p.match(/^(\d+)\s*(?:\/|x|times|per|a|an|every)?\s*(?:a |an |per |\/)?\s*([a-z]+)$/)) && PER_WORDS[m[2]]) c.quota = { n: +m[1], per: PER_WORDS[m[2]] };
+      else if (PER_WORDS[p] && p.length > 2) c.quota = { n: 1, per: PER_WORDS[p] };
+      else if ((m = p.match(/^(?:beef|b)\s*([1-7])$/))) c.beef = +m[1];
+      else if ((m = p.match(/^(?:imm|!)\s*([1-5])$/))) c.imm = +m[1];
+      else if (/^\d+(\s*,\s*\d+)+$/.test(p)) c.amounts = p.split(",").map((x) => +x.trim()).filter((x) => x > 0);
+      else if ((m = p0.match(/^(?:v|variations?)\s*:\s*(.+)$/i))) c.variants = m[1].split(";").map((x) => x.trim()).filter(Boolean);
+      else if ((m = p0.match(/^(?:note|notes)\s*:\s*(.+)$/i))) c.notes = m[1].trim();
+      else if ((m = p.match(/^(?:from|after)\s+(.+)$/)) && readClock(m[1])) c.opensAt = readClock(m[1]);
+      else if ((m = p.match(/^(?:until|before|by)\s+(.+)$/)) && readClock(m[1])) c.closesAt = readClock(m[1]);
+      else bad.push({ line: i + 1, text: p0, why: "didn't understand" });
+    }
+    out.push(c);
+  });
+  return { cards: out, bad };
+}
+/** "Play ___ in open D" × ["I–IV–V", "ii–V–I"] → one line per fill. "___" or "{}" marks the blank. */
+export function seriesLines(template, fills) {
+  const t = String(template || "").trim();
+  const list = String(fills || "").split(/\r?\n|;/).map((x) => x.trim()).filter(Boolean);
+  if (!t || !list.length) return "";
+  return list.map((f) => (/___|\{\}/.test(t) ? t.replace(/___|\{\}/, f) : t + " " + f)).join("\n");
+}
+/** Instructions to paste into any AI chat so its answer drops straight into "Paste cards". */
+export function aiDeckPrompt(topic = "") {
+  return `Make a deck of prompt cards for my habit app${topic ? " about: " + topic : ""}.
+
+Reply with ONLY the cards, one per line, no intro, no numbering, no blank lines. Format:
+Card name | target | suit | options
+
+- Card name: short, starts with a verb when it's a task (e.g. "Wipe the mirror").
+- target: how often, like 1/day, 3/week, 2/month.
+- suit: one of body, home, mind, work.
+- options (only if useful, separated by |): beef 1-7 (how big a job), from 7am / until 11am (time window), v: variation one; variation two, note: a short tip.
+
+Example lines:
+Wipe the mirror | 2/week | home
+Morning pages | 1/day | mind | from 5am | until 11am | beef 3
+Play a ii-V-I in a new key | 1/day | mind | v: start on the 5th; only use triads
+
+Give me 20 to 40 cards.`;
+}

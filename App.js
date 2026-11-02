@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Dimensions, ActivityIndicator, Alert, AppState, KeyboardAvoidingView, Modal, Platform, Pressable,
+  Dimensions, ActivityIndicator, Alert, AppState, KeyboardAvoidingView, Modal, Platform, Pressable, Share,
   ScrollView, StyleSheet, Switch, Text, TextInput, View,
   Animated, PanResponder, Vibration, useWindowDimensions,
 } from "react-native";
@@ -17,7 +17,7 @@ import { ORIGINAL, randomTheme } from "./src/theme";
 import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./src/model";
 import { periodStart, myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
-import { DECK_LIBRARY, deckOf, everydayId, myDecks, deckEmoji, cardEmojis, coverage, filterLive, filtersFor } from "./src/model";
+import { DECK_LIBRARY, deckOf, everydayId, myDecks, deckEmoji, cardEmojis, coverage, filterLive, filtersFor, parseCardList, seriesLines, aiDeckPrompt } from "./src/model";
 import { DAYNAME, fmtMin, perLabel, layoutMap, SUIT_NAMES, MAP_LIBRARY, PER_NAMES, amountText, canPlayAt, describeAccepts, fitsSpots, jitter, live, parseWhen, shapeEdges, shortWhen, spotPos, spotState } from "./src/maps";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
@@ -1155,6 +1155,17 @@ function DeckView({ state, room, me, act, editReq, clearEditReq, onQuick }) {
   const count = (d) => all.filter((c) => deckOf(c, me.id) === d.id).length;
   const cards = all.filter((c) => deckOf(c, me.id) === deck.id).sort((a, b) => a.label.localeCompare(b.label));
   const cov = coverage(all, me.id, state.decks);
+  const [bulk, setBulk] = useState(null);       // "paste" | "series"
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState([]);
+  const [armBulk, setArmBulk] = useState(false);
+  useEffect(() => { setPicking(false); setPicked([]); setArmBulk(false); }, [deck.id]);
+  const bulkSet = (patch, what) => {
+    const ids = picked;
+    if (!ids.length) return;
+    act(async () => { for (const id of ids) { const c = all.find((x) => x.id === id); if (!c) continue; const { coveredBy, ...rest } = c; await S.saveCard(room, me, { ...rest, ...patch }); } }, ids.length + " cards: " + what);
+    if (patch.deck) setPicked([]);
+  };
   const pick = (id) => { setSel(id); setArm(false); };
   const chaos = myChaos(state.players, me.id, state.config.chaos);
   // Opened from the ✎ on a card: jump to its deck and open its editor.
@@ -1196,11 +1207,44 @@ function DeckView({ state, room, me, act, editReq, clearEditReq, onQuick }) {
             }} />
           )}
         </View>
+        <View style={st.row}>
+          <Btn flex primary label="+ Paste cards" onPress={() => setBulk("paste")} />
+          <Btn flex label="Series ___" onPress={() => setBulk("series")} />
+        </View>
+        <View style={[st.row, { justifyContent: "space-between" }]}>
+          <Text style={st.label}>{cards.length} CARDS{picking ? " · " + picked.length + " SELECTED" : ""}</Text>
+          {!!cards.length && <Pressable onPress={() => { setPicking(!picking); setPicked([]); }} hitSlop={8}><Text style={st.link}>{picking ? "Done selecting" : "Select"}</Text></Pressable>}
+        </View>
+        {picking && (
+          <View style={st.panel}>
+            <View style={st.row}>
+              <Btn flex label={picked.length === cards.length ? "None" : "All"} onPress={() => setPicked(picked.length === cards.length ? [] : cards.map((c) => c.id))} />
+              <Btn flex danger={armBulk} disabled={!picked.length} label={armBulk ? "Tap to delete " + picked.length : "Delete"} onPress={() => {
+                if (!armBulk) return setArmBulk(true);
+                const ids = picked; setArmBulk(false); setPicked([]);
+                act(async () => { for (const id of ids) await S.deleteCard(room, id); }, "Deleted " + ids.length + " cards");
+              }} />
+            </View>
+            <Text style={st.label}>SET FOR {picked.length || "THE SELECTED"} CARDS</Text>
+            <View style={st.chips}>{SUITS.map((x) => <Chip key={x} label={SUIT[x] + " " + SUIT_NAMES[x]} on={false} onPress={() => bulkSet({ suit: x }, SUIT_NAMES[x])} />)}</View>
+            <View style={st.chips}>
+              {[[1, "day"], [3, "day"], [1, "week"], [2, "week"], [3, "week"], [1, "month"]].map(([n, per]) => <Chip key={n + per} label={n + "/" + per} on={false} onPress={() => bulkSet({ quota: { n, per }, tempo: 1 }, n + " " + PERIODS[per])} />)}
+            </View>
+            <View style={st.chips}>
+              <Chip label="Switch on" on={false} onPress={() => bulkSet({ active: true }, "on")} />
+              <Chip label="Switch off" on={false} onPress={() => bulkSet({ active: false }, "off")} />
+            </View>
+            <Text style={st.label}>MOVE TO</Text>
+            <View style={st.chips}>{decks.filter((d) => d.id !== deck.id).map((d) => <Chip key={d.id} label={(deckEmoji(d) ? deckEmoji(d) + " " : "") + d.name} on={false} onPress={() => bulkSet({ deck: d.id }, "moved to " + d.name)} />)}</View>
+          </View>
+        )}
         {cards.map((c) => {
           const by = cov.get(c.id), byDeck = by && decks.find((x) => x.id === deckOf(by, me.id));
+          const on = picked.includes(c.id);
           return (
-            <Pressable key={c.id} onPress={() => setEdit({ ...c, coveredBy: by ? (deckEmoji(byDeck) + " " + by.label + " (" + (byDeck?.name || "") + ")").trim() : null })}
-              style={[st.deckRow, (c.active === false || by) && { opacity: 0.45 }, by && { borderStyle: "dashed", borderWidth: 1.5, borderColor: C.line }]}>
+            <Pressable key={c.id} onPress={() => (picking ? setPicked(on ? picked.filter((x) => x !== c.id) : [...picked, c.id]) : setEdit({ ...c, coveredBy: by ? (deckEmoji(byDeck) + " " + by.label + " (" + (byDeck?.name || "") + ")").trim() : null }))}
+              style={[st.deckRow, (c.active === false || by) && !picking && { opacity: 0.45 }, by && { borderStyle: "dashed", borderWidth: 1.5, borderColor: C.line }, on && { borderWidth: 2, borderColor: C.accent, borderStyle: "solid" }]}>
+              {picking && <View style={[st.check, !on && { backgroundColor: "transparent", borderWidth: 1.5, borderColor: C.line }]}>{on && <Text style={st.checkTxt}>✓</Text>}</View>}
               <Text style={{ color: C.suit[c.suit], fontSize: 18, width: 22 }}>{SUIT[c.suit]}</Text>
               <View style={{ flex: 1 }}>
                 <Text style={[st.h3, by && { textDecorationLine: "line-through" }]} numberOfLines={1}>{c.label}</Text>
@@ -1239,6 +1283,7 @@ function DeckView({ state, room, me, act, editReq, clearEditReq, onQuick }) {
           </View>
         </ScrollView>
       </Modal>
+      {!!bulk && <BulkAdd mode={bulk} deck={deck} onClose={() => setBulk(null)} onSave={(list) => { setBulk(null); act(async () => { for (const c of list) await S.saveCard(room, me, { ...c, deck: deck.id }); }, "Added " + list.length + " cards to " + deck.name); }} />}
       <CardEditor card={edit} onClose={() => setEdit(null)} onSave={({ coveredBy, ...c }) => { setEdit(null); act(() => S.saveCard(room, me, c), "Saved " + c.label); }}
         onDelete={(c) => { setEdit(null); act(() => S.deleteCard(room, c.id), "Deleted " + c.label); }} />
     </>
@@ -1570,6 +1615,84 @@ function MapEditor({ map, cards, decks, onClose, onSave }) {
             ))}
           </ScrollView>
         </Modal>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+/* ---------------- many cards at once ---------------- */
+// Paste a list (or an AI's answer), or fill in a series like "Play ___ in open D". Preview, then add.
+const BULK_PERS = [[1, "day"], [3, "day"], [1, "week"], [2, "week"], [1, "month"]];
+function BulkAdd({ mode, deck, onClose, onSave }) {
+  const [tab, setTab] = useState(mode);
+  const [text, setText] = useState("");
+  const [tpl, setTpl] = useState("");
+  const [fills, setFills] = useState("");
+  const [suit, setSuit] = useState("home");
+  const [q, setQ] = useState([1, "week"]);
+  const [prefix, setPrefix] = useState("");
+  const [topic, setTopic] = useState("");
+  const src = tab === "series" ? seriesLines(tpl, fills) : text;
+  const res = useMemo(() => parseCardList(src, { suit, quota: { n: q[0], per: q[1] }, prefix: tab === "paste" ? prefix : "" }), [src, suit, q, prefix, tab]);
+  const share = () => Share.share({ message: aiDeckPrompt(topic.trim()) }).catch(() => {});
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={st.screen} edges={["top", "bottom", "left", "right"]}>
+        <View style={[st.row, { padding: 12, justifyContent: "space-between" }]}>
+          <Btn label="Cancel" onPress={onClose} />
+          <Text style={st.h3} numberOfLines={1}>Add to {deck.name}</Text>
+          <Btn primary disabled={!res.cards.length} label={"Add " + res.cards.length} onPress={() => onSave(res.cards)} />
+        </View>
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
+          <View style={st.chips}>
+            <Chip label="Paste a list" on={tab === "paste"} onPress={() => setTab("paste")} />
+            <Chip label="Series ___" on={tab === "series"} onPress={() => setTab("series")} />
+            <Chip label="Ask your AI" on={tab === "ai"} onPress={() => setTab("ai")} />
+          </View>
+          {tab === "ai" && (
+            <View style={st.panel}>
+              <Text style={[st.note, { textAlign: "left" }]}>1. Say what the deck is about. 2. Send the prompt to ChatGPT, Claude or any AI. 3. Copy its answer and paste it under “Paste a list”.</Text>
+              <Field label="Deck about" value={topic} onChangeText={setTopic} placeholder="cleaning the bathroom and kitchen" />
+              <Btn primary label="Send prompt to your AI…" onPress={share} />
+              <Text style={st.label}>OR COPY IT FROM HERE</Text>
+              <TextInput value={aiDeckPrompt(topic.trim())} editable={false} multiline selectTextOnFocus style={[st.input, { minHeight: 160, textAlignVertical: "top", fontSize: 13 }]} />
+              <Btn label="I have the answer → Paste a list" onPress={() => setTab("paste")} />
+            </View>
+          )}
+          {tab === "paste" && (
+            <>
+              <Field label="One card per line" value={text} onChangeText={setText} placeholder={"Wipe the mirror\nClean the toilet | 2/week\nsquats | 20/day | body | 5,10,20"} multiline />
+              <Text style={[st.note, { textAlign: "left" }]}>After a “|”, add any of: 2/week · body, home, mind or work · 5,10,20 (amounts) · beef 3 · from 7am · until 11am · v: one; two · note: a tip.</Text>
+              <Field label="Start every card with (optional)" value={prefix} onChangeText={setPrefix} placeholder="Play" />
+            </>
+          )}
+          {tab === "series" && (
+            <>
+              <Field label="The card, with ___ for the blank" value={tpl} onChangeText={setTpl} placeholder="Play ___ in open D" />
+              <Field label="Fill the blank with (one per line)" value={fills} onChangeText={setFills} placeholder={"I–IV–V\nii–V–I\nI–vi–IV–V"} multiline />
+            </>
+          )}
+          {tab !== "ai" && (
+            <View style={st.panel}>
+              <Text style={st.label}>UNLESS A LINE SAYS OTHERWISE</Text>
+              <View style={st.chips}>{SUITS.map((x) => <Chip key={x} label={SUIT[x] + " " + SUIT_NAMES[x]} on={suit === x} onPress={() => setSuit(x)} />)}</View>
+              <View style={st.chips}>{BULK_PERS.map(([n, per]) => <Chip key={n + per} label={n + "/" + per} on={q[0] === n && q[1] === per} onPress={() => setQ([n, per])} />)}</View>
+            </View>
+          )}
+          {tab !== "ai" && (
+            <View style={{ gap: 6 }}>
+              <Text style={st.label}>PREVIEW · {res.cards.length} CARDS</Text>
+              {res.bad.map((b, i) => <Text key={"b" + i} style={[st.note, { textAlign: "left", color: C.hot }]}>Line {b.line}: {b.why} “{b.text}” (skipped that part)</Text>)}
+              {res.cards.map((c, i) => (
+                <View key={i} style={st.deckRow}>
+                  <Text style={{ color: C.suit[c.suit], fontSize: 18, width: 22 }}>{SUIT[c.suit]}</Text>
+                  <Text style={[st.h3, { flex: 1 }]} numberOfLines={2}>{c.label}</Text>
+                  <Text style={st.miniMeta}>{c.quota.n}/{c.quota.per}{c.amounts ? " · " + c.amounts.join(",") : ""}{c.beef ? " · b" + c.beef : ""}{c.opensAt ? " · " + fmtTime(hmDate(c.opensAt)) : ""}{c.closesAt ? "–" + fmtTime(hmDate(c.closesAt)) : ""}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </ScrollView>
       </SafeAreaView>
     </Modal>
   );
