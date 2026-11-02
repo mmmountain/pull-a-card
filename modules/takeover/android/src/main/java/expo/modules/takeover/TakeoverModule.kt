@@ -11,8 +11,19 @@ import expo.modules.kotlin.modules.ModuleDefinition
 class TakeoverModule : Module() {
   private val ctx get() = appContext.reactContext ?: throw IllegalStateException("No Android context")
 
+  companion object {
+    @Volatile var live: TakeoverModule? = null
+    /** Tell the app (if it's running) that an alarm action is waiting. */
+    fun ping() { try { live?.sendEvent("onAction", mapOf("waiting" to true)) } catch (_: Throwable) {} }
+  }
+
   override fun definition() = ModuleDefinition {
     Name("Takeover")
+    Events("onAction")
+    OnCreate { live = this@TakeoverModule }
+    OnDestroy { if (live === this@TakeoverModule) live = null }
+    // Alarm-screen actions waiting to be applied, as a JSON array; reading clears them.
+    Function("takeActions") { TakeoverCore.takeActions(ctx) }
 
     Function("schedule") { id: String, at: Double, title: String, body: String, repeatMins: Int, repeats: Int ->
       TakeoverCore.schedule(ctx, id, at.toLong(), title, body, repeatMins, repeats)

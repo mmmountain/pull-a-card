@@ -118,4 +118,20 @@ object TakeoverCore {
   }
 
   fun ids(ctx: Context): List<String> = prefs(ctx).all.keys.toList()
+
+  /* What you did on the alarm screen (play, hold, …). The app applies these the next time its code runs:
+     right away if it's alive in the background, otherwise when you next open it. */
+  private const val ACTIONS = "pullacard_takeover_actions"
+  fun queueAction(ctx: Context, id: String, action: String) {
+    val p = ctx.getSharedPreferences(ACTIONS, Context.MODE_PRIVATE)
+    val q = org.json.JSONArray(p.getString("q", "[]"))
+    q.put(JSONObject().put("id", id).put("action", action).put("at", System.currentTimeMillis()))
+    p.edit().putString("q", q.toString()).apply()
+  }
+  fun takeActions(ctx: Context): String {
+    val p = ctx.getSharedPreferences(ACTIONS, Context.MODE_PRIVATE)
+    val q = p.getString("q", "[]") ?: "[]"
+    p.edit().putString("q", "[]").apply()
+    return q
+  }
 }

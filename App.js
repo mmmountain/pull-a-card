@@ -11,6 +11,7 @@ import * as Updates from "expo-updates";
 import * as S from "./src/store";
 import * as N from "./src/notify";
 import * as M from "./src/multi";
+import * as A from "./src/alarm";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, randomTheme } from "./src/theme";
 import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./src/model";
@@ -187,14 +188,19 @@ function Game({ profile, setProfile }) {
       await syncMaps();
       refresh();
     })();
+    // Swipes and buttons on the full-screen alarm, applied as soon as the app's code is running.
+    const runAlarm = () => A.applyAlarmActions().then((n) => { if (n) { say(n === 1 ? "Done from the alarm" : n + " alarm actions done"); refresh(); } }).catch(() => {});
+    runAlarm();
+    const offAlarm = A.onAlarmAction(runAlarm);
     const sub = Notifications.addNotificationResponseReceivedListener(onResponse);
     const app = AppState.addEventListener("change", (s) => {
       if (s === "active") {
+        runAlarm();
         if (N.consumeShowCard()) setTab("card");
         N.claimDeliveredDeal(room, me).catch(() => {}).then(() => S.claimTakeover(room, me, prefs)).catch(() => {}).then(syncMaps).finally(refresh);
       }
     });
-    return () => { sub.remove(); app.remove(); };
+    return () => { sub.remove(); app.remove(); offAlarm(); };
   }, [room]);
 
   async function syncMaps() {
