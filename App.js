@@ -255,6 +255,7 @@ function Game({ profile, setProfile }) {
     await S.joinRoom(r, me);
     await S.ensureDeck(r, me).catch(() => {});
     await M.syncLibrary([r], me.id).catch(() => {});
+    if (!rooms.includes(r)) await S.setUseDecks(r, me, [everydayId(me.id)]).catch(() => {});
     const p = { ...profile, room: r, rooms: [...new Set([...rooms, r])] };
     await S.saveProfile(p);
     setSwitcher(false);
@@ -1854,9 +1855,9 @@ function makeStyles() { return StyleSheet.create({
   wheelArrow: { width: 34, height: 34, marginBottom: 14, alignItems: "center", justifyContent: "center", borderRadius: 20, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 3 },
   wheelArrowTxt: { fontSize: 20, fontWeight: "800", color: C.ink, marginTop: -2 },
   wheelSlot: { position: "absolute", left: 0, right: 0, top: 14, alignItems: "center" },
-  wheelTxt: { fontFamily: Platform.select({ ios: "Georgia", default: "serif" }), fontSize: 16, fontWeight: "400", fontStyle: "italic", color: C.muted, letterSpacing: 0.3 },
-  wheelTxtOn: { fontSize: 20, fontStyle: "normal", color: C.ink, letterSpacing: 0.5 },
-  wheelCount: { fontSize: 13, fontStyle: "normal", color: C.accent },
+  wheelTxt: { fontFamily: Platform.select({ ios: "HelveticaNeue-Light", default: "sans-serif-light" }), fontSize: 16, fontWeight: "300", color: C.muted, letterSpacing: 0.3 },
+  wheelTxtOn: { fontSize: 20, color: C.ink, letterSpacing: 0.5 },
+  wheelCount: { fontSize: 13, color: C.accent },
   wheelDot: { position: "absolute", top: 4, width: 6, height: 6, marginLeft: -3, borderRadius: 3, backgroundColor: C.accent },
   cardFrame: { position: "absolute", left: 12, right: 12, borderRadius: 14, borderWidth: 2, borderColor: C.line },
   cardBand: { position: "absolute", left: 0, right: 0, top: 0 },

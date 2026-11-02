@@ -219,6 +219,7 @@ export async function addLibraryMap(room, me, key) {
   };
   const id = me.id + ":" + tpl.key;
   await upsert(room, "maps", id, installMap(tpl, me.id, deckId, resolve));
+  await addUseDecks(room, me, [deckId]);
   return id;
 }
 /**
@@ -247,6 +248,13 @@ async function patchMe(room, me, patch) {
 export const setStackPer = (room, me, per) => patchMe(room, me, { stackPer: per });
 /** Which of your decks this table deals from (null = all of them). */
 export const setUseDecks = (room, me, ids) => patchMe(room, me, { useDecks: ids });
+/** Turn decks on at this table (when a map that uses them is put on). */
+export async function addUseDecks(room, me, ids) {
+  const p = await getDoc(room, "players", me.id);
+  if (!p || !Array.isArray(p.useDecks)) return; // already dealing every deck
+  const next = [...new Set([...p.useDecks, ...ids.filter(Boolean)])];
+  if (next.length !== p.useDecks.length) await upsert(room, "players", me.id, { ...p, useDecks: next });
+}
 
 /** Save a map from the editor. New maps become the table's map. Returns its id. */
 export async function saveMap(room, me, mapId, draft) {
@@ -261,6 +269,10 @@ export async function saveMap(room, me, mapId, draft) {
   }
   await upsert(room, "maps", id, { ...(old || {}), ...d, spots, owner: me.id, since: old?.since || new Date().toISOString(), active: old ? old.active : true });
   if (!old) await useMap(room, me, id);
+  // Put on the decks of the cards this map asks for.
+  const cards = await listColl(room, "cards");
+  const want = new Set(Object.values(spots).filter((sp) => sp.accepts?.startsWith("card:")).map((sp) => sp.accepts.slice(5)));
+  await addUseDecks(room, me, cards.filter((c) => want.has(c.id)).map((c) => c.deck || everydayId(me.id)));
   return id;
 }
 
