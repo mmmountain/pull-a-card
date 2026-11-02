@@ -227,7 +227,7 @@ export function placeCard(map, spotId, t, card = {}, now = Date.now()) {
   const sh = m.shapes.find((s) => s.id === sp.shape);
   const entry = { card: t.cardId, label: t.label, suit: t.suit, at: new Date(now).toISOString() };
   if (sh.kind === "pool") {
-    sp.total = (sp.total || 0) + (t.amount ?? 1);
+    sp.total = (sp.total || 0) + (t.amount ?? t.each ?? 1);
     sp.pile = [...(sp.pile || []), entry];
   } else sp.filled = entry;
   spots[spotId] = sp;

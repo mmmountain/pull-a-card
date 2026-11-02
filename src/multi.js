@@ -204,3 +204,17 @@ export function libraryView(libSt, tableSt) {
   const byId = new Map((tableSt?.cards || []).map((c) => [c.id, c]));
   return { ...libSt, cards: libSt.cards.map((c) => { const t = byId.get(c.id); if (!t) return c; const k = {}; for (const f of STATS) if (t[f] !== undefined) k[f] = t[f]; return { ...c, ...k }; }) };
 }
+
+/** One-time: Drink water becomes 24 a day at 125 ml each (3 L), locking at 5 held. */
+export async function waterPlan(meId, rooms) {
+  const lib = libRoom(meId);
+  const st1 = await S.fetchRoom(lib);
+  const p = st1.players.find((x) => x.id === meId);
+  if (!p || p.water24) return false;
+  const c = st1.cards.find((x) => x.id === meId + "-water") || st1.cards.find((x) => /^drink water$/i.test(String(x.label).trim()));
+  if (c) { const { id, ...d } = c; await S.putDoc(lib, "cards", id, { ...d, quota: { n: 24, per: "day" }, each: 125, eachUnit: "ml", lockAt: 5, tempo: 1 }); }
+  const { id: pid, ...pd } = p;
+  await S.putDoc(lib, "players", pid, { ...pd, water24: true });
+  if (c) await syncLibrary(rooms, meId);
+  return !!c;
+}

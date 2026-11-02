@@ -162,7 +162,7 @@ function Game({ profile, setProfile }) {
 
   // Your decks are one library shared by every table; keep the tables' copies in step with it.
   useEffect(() => {
-    (async () => { try { await M.ensureLibrary(me); await M.syncLibrary(rooms, me.id); refresh(); } catch {} })();
+    (async () => { try { await M.ensureLibrary(me); await M.syncLibrary(rooms, me.id); if (await M.waterPlan(me.id, rooms)) say("Drink water: 24 a day, 125 ml each, locks at 5"); refresh(); } catch {} })();
   }, [rooms.join("|")]);
   const libAct = (fn, ok) => act(async () => {
     const mine = (st1) => ({ cards: st1.cards.map((c) => c.id), decks: (st1.decks || []).map((d) => d.id) });
@@ -651,7 +651,7 @@ const fade = (hex, a) => { const h = String(hex).replace("#", ""); const n = par
 function ModeWheel({ mode, onPick, handN, handMore }) {
   const ins = useSafeAreaInsets();
   const W = Dimensions.get("window").width;
-  const RX = W * 0.29, RY = 26;             // the rim: wide and shallow
+  const RX = W * 0.34, RY = 66;             // a big rim seen at a steep angle: side words swing low
   const want = Math.max(0, MODES.findIndex((m) => m[0] === mode));
   const [cur, setCur] = useState(want);     // unbounded, so the wheel always turns the short way
   const [pos, setPos] = useState(want);     // animated position, in thirds of a turn
@@ -688,8 +688,8 @@ function ModeWheel({ mode, onPick, handN, handMore }) {
             const front = (1 + Math.cos(th)) / 2;              // 1 at the top, 0 at the far side
             const on = i === mod3(cur);
             return (
-              <View key={k} style={[st.wheelSlot, { opacity: Math.max(0, front * 1.25 - 0.15), zIndex: Math.round(front * 10),
-                transform: [{ translateX: RX * Math.sin(th) }, { translateY: RY * (1 - Math.cos(th)) }, { rotate: (Math.sin(th) * 14) + "deg" }, { scale: 0.7 + 0.3 * front }] }]}>
+              <View key={k} style={[st.wheelSlot, { opacity: 0.55 + 0.45 * front, zIndex: Math.round(front * 10),
+                transform: [{ translateX: RX * Math.sin(th) }, { translateY: RY * (1 - Math.cos(th)) }, { rotate: (Math.sin(th) * 24) + "deg" }, { scale: 0.82 + 0.18 * front }] }]}>
                 <Pressable onPress={() => !on && go(mod3(i - cur) === 1 ? 1 : -1)} hitSlop={10} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={l}>
                   <Text style={[st.wheelTxt, on && st.wheelTxtOn]}>
                     {l}{k === "hand" ? <Text style={st.wheelCount}> {handN}{handMore > 0 ? "+" + handMore : ""}</Text> : null}
@@ -1266,6 +1266,11 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
         <Text style={[st.note, { textAlign: "left" }]}>{amounts.length ? `Deals add up to exactly ${n} ${c.label || ""} ${PERIODS[c.quota.per]}, spread out. Bigger amounts mean fewer deals.` : `Dealt exactly ${n} time${n === 1 ? "" : "s"} ${PERIODS[c.quota.per]}, spread out.`}</Text>
         <Text style={st.label}>SUIT</Text>
         <View style={st.chips}>{SUITS.map((s) => <Chip key={s} label={SUIT[s] + " " + s} on={c.suit === s} onPress={() => setC({ ...c, suit: s })} />)}</View>
+        <Text style={st.label}>EACH ONE COUNTS AS (FOR MAP POOLS)</Text>
+        <View style={st.row}>
+          <View style={{ flex: 1 }}><Field label="Amount" value={c.each ? String(c.each) : ""} onChangeText={(v) => setC({ ...c, each: parseInt(v.replace(/\D/g, ""), 10) || null })} keyboardType="number-pad" placeholder="125" /></View>
+          <View style={{ flex: 1 }}><Field label="Unit" value={c.eachUnit || ""} onChangeText={(v) => setC({ ...c, eachUnit: v || null })} placeholder="ml" /></View>
+        </View>
         <Text style={st.label}>BEEFINESS</Text>
         <View style={st.chips}>{[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <Chip key={i} label={i ? String(i) : "None"} on={(c.beef || 0) === i} onPress={() => setC({ ...c, beef: i || null })} />)}</View>
         <Text style={[st.note, { textAlign: "left" }]}>How big a lift it is, 1–7. Shows as the big number on the card; leave it at None for no number.</Text>
@@ -1848,7 +1853,7 @@ function makeStyles() { return StyleSheet.create({
   wheel: { position: "absolute", left: 0, right: 0, bottom: 0 },
   wheelArrow: { width: 40, height: 40, marginBottom: 22, alignItems: "center", justifyContent: "center", borderRadius: 20, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 3 },
   wheelArrowTxt: { fontSize: 24, fontWeight: "800", color: C.ink, marginTop: -3 },
-  wheelSlot: { position: "absolute", left: 0, right: 0, top: 18, alignItems: "center" },
+  wheelSlot: { position: "absolute", left: 0, right: 0, top: 4, alignItems: "center" },
   wheelTxt: { fontSize: 14, fontWeight: "700", color: C.muted, letterSpacing: 1.5, textTransform: "uppercase" },
   wheelTxtOn: { fontSize: 16, fontWeight: "800", color: C.ink },
   wheelCount: { fontSize: 12, fontWeight: "800", color: C.accent },
