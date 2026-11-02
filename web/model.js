@@ -165,8 +165,10 @@ export function dealFrom(card, now = Date.now(), rand = Math.random, win = {}) {
     const fits = q.on ? amounts.filter((x) => x <= q.remaining) : amounts;
     amount = fits.length ? fits[Math.floor(rand() * fits.length)] : Math.max(1, q.remaining || Math.min(...amounts));
   }
+  const covers = COVERS.get(card);
   return {
     cardId: card.id,
+    ...(covers?.length ? { covers } : {}),
     base: card.label,
     label: amountLabel(card.label, amount),
     amount,
@@ -281,7 +283,40 @@ export function myDeck(cards, players, meId, decks = null, maps = null) {
   const on = new Set(myDecks(decks, meId).filter((d) => d.active && (!Array.isArray(use) || use.includes(d.id))).map((d) => d.id));
   const need = new Set();
   for (const m of maps || []) if (m.owner === meId && m.active !== false) for (const sp of Object.values(m.spots || {})) if (sp.accepts?.startsWith("card:")) need.add(sp.accepts.slice(5));
-  return mine.filter((c) => on.has(deckOf(c, meId)) || need.has(c.id));
+  const dealt = mine.filter((c) => on.has(deckOf(c, meId)) || need.has(c.id));
+  // Drop cards another deck already covers (two "water" cards from two decks): the covering card is dealt
+  // instead, and it fills map spots meant for the covered one.
+  const cov = coverage(dealt, meId, decks);
+  for (const c of dealt) COVERS.set(c, []);
+  for (const [id, by] of cov) COVERS.get(by)?.push(id);
+  return dealt.filter((c) => !cov.has(c.id));
+}
+
+/* ---------- the same card in two decks ---------- */
+// "Drink water" (Everyday) and "ml water" (Powerlifting) are the same habit. A card's topic is its label
+// without amounts, units and filler words; cards in different decks with the same topic overlap.
+// The card in the higher deck wins: Everyday first, then the rest by name. Set card.keepDup to deal both.
+const FILLER = new Set(["drink", "drinks", "have", "take", "do", "eat", "a", "an", "the", "of", "some", "more", "your", "my",
+  "glass", "glasses", "cup", "cups", "bottle", "bottles", "ml", "l", "oz", "g", "gram", "grams", "mg", "x", "min", "mins", "minute", "minutes", "hour", "hours", "for", "to", "and"]);
+export function cardTopic(label) {
+  const words = String(label || "").toLowerCase().replace(/#/g, " ").replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w && !FILLER.has(w));
+  return [...new Set(words)].sort().join(" ");
+}
+const COVERS = new WeakMap(); // card object → ids of the cards it stands in for (set by myDeck, read by dealFrom)
+/** Map of covered card id → the card covering it, among cards that are on and in active decks. */
+export function coverage(cards, meId, decks) {
+  const ds = myDecks(decks || [], meId);
+  const rank = (c) => { const id = deckOf(c, meId); if (id === everydayId(meId)) return -1; const i = ds.filter((d) => d.id !== everydayId(meId)).sort((a, b) => (a.name || "").localeCompare(b.name || "")).findIndex((d) => d.id === id); return i < 0 ? 999 : i; };
+  const on = cards.filter((c) => c.active !== false && ds.find((d) => d.id === deckOf(c, meId))?.active !== false);
+  const first = new Map(), out = new Map();
+  for (const c of [...on].sort((a, b) => rank(a) - rank(b))) {
+    const t = cardTopic(c.label);
+    if (!t) continue;
+    const by = first.get(t);
+    if (!by) { first.set(t, c); continue; }
+    if (deckOf(by, meId) !== deckOf(c, meId) && !c.keepDup) out.set(c.id, by);
+  }
+  return out;
 }
 export function myChaos(players, meId, fallback = 30) {
   const p = (players || []).find((x) => x.id === meId);

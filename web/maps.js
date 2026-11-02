@@ -180,7 +180,8 @@ export function accepts(spot, card) {
   if (!card) return false;
   if (spot.accepts === "any") return true;
   if (spot.accepts.startsWith("suit:")) return card.suit === spot.accepts.slice(5);
-  return spot.accepts === "card:" + (card.cardId || card.id);
+  // A card standing in for another deck's copy (see coverage in model.js) also fills that card's spots.
+  return spot.accepts === "card:" + (card.cardId || card.id) || (card.covers || []).includes(spot.accepts.slice(5));
 }
 /** open | future | waiting | missed | skipped (before you added the map) | filled | full */
 export function spotState(map, spot, now = Date.now()) {

@@ -16,7 +16,7 @@ import { ORIGINAL, randomTheme } from "./src/theme";
 import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./src/model";
 import { periodStart, myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
-import { DECK_LIBRARY, deckOf, everydayId, myDecks, deckEmoji, cardEmojis } from "./src/model";
+import { DECK_LIBRARY, deckOf, everydayId, myDecks, deckEmoji, cardEmojis, coverage } from "./src/model";
 import { DAYNAME, fmtMin, perLabel, layoutMap, SUIT_NAMES, MAP_LIBRARY, PER_NAMES, amountText, canPlayAt, describeAccepts, fitsSpots, jitter, live, parseWhen, shapeEdges, shortWhen, spotPos, spotState } from "./src/maps";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
@@ -1123,6 +1123,7 @@ function DeckView({ state, room, me, act, editReq, clearEditReq }) {
   const all = myDeck(state.cards, state.players, me.id);
   const count = (d) => all.filter((c) => deckOf(c, me.id) === d.id).length;
   const cards = all.filter((c) => deckOf(c, me.id) === deck.id).sort((a, b) => a.label.localeCompare(b.label));
+  const cov = coverage(all, me.id, state.decks);
   const pick = (id) => { setSel(id); setArm(false); };
   const chaos = myChaos(state.players, me.id, state.config.chaos);
   // Opened from the ✎ on a card: jump to its deck and open its editor.
@@ -1163,13 +1164,20 @@ function DeckView({ state, room, me, act, editReq, clearEditReq }) {
             }} />
           )}
         </View>
-        {cards.map((c) => (
-          <Pressable key={c.id} onPress={() => setEdit(c)} style={[st.deckRow, c.active === false && { opacity: 0.5 }]}>
-            <Text style={{ color: C.suit[c.suit], fontSize: 18, width: 22 }}>{SUIT[c.suit]}</Text>
-            <Text style={[st.h3, { flex: 1 }]} numberOfLines={1}>{c.label}</Text>
-            <Text style={st.miniMeta}>{quotaLabel(c)}{c.beef ? " · " + c.beef : ""}</Text>
-          </Pressable>
-        ))}
+        {cards.map((c) => {
+          const by = cov.get(c.id), byDeck = by && decks.find((x) => x.id === deckOf(by, me.id));
+          return (
+            <Pressable key={c.id} onPress={() => setEdit({ ...c, coveredBy: by ? (deckEmoji(byDeck) + " " + by.label + " (" + (byDeck?.name || "") + ")").trim() : null })}
+              style={[st.deckRow, (c.active === false || by) && { opacity: 0.45 }, by && { borderStyle: "dashed", borderWidth: 1.5, borderColor: C.line }]}>
+              <Text style={{ color: C.suit[c.suit], fontSize: 18, width: 22 }}>{SUIT[c.suit]}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[st.h3, by && { textDecorationLine: "line-through" }]} numberOfLines={1}>{c.label}</Text>
+                {!!by && <Text style={st.miniMeta} numberOfLines={1}>Covered by {deckEmoji(byDeck)} {by.label} · not dealt</Text>}
+              </View>
+              <Text style={st.miniMeta}>{quotaLabel(c)}{c.beef ? " · " + c.beef : ""}</Text>
+            </Pressable>
+          );
+        })}
         <Btn primary label="New card" onPress={() => setEdit({ label: "", suit: "body", imm: 3, active: true, plays: 0, quota: { n: 1, per: "day" }, deck: deck.id })} />
       </View>
       <Modal visible={lib} transparent animationType="slide" onRequestClose={() => setLib(false)}>
@@ -1199,7 +1207,7 @@ function DeckView({ state, room, me, act, editReq, clearEditReq }) {
           </View>
         </ScrollView>
       </Modal>
-      <CardEditor card={edit} onClose={() => setEdit(null)} onSave={(c) => { setEdit(null); act(() => S.saveCard(room, me, c), "Saved " + c.label); }}
+      <CardEditor card={edit} onClose={() => setEdit(null)} onSave={({ coveredBy, ...c }) => { setEdit(null); act(() => S.saveCard(room, me, c), "Saved " + c.label); }}
         onDelete={(c) => { setEdit(null); act(() => S.deleteCard(room, c.id), "Deleted " + c.label); }} />
     </>
   );
@@ -1230,6 +1238,15 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
       <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]} keyboardShouldPersistTaps="handled">
         <Text style={st.h2}>{card.id ? "Edit card" : "New card"}</Text>
         <Field label="Label" value={c.label} onChangeText={(v) => setC({ ...c, label: v })} placeholder="squats" />
+        {(!!card.coveredBy || !!c.keepDup) && (
+          <View style={st.panel}>
+            <View style={[st.row, { justifyContent: "space-between" }]}>
+              <Text style={[st.h3, { flex: 1 }]}>Deal this one too</Text>
+              <Switch value={!!c.keepDup} onValueChange={(v) => setC({ ...c, keepDup: v || undefined })} trackColor={{ true: C.accent }} />
+            </View>
+            <Text style={[st.note, { textAlign: "left" }]}>{card.coveredBy ? `Off: ${card.coveredBy} already covers this, so this card isn't dealt.` : "On: dealt even though another deck has the same card."}</Text>
+          </View>
+        )}
         <Field label="Amounts (optional)" value={amts} onChangeText={setAmts} placeholder="5, 10, 20" keyboardType="numbers-and-punctuation" />
         <Text style={[st.note, { textAlign: "left" }]}>{amounts.length ? `Each deal is one of these: "${amountLabel(c.label || "squats", amounts[0])}". Put # in the label to place the number, like "Drink # glasses".` : "Leave empty to count whole cards."}</Text>
         <Text style={st.label}>HOW OFTEN</Text>

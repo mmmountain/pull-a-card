@@ -15,7 +15,7 @@ const APP_URL = "https://mmmountain.github.io/pull-a-card/";
 type Doc = { room: string; coll: string; id: string; data: Record<string, any> };
 
 // Same picking and quota rules as the apps (CI copies src/model.js next to this file).
-import { dealFrom, hoursSince, markDrawn, pickCard, takeoverActive } from "./model.js";
+import { dealFrom, hoursSince, markDrawn, myDeck, pickCard, takeoverActive } from "./model.js";
 
 const line = (t: any) => `${SUIT[t.suit] || "●"} ${t.label}${t.variant ? " — " + t.variant : ""}`;
 
@@ -48,8 +48,8 @@ Deno.serve(async (req) => {
     const players = get("players").sort((x: any, y: any) => (x.joined || "").localeCompare(y.joined || ""));
     const first = players[0]?.id;
     // Personal decks: only this player's cards (old ownerless cards belong to the first player).
-    const decksOn = new Set(get("decks").filter((d: any) => d.owner === player && d.active === false).map((d: any) => d.id));
-    const cards = get("cards").filter((c: any) => (c.owner || first) === player && !decksOn.has(c.deck || player + ":everyday")), hands = get("hands");
+    // Same rule as the app: this table's decks, cards its map needs, minus cards another deck covers.
+    const cards = myDeck(get("cards"), players, player, get("decks"), get("maps")), hands = get("hands");
     const tables = Object.fromEntries(all.filter((r) => r.coll === "tables").map((r) => [r.id, r.data]));
     const me = players.find((x: any) => x.id === player) as any;
     const chaos = typeof me?.chaos === "number" ? me.chaos : (all.find((r) => r.coll === "config" && r.id === "main")?.data?.chaos ?? 30);
@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
       if (!top0 || top0.empty) {
         const t = dealFrom(urgent, now.getTime(), Math.random, win);
         await upsert(room, "tables", player, t);
-        const { id, ...cd } = urgent as any;
+        const { id, covers: _c1, ...cd } = urgent as any;
         await upsert(room, "cards", id, { ...cd, ...markDrawn(cd, t.drawnAt, t.amount) });
       }
       await send(urgent.label.toUpperCase(), "Play this card to make it stop.", "takeover");
@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
     if (!k) continue;
     const t = dealFrom(k, now.getTime(), Math.random, win);
     await upsert(room, "tables", player, t);
-    const { id, ...cd } = k;
+    const { id, covers: _c2, ...cd } = k as any;
     await upsert(room, "cards", id, { ...cd, ...markDrawn(cd, t.drawnAt, t.amount) });
     await send(line(t), `Turn ${game.turn || 1} · Play, hold, or later`, "deal");
     await upsert(room, "push", player, { ...p, nextAt: new Date(now.getTime() + 2 * 36e5).toISOString() });
