@@ -2,7 +2,7 @@ import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Takeover from "../modules/takeover";
-import { playedToday, hmMinutes, hmDate } from "./model";
+import { playedToday, hmMinutes, hmDate, activeLocks } from "./model";
 import { filtersFor, cardLine, fmtTime, parseLater, pickCard, planChecks, dealFrom, hoursSince, markDrawn, myChaos, myDeck } from "./model";
 const C_ACCENT = "#ff7eb6";
 import * as S from "./store";
@@ -189,6 +189,7 @@ export async function handleResponse(resp) {
       await dismiss();
     } else if (action === "hold") {
       await S.holdCard(room, me, t);
+      await ringIfLocked(room, me);
       await dismiss();
     } else if (action === "later") {
       const at = laterTime(resp.userText);
@@ -257,8 +258,41 @@ export async function scheduleTakeovers(cards, prefs = {}) {
     }
     Takeover.schedule(id, at, c.label.toUpperCase(), `It's ${fmtTime(hmDate(c.takeover))}. Play this card to make it stop.`, 3, 10);
   }
-  for (const id of existing) if (id !== "test" && !wanted.has(id)) Takeover.cancel(id);
+  for (const id of existing) if (id !== "test" && !id.startsWith("lock-") && !wanted.has(id)) Takeover.cancel(id);
 }
+
+/**
+ * Locked (holding lockAt or more of one card, like 5 Drink waters): ring full screen right away,
+ * again every 3 minutes, until you play some and it unlocks. `locks` = [{ cardId, label, count }].
+ * With cancelOthers, alarms for locks that have cleared are stopped.
+ */
+const RUNG_KEY = "pac.lockRung.v1";
+export async function ringLocks(locks, cancelOthers = true) {
+  if (!Takeover) return;
+  const existing = new Set(Takeover.ids());
+  let rung = {};
+  try { rung = JSON.parse((await AsyncStorage.getItem(RUNG_KEY)) || "{}"); } catch {}
+  const wanted = new Set();
+  const now = Date.now();
+  for (const l of locks) {
+    const id = "lock-" + l.cardId;
+    wanted.add(id);
+    if (existing.has(id)) continue;
+    // Just dismissed with "Open the card"? Give you 3 minutes to play some before it rings again.
+    const at = Math.max(now + 1500, (rung[id] || 0) + 3 * 60e3);
+    Takeover.schedule(id, at, l.label.toUpperCase(), `Locked: you're holding ${l.count}. Play some to unlock everything else.`, 3, 20);
+    rung[id] = at;
+  }
+  if (cancelOthers) for (const id of existing) if (id.startsWith("lock-") && !wanted.has(id)) { Takeover.cancel(id); delete rung[id]; }
+  if (cancelOthers) for (const id of Object.keys(rung)) if (!wanted.has(id)) delete rung[id];
+  try { await AsyncStorage.setItem(RUNG_KEY, JSON.stringify(rung)); } catch {}
+}
+const heldLocks = (st1, meId) => activeLocks(st1.cards, st1.hands, meId).filter((l) => l.lockAt);
+/** After a hold from a notification (app closed): ring if that hold just locked you. */
+async function ringIfLocked(room, me) {
+  try { await ringLocks(heldLocks(await S.fetchRoom(room), me.id), false); } catch {}
+}
+export const locksIn = heldLocks;
 
 export function testTakeover() {
   if (!Takeover) return false;

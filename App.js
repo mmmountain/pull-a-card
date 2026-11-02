@@ -233,6 +233,15 @@ function Game({ profile, setProfile }) {
     M.mirrorTop(ctx, room).then(refresh).catch(() => {});
   }, [mirrorKey]);
 
+  // Locked at any of your tables → full-screen alarm until it's cleared.
+  const lockKey = JSON.stringify(ctx.live.map((r) => states[r] ? N.locksIn(states[r], me.id).map((l) => l.cardId + ":" + l.count) : []));
+  useEffect(() => {
+    if (ctx.live.some((r) => !states[r])) return;
+    const all = new Map();
+    for (const r of ctx.live) for (const l of N.locksIn(states[r], me.id)) if (!all.has(l.cardId) || all.get(l.cardId).count < l.count) all.set(l.cardId, l);
+    N.ringLocks([...all.values()]).catch(() => {});
+  }, [lockKey]);
+
   const switchTo = async (r) => {
     setSwitcher(false);
     if (r === room) return;
