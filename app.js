@@ -306,7 +306,7 @@ function mapLibSheet() {
   const have = new Set(myMaps().map((m) => m.key));
   return `<div class="scrim" data-act="close"></div><div class="sheet" role="dialog" aria-label="Add a map"><h2>Add a map</h2>
     <p class="note left">Maps run side by side. Cards you play land on the right spot by themselves; a missed spot gets an X and sends its card to your hand.</p>
-    ${MAP_LIBRARY.map((t) => `<div class="panel"><b>${esc(t.name)} · ${PER_NAMES[t.per].toLowerCase()}</b><p class="note left">${esc(t.about)}</p>
+    ${MAP_LIBRARY.map((t) => `<div class="panel"><b>${esc(t.name)} · ${perLabel(t).toLowerCase()}</b><p class="note left">${esc(t.about)}</p>
       ${t.deckKey !== "everyday" ? `<p class="note left">Adds the ${esc(DECK_LIBRARY.find((d) => d.key === t.deckKey)?.name || "")} deck if you don't have it.</p>` : ""}
       <button class="btn${have.has(t.key) ? "" : " primary"}" ${have.has(t.key) ? "disabled" : `data-mapadd="${t.key}"`}>${have.has(t.key) ? "Added" : "Add " + esc(t.name)}</button></div>`).join("")}</div>`;
 }

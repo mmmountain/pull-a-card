@@ -22,7 +22,7 @@ export function parseWhen(raw) {
   let rest = s;
   const dm = rest.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? (\d{1,2})(st|nd|rd|th)?\b/);
   if (dm) { w.date = { m: MONTHS.indexOf(dm[1]), d: +dm[2] }; rest = rest.replace(dm[0], " "); }
-  const wk = rest.match(/\bweek (\d)\b/);
+  const wk = rest.match(/\bweek (\d{1,2})\b/);
   if (wk) { w.week = +wk[1]; rest = rest.replace(wk[0], " "); }
   const dn = rest.match(/\bday (\d{1,2})\b/);
   if (dn) { w.day = +dn[1]; rest = rest.replace(dn[0], " "); }
@@ -323,6 +323,23 @@ export const MAP_LIBRARY = [
   ]),
 ];
 
+/* The Artist's Way: 84 days. Weekly rings follow the course's weeks, counted from the day you add the map. */
+const AW_THEMES = ["Safety", "Identity", "Power", "Integrity", "Possibility", "Abundance", "Connection", "Strength", "Compassion", "Self-protection", "Autonomy", "Faith"];
+const AW_WEEKS = AW_THEMES.map((_, i) => i + 1);
+MAP_LIBRARY.push(layoutMap(build({ key: "artists-way", name: "The Artist's Way", per: "days", days: 84, deckKey: "artists", W: 1000,
+  about: "Twelve weeks from the day you add it. Morning pages fill a pool toward 84 days; each week has a spot for its chapter, its artist date and its check-in, in order. Week 4 is the no-reading week." }, [
+  [{ kind: "pool", label: "Morning pages", sub: "every day · 84" }, [{ accepts: "card:pages", target: 84, unit: "days" }]],
+  [{ kind: "pool", label: "Exercises", sub: "about 3 a week" }, [{ accepts: "card:task", target: 36, unit: "done" }]],
+  [{ kind: "ring", label: "Chapters", sub: "one theme a week · in order", ordered: true }, AW_WEEKS.map((w) => ({ accepts: "card:chapter", when: "week " + w, label: AW_THEMES[w - 1] }))],
+  [{ kind: "ring", label: "Artist dates", sub: "one a week" }, AW_WEEKS.map((w) => ({ accepts: "card:date", when: "week " + w, label: "Wk " + w }))],
+  [{ kind: "ring", label: "Check-ins", sub: "end of each week" }, AW_WEEKS.map((w) => ({ accepts: "card:checkin", when: "week " + w, label: "Wk " + w }))],
+])));
+{ // Artist dates and check-ins side by side under the chapters ring.
+  const aw = MAP_LIBRARY[MAP_LIBRARY.length - 1], [, , ch, dt, ck] = aw.shapes;
+  for (const [sh, x] of [[dt, 255], [ck, 745]]) Object.assign(sh, { cx: x, cy: ch.cy + ch.ry + 290, rx: 200, ry: 200 });
+  aw.H = dt.cy + 320;
+}
+
 /** A library map made yours: card keys become your card ids. `resolve(key)` returns a card id or null. */
 export function installMap(tpl, ownerId, deckId, resolve, now = Date.now()) {
   const spots = {};
@@ -332,7 +349,9 @@ export function installMap(tpl, ownerId, deckId, resolve, now = Date.now()) {
     spots[id] = { ...sp, accepts: a };
   }
   const { about, deckKey, ...rest } = tpl;
-  return { ...rest, owner: ownerId, deck: deckId, active: true, since: new Date(now).toISOString(), round: roundKey(tpl, now), spots };
+  // A run of N days starts the day you add it.
+  if (rest.per === "days" && !rest.startAt) { const d = new Date(now); rest.startAt = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+  return { ...rest, owner: ownerId, deck: deckId, active: true, since: new Date(now).toISOString(), round: roundKey(rest, now), spots };
 }
 
 /* ---------- the editor's layout ---------- */
