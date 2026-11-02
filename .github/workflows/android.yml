@@ -83,7 +83,7 @@ jobs:
         run: cp src/model.js supabase/functions/dealer/model.js
       - name: Deploy the Supabase dealer
         env: { SUPABASE_ACCESS_TOKEN: "${{ secrets.SUPABASE_ACCESS_TOKEN }}" }
-        run: npx supabase@latest functions deploy dealer --project-ref znhbphohxomvldyvewyj --no-verify-jwt --use-api
+        run: npx supabase@2 functions deploy dealer --project-ref znhbphohxomvldyvewyj --no-verify-jwt --use-api
 
   update:
     needs: setup
