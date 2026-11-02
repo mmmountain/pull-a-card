@@ -5,7 +5,7 @@
 // switched on and either sits in an active deck or is required by one of your active maps.
 // Copies of one pull share a `link` id, so playing, holding or discarding one acts on every copy.
 import * as S from "./store";
-import { deckOf, myDeck, myDecks, newId } from "./model";
+import { cardAllowed, deckOf, filtersFor, myDeck, myDecks, newId } from "./model";
 
 const norm = (s) => String(s || "").trim().toLowerCase();
 const baseOf = (t) => norm(t.base || t.label);
@@ -14,8 +14,9 @@ const baseOf = (t) => norm(t.base || t.label);
 export function applies(state, meId, t) {
   if (!state || !t) return null;
   const want = baseOf(t);
+  const fl = filtersFor(state.players, meId);
   return myDeck(state.cards, state.players, meId, state.decks || [], state.maps || [])
-    .find((c) => norm(c.label) === want && c.active !== false) || null;
+    .find((c) => norm(c.label) === want && c.active !== false && cardAllowed(c, fl, Date.now(), { meId })) || null;
 }
 
 const topAt = (state, meId) => { const t = state?.tables?.[meId]; return t && !t.empty ? t : null; };
@@ -184,9 +185,13 @@ export async function syncLibrary(rooms, meId, removed = { cards: [], decks: [] 
     }
     for (const id of gone.cards) if (T.cards.some((x) => x.id === id)) await S.delDoc(r, "cards", id);
     for (const id of gone.decks) if ((T.decks || []).some((x) => x.id === id)) await S.delDoc(r, "decks", id);
-    if (typeof myLib?.chaos === "number") {
+    {
+      // Your randomness and your filters follow you to every table.
       const p = T.players.find((x) => x.id === meId);
-      if (p && p.chaos !== myLib.chaos) { const { id, ...pd } = p; await S.putDoc(r, "players", id, { ...pd, chaos: myLib.chaos }); }
+      const want = { ...(typeof myLib?.chaos === "number" ? { chaos: myLib.chaos } : {}), myFilters: myLib?.filters || [] };
+      if (p && (want.chaos !== undefined && p.chaos !== want.chaos || JSON.stringify(p.myFilters || []) !== JSON.stringify(want.myFilters))) {
+        const { id, ...pd } = p; await S.putDoc(r, "players", id, { ...pd, ...want });
+      }
     }
   }
 }
@@ -217,4 +222,16 @@ export async function waterPlan(meId, rooms) {
   await S.putDoc(lib, "players", pid, { ...pd, water24: true });
   if (c) await syncLibrary(rooms, meId);
   return !!c;
+}
+
+/** One-time: Morning pages only in the morning (5 to 11 AM). */
+export async function pagesPlan(meId, rooms) {
+  const lib = libRoom(meId);
+  const st1 = await S.fetchRoom(lib);
+  const c = st1.cards.find((x) => /^morning pages$/i.test(String(x.label).trim()) && !x.closesAt);
+  if (!c) return false;
+  const { id, ...d } = c;
+  await S.putDoc(lib, "cards", id, { ...d, opensAt: d.opensAt || "05:00", closesAt: "11:00" });
+  await syncLibrary(rooms, meId);
+  return true;
 }

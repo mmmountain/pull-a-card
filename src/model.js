@@ -25,7 +25,10 @@ export function ago(ts, now = Date.now()) {
 /** Same weighting as the web page: overdue × immediacy, flattened by chaos. */
 export function pickCard(cards, excludeIds, chaos, now = Date.now(), rand = Math.random, win = {}) {
   const ex = new Set(excludeIds);
-  const pool = cards.filter((c) => c.active !== false && !ex.has(c.id) && quotaState(c, now, win).open && !notOpenYet(c, now, win) && !(win.plays && bufferBlock(c, win.plays, win.meId, now)));
+  // Scheduled deals stop while a "No notifications" block is on. Takeover cards (Go to bed) ignore filters.
+  if (win.onlyDue && notifyBlocked(win.filters, now, win)) return null;
+  const pool = cards.filter((c) => c.active !== false && !ex.has(c.id) && quotaState(c, now, win).open && !notOpenYet(c, now, win) && !closedNow(c, now, win)
+    && !(win.plays && bufferBlock(c, win.plays, win.meId, now)) && (takeoverActive(c, now, win) || cardAllowed(c, win.filters, now, win)));
   if (!pool.length) return null;
   const urgent = pool.find((c) => takeoverActive(c, now, win));
   if (urgent) return urgent;
@@ -452,6 +455,46 @@ function localMinutes(now, win = {}) {
 export function notOpenYet(card, now = Date.now(), win = {}) {
   return !!card.opensAt && localMinutes(now, win) < hmMinutes(card.opensAt);
 }
+/** Past its "deal until" time today (Morning pages: until 11 AM). */
+export function closedNow(card, now = Date.now(), win = {}) {
+  return !!card.closesAt && localMinutes(now, win) >= hmMinutes(card.closesAt);
+}
+
+/* ---------- time blocks & filters ---------- */
+// A filter says what can be dealt: "No <thing>" or "Only <thing>", for a suit, a deck, one card,
+// or (No only) notifications. Each runs always, until a time ("for now"), or on a weekly schedule.
+//   { id, on, mode: "no"|"only", what: "notify"|"suit:body"|"deck:<id>"|"card:<id>",
+//     when: { kind: "always" } | { kind: "until", at } | { kind: "sched", days: [0-6] | null, from: "HH:MM", to: "HH:MM" } }
+// Yours (Me page) are copied to every table as player.myFilters; a table's own are player.filters.
+export function filterLive(f, now = Date.now(), win = {}) {
+  if (!f || f.on === false) return false;
+  const w = f.when || { kind: "always" };
+  if (w.kind === "until") return now < Date.parse(w.at);
+  if (w.kind !== "sched") return true;
+  const d = new Date(now + tzOffsetMs(now, win.tz));
+  const m = d.getUTCHours() * 60 + d.getUTCMinutes(), day = d.getUTCDay();
+  const a = hmMinutes(w.from || "00:00"), b = hmMinutes(w.to || "00:00");
+  const okDay = (x) => !w.days || !w.days.length || w.days.includes(x);
+  if (a < b) return m >= a && m < b && okDay(day);
+  return (m >= a && okDay(day)) || (m < b && okDay((day + 6) % 7)); // overnight, e.g. 10 PM to 7 AM
+}
+export function filtersFor(players, meId) {
+  const p = (players || []).find((x) => x.id === meId) || {};
+  return [...(p.myFilters || []), ...(p.filters || [])];
+}
+function filterHits(what, c, meId) {
+  if (what.startsWith("suit:")) return c.suit === what.slice(5);
+  if (what.startsWith("deck:")) return deckOf(c, meId) === what.slice(5);
+  if (what.startsWith("card:")) return c.id === what.slice(5) || c.cardId === what.slice(5);
+  return false;
+}
+export function cardAllowed(c, filters, now = Date.now(), win = {}) {
+  const live = (filters || []).filter((f) => f.what !== "notify" && filterLive(f, now, win));
+  if (live.some((f) => f.mode === "no" && filterHits(f.what, c, win.meId))) return false;
+  const only = live.filter((f) => f.mode === "only");
+  return !only.length || only.some((f) => filterHits(f.what, c, win.meId));
+}
+export const notifyBlocked = (filters, now = Date.now(), win = {}) => (filters || []).some((f) => f.what === "notify" && f.mode === "no" && filterLive(f, now, win));
 /** Past its takeover time today and still owed: it's the only card you can play. */
 export function takeoverActive(card, now = Date.now(), win = {}) {
   return !!card.takeover && card.active !== false && localMinutes(now, win) >= hmMinutes(card.takeover) && !playedToday(card, now, win);
@@ -538,7 +581,7 @@ export const DECK_LIBRARY = [
     name: "The Artist's Way",
     about: "Julia Cameron's 12-week creativity course: three longhand pages every morning, a solo artist date each week, the week's chapter and exercises, and a check-in.",
     cards: [
-      { key: "pages", label: "Morning pages", variants: ["Three pages, longhand, no rereading", "Three pages: whatever's on your mind", "Three pages before anything else"], suit: "mind", imm: 4, beef: 3, quota: { n: 1, per: "day" } },
+      { key: "pages", label: "Morning pages", variants: ["Three pages, longhand, no rereading", "Three pages: whatever's on your mind", "Three pages before anything else"], suit: "mind", imm: 4, beef: 3, quota: { n: 1, per: "day" }, opensAt: "05:00", closesAt: "11:00" },
       { key: "date", label: "Artist date", variants: ["An hour or two, alone, somewhere that delights you", "Go somewhere new, by yourself", "Fill the well: wander, look, listen"], suit: "mind", imm: 2, beef: 4, quota: { n: 1, per: "week" } },
       { key: "chapter", label: "Read this week's chapter", suit: "work", imm: 2, beef: 2, quota: { n: 1, per: "week" } },
       { key: "task", label: "Do one of this week's exercises", suit: "work", imm: 2, beef: 2, quota: { n: 3, per: "week" } },

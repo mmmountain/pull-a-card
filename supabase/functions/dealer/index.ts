@@ -15,7 +15,7 @@ const APP_URL = "https://mmmountain.github.io/pull-a-card/";
 type Doc = { room: string; coll: string; id: string; data: Record<string, any> };
 
 // Same picking and quota rules as the apps (CI copies src/model.js next to this file).
-import { dealFrom, hoursSince, markDrawn, myDeck, pickCard, takeoverActive } from "./model.js";
+import { dealFrom, filtersFor, hoursSince, markDrawn, myDeck, pickCard, takeoverActive } from "./model.js";
 
 const line = (t: any) => `${SUIT[t.suit] || "●"} ${t.label}${t.variant ? " — " + t.variant : ""}`;
 
@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
 
     // Deals: check every run, deal only when a card is behind its target.
     if (p.prefs?.notify === false) continue;
-    const win = { ...(p.prefs || {}), tz, onlyDue: true, plays: get("plays"), meId: player };
+    const win = { ...(p.prefs || {}), tz, onlyDue: true, plays: get("plays"), meId: player, filters: filtersFor(players, player) };
     // Takeover cards (Go to bed): past their time and still unplayed → nag every run (every 10 minutes).
     const urgent = cards.find((c: any) => takeoverActive(c, now.getTime(), win));
     if (urgent) {

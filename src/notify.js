@@ -3,7 +3,7 @@ import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Takeover from "../modules/takeover";
 import { playedToday, hmMinutes, hmDate } from "./model";
-import { cardLine, fmtTime, parseLater, pickCard, planChecks, dealFrom, hoursSince, markDrawn, myChaos, myDeck } from "./model";
+import { filtersFor, cardLine, fmtTime, parseLater, pickCard, planChecks, dealFrom, hoursSince, markDrawn, myChaos, myDeck } from "./model";
 const C_ACCENT = "#ff7eb6";
 import * as S from "./store";
 
@@ -80,7 +80,7 @@ export async function rescheduleDeals(room, me, prefs, state) {
   await cancelKind("deal");
   if (!prefs.notify || !state) return [];
   const chaos = myChaos(state.players, me.id, state.config?.chaos ?? 30);
-  const win = { startHour: prefs.startHour, endHour: prefs.endHour, onlyDue: true, plays: state.plays, meId: me.id };
+  const win = { startHour: prefs.startHour, endHour: prefs.endHour, onlyDue: true, plays: state.plays, meId: me.id, filters: filtersFor(state.players, me.id) };
   const cards = myDeck(state.cards, state.players, me.id, state.decks || [], state.maps || []).map((c) => ({ ...c }));
   await scheduleTakeovers(cards, prefs);
   const up = state.tables[me.id];

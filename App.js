@@ -16,7 +16,7 @@ import { ORIGINAL, randomTheme } from "./src/theme";
 import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./src/model";
 import { periodStart, myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
-import { DECK_LIBRARY, deckOf, everydayId, myDecks, deckEmoji, cardEmojis, coverage } from "./src/model";
+import { DECK_LIBRARY, deckOf, everydayId, myDecks, deckEmoji, cardEmojis, coverage, filterLive, filtersFor } from "./src/model";
 import { DAYNAME, fmtMin, perLabel, layoutMap, SUIT_NAMES, MAP_LIBRARY, PER_NAMES, amountText, canPlayAt, describeAccepts, fitsSpots, jitter, live, parseWhen, shapeEdges, shortWhen, spotPos, spotState } from "./src/maps";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
@@ -162,7 +162,7 @@ function Game({ profile, setProfile }) {
 
   // Your decks are one library shared by every table; keep the tables' copies in step with it.
   useEffect(() => {
-    (async () => { try { await M.ensureLibrary(me); await M.syncLibrary(rooms, me.id); if (await M.waterPlan(me.id, rooms)) say("Drink water: 24 a day, 125 ml each, locks at 5"); refresh(); } catch {} })();
+    (async () => { try { await M.ensureLibrary(me); await M.syncLibrary(rooms, me.id); if (await M.waterPlan(me.id, rooms)) say("Drink water: 24 a day, 125 ml each, locks at 5"); await M.pagesPlan(me.id, rooms); refresh(); } catch {} })();
   }, [rooms.join("|")]);
   const libAct = (fn, ok) => act(async () => {
     const mine = (st1) => ({ cards: st1.cards.map((c) => c.id), decks: (st1.decks || []).map((d) => d.id) });
@@ -215,7 +215,7 @@ function Game({ profile, setProfile }) {
   const planKey = useMemo(() => state && JSON.stringify([
     myDeck(state.cards, state.players, me.id).map((c) => [c.id, c.label, c.every, c.imm, c.active, c.quota, c.amounts, (c.drawLog || []).length, c.deck]),
     (state.decks || []).map((d) => [d.id, d.active]),
-    myChaos(state.players, me.id, state.config.chaos), prefs, state.hands.length, state.plays.length, paused.includes(room),
+    myChaos(state.players, me.id, state.config.chaos), prefs, state.hands.length, state.plays.length, paused.includes(room), filtersFor(state.players, me.id),
   ]), [state, profile.prefs, profile.paused]);
   useEffect(() => {
     if (!state) return;
@@ -316,7 +316,8 @@ function Game({ profile, setProfile }) {
         {section === "play" && tab === "hand" && <HandView ctx={ctx} state={state} room={room} me={me} act={act} focusHand={focusHand} />}
         {section === "play" && tab === "table" && <TableTab ctx={ctx} onPickTable={switchTo} openTables={() => setSwitcher(true)} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
         {section === "decks" && (states[lib] ? <DeckView state={M.libraryView(states[lib], state)} room={lib} me={me} act={libAct} editReq={editReq} clearEditReq={() => setEditReq(null)} /> : <ActivityIndicator color={C.accent} />)}
-        {section === "me" && <MeView part="me" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} openSwitcher={() => setSwitcher(true)} onLeave={() => leaveTable(room)} />}
+        {section === "me" && <MeView part="me" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} openSwitcher={() => setSwitcher(true)} onLeave={() => leaveTable(room)}
+          libSt={states[lib]} filters={states[lib]?.players.find((p) => p.id === me.id)?.filters || []} onFilters={(list) => libAct(() => S.setFilters(lib, me, list), "Filters saved")} />}
         {section === "settings" && <MeView part="settings" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
       </ScrollView>)}
       {section === "play" && <ModeWheel mode={tab} onPick={setTab} handN={hereN} handMore={groups.length - hereN} />}
@@ -750,6 +751,7 @@ function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, set
   const [lib, setLib] = useState(false);
   const [mapMenu, setMapMenu] = useState(false);
   const [editing, setEditing] = useState(null);   // {} = new map, or the map being edited
+  const [showFilters, setShowFilters] = useState(false);
   const cur = maps.find((m) => m.active !== false) || null;
   const meP = state.players.find((p) => p.id === me.id) || {};
   const per = meP.stackPer || "day";
@@ -785,6 +787,15 @@ function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, set
         <View style={[st.chips, { justifyContent: "center" }]}>
           {decks.map((d) => <Chip key={d.id} label={(deckEmoji(d) ? deckEmoji(d) + " " : "") + d.name + (d.active ? "" : " (off)")} on={usesDeck(d) && d.active} onPress={() => toggleDeck(d)} />)}
         </View>
+        <Pressable onPress={() => setShowFilters(!showFilters)} hitSlop={8} style={{ alignSelf: "center" }}>
+          <Text style={st.link}>This table's filters{(meP.filters || []).length ? " (" + meP.filters.filter((f) => filterLive(f)).length + " on)" : ""} {showFilters ? "▴" : "▾"}</Text>
+        </Pressable>
+        {showFilters && (
+          <View style={st.panel}>
+            <FilterList filters={meP.filters || []} onChange={(list) => act(() => S.setFilters(room, me, list), "Table filters saved")} libSt={libSt || state} meId={me.id} />
+            {!!(meP.myFilters || []).filter((f) => filterLive(f)).length && <Text style={[st.note, { textAlign: "left" }]}>Your own filters from the Me page also apply here.</Text>}
+          </View>
+        )}
       </View>
       {cur ? <MapTable key={cur.id} ctx={ctx} m0={cur} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} onRemoved={() => {}} onEdit={() => setEditing(cur)} />
         : <TableView state={state} me={me} per={per} />}
@@ -1280,6 +1291,7 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
         <Text style={[st.note, { textAlign: "left" }]}>4 and 5 ring louder and show over the lock screen.</Text>
         <Text style={st.label}>TIMING (OPTIONAL)</Text>
         <TimeField label="Can be dealt from" value={c.opensAt} onChange={(v) => setC({ ...c, opensAt: v })} placeholder="9:30pm" />
+        <TimeField label="Deal until" value={c.closesAt} onChange={(v) => setC({ ...c, closesAt: v })} placeholder="11am" />
         <TimeField label="Takes over the screen at" value={c.takeover} onChange={(v) => setC({ ...c, takeover: v })} placeholder="10:30pm" />
         <Text style={[st.note, { textAlign: "left" }]}>{c.takeover ? `From ${fmtTime(hmDate(c.takeover))} until you play it, it's the only card you can play and it rings full screen every few minutes.` : "Leave empty for a normal card."}</Text>
         <Text style={st.label}>WAIT BETWEEN PLAYS</Text>
@@ -1305,7 +1317,7 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
 }
 
 /* ---------------- me / settings ---------------- */
-function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitcher, onLeave }) {
+function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitcher, onLeave, filters, onFilters, libSt }) {
   const [plan, setPlan] = useState([]);
   useEffect(() => {
     Notifications.getAllScheduledNotificationsAsync().then((all) => {
@@ -1327,6 +1339,10 @@ function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitc
         <Text style={[st.note, { textAlign: "left" }]}>Sitting at {rooms.length} {rooms.length === 1 ? "table" : "tables"}: {rooms.join(", ")}.</Text>
         <Text style={[st.note, { textAlign: "left" }]}>Friends join a table by entering the same table name.</Text>
         <Btn label="Switch or add tables" onPress={openSwitcher} />
+      </View>
+      <View style={st.panel}>
+        <Text style={st.label}>TIME BLOCKS & FILTERS · EVERY TABLE</Text>
+        <FilterList filters={filters} onChange={onFilters} libSt={libSt} meId={profile.me.id} allowNotify />
       </View>
       <Btn label={"Leave “" + profile.room + "”"} onPress={onLeave} />
     </>
@@ -1527,6 +1543,120 @@ function MapEditor({ map, cards, decks, onClose, onSave }) {
           </ScrollView>
         </Modal>
       </SafeAreaView>
+    </Modal>
+  );
+}
+
+/* ---------------- time blocks & filters ---------------- */
+// "No" or "Only", like ordering a burger: no onions, only onions. Each suit gets quick No / Only buttons
+// that stay on; "+ Add" covers decks, single cards, notifications, "for now" and schedules.
+const FOR_NOW = [[60, "1 hour"], [180, "3 hours"], ["today", "Rest of today"]];
+function whenText(w) {
+  if (!w || w.kind === "always") return "Always";
+  if (w.kind === "until") return Date.parse(w.at) > Date.now() ? "Until " + fmtTime(new Date(w.at)) : "Ended";
+  const days = !w.days || !w.days.length || w.days.length === 7 ? "Every day" : w.days.join() === "1,2,3,4,5" ? "Weekdays" : w.days.join() === "0,6" || w.days.join() === "6,0" ? "Weekends" : w.days.map((d) => DAYNAME[d]).join(" ");
+  return `${days} · ${fmtTime(hmDate(w.from || "00:00"))}–${fmtTime(hmDate(w.to || "00:00"))}`;
+}
+function FilterList({ filters, onChange, libSt, meId, allowNotify }) {
+  const [adding, setAdding] = useState(false);
+  const decks = myDecks(libSt?.decks || [], meId);
+  const cards = myDeck(libSt?.cards || [], libSt?.players || [], meId);
+  const whatText = (what) => what === "notify" ? "notifications" : what.startsWith("suit:") ? SUIT[what.slice(5)] + " " + SUIT_NAMES[what.slice(5)].toLowerCase() + " cards"
+    : what.startsWith("deck:") ? (deckEmoji(decks.find((d) => d.id === what.slice(5))) + " " + (decks.find((d) => d.id === what.slice(5))?.name || "a deck")).trim()
+    : cards.find((c) => c.id === what.slice(5))?.label || "a card";
+  const quick = (mode, what) => {
+    const hit = filters.find((f) => f.mode === mode && f.what === what && (!f.when || f.when.kind === "always"));
+    if (hit) return onChange(filters.filter((f) => f !== hit));
+    onChange([...filters.filter((f) => !(f.what === what && (!f.when || f.when.kind === "always"))), { id: newId(), on: true, mode, what, when: { kind: "always" } }]);
+  };
+  const isOn = (mode, what) => filters.some((f) => f.mode === mode && f.what === what && (!f.when || f.when.kind === "always") && f.on !== false);
+  return (
+    <View style={{ gap: 10 }}>
+      {allowNotify && (
+        <View style={st.row}>
+          <Btn flex label="🔕 No notifications · 1 hour" onPress={() => onChange([...filters, { id: newId(), on: true, mode: "no", what: "notify", when: { kind: "until", at: new Date(Date.now() + 36e5).toISOString() } }])} />
+        </View>
+      )}
+      {SUITS.map((x) => (
+        <View key={x} style={[st.row, { gap: 8 }]}>
+          <Text style={[st.h3, { flex: 1 }]}><Text style={{ color: C.suit[x] }}>{SUIT[x]}</Text> {SUIT_NAMES[x]}</Text>
+          <Chip label="No" on={isOn("no", "suit:" + x)} onPress={() => quick("no", "suit:" + x)} />
+          <Chip label="Only" on={isOn("only", "suit:" + x)} onPress={() => quick("only", "suit:" + x)} />
+        </View>
+      ))}
+      {filters.filter((f) => !(f.what.startsWith("suit:") && (!f.when || f.when.kind === "always"))).map((f) => {
+        const live = filterLive(f);
+        return (
+          <View key={f.id} style={[st.filterRow, !live && { opacity: 0.5 }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={st.h3}>{f.mode === "no" ? "No " : "Only "}{whatText(f.what)}</Text>
+              <Text style={st.miniMeta}>{whenText(f.when)}{f.on !== false && !live && f.when?.kind === "sched" ? " · not now" : ""}</Text>
+            </View>
+            <Switch value={f.on !== false} onValueChange={(v) => onChange(filters.map((x) => (x.id === f.id ? { ...x, on: v } : x)))} trackColor={{ true: C.accent }} />
+            <Pressable onPress={() => onChange(filters.filter((x) => x.id !== f.id))} hitSlop={10} accessibilityLabel="Remove filter"><Text style={[st.h3, { color: C.muted, paddingHorizontal: 6 }]}>✕</Text></Pressable>
+          </View>
+        );
+      })}
+      <Btn label="+ Add a filter or time block" onPress={() => setAdding(true)} />
+      {adding && <FilterSheet allowNotify={allowNotify} decks={decks} cards={cards} onClose={() => setAdding(false)} onAdd={(f) => { setAdding(false); onChange([...filters, f]); }} />}
+    </View>
+  );
+}
+function FilterSheet({ allowNotify, decks, cards, onClose, onAdd }) {
+  const [mode, setMode] = useState("no");
+  const [what, setWhat] = useState(allowNotify ? "notify" : "suit:body");
+  const [kind, setKind] = useState("sched");
+  const [dur, setDur] = useState(60);
+  const [days, setDays] = useState([]);
+  const [from, setFrom] = useState("22:00");
+  const [to, setTo] = useState("07:00");
+  const [cardQ, setCardQ] = useState("");
+  const build = () => {
+    let when = { kind: "always" };
+    if (kind === "now") { const at = dur === "today" ? (() => { const d = new Date(); d.setHours(23, 59, 0, 0); return d; })() : new Date(Date.now() + dur * 6e4); when = { kind: "until", at: at.toISOString() }; }
+    if (kind === "sched") when = { kind: "sched", days: days.length ? days : null, from, to };
+    onAdd({ id: newId(), on: true, mode: what === "notify" ? "no" : mode, what, when });
+  };
+  const shown = cards.filter((c) => !cardQ.trim() || c.label.toLowerCase().includes(cardQ.trim().toLowerCase())).sort((a, b) => a.label.localeCompare(b.label)).slice(0, 30);
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={st.scrim} onPress={onClose} />
+      <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]} keyboardShouldPersistTaps="handled">
+        <Text style={st.h2}>New filter</Text>
+        <View style={st.chips}>
+          <Chip label="No" on={mode === "no" || what === "notify"} onPress={() => setMode("no")} />
+          <Chip label="Only" on={mode === "only" && what !== "notify"} onPress={() => { setMode("only"); if (what === "notify") setWhat("suit:body"); }} />
+        </View>
+        <Text style={st.label}>WHAT</Text>
+        <View style={st.chips}>
+          {allowNotify && mode === "no" && <Chip label="🔕 Notifications" on={what === "notify"} onPress={() => setWhat("notify")} />}
+          {SUITS.map((x) => <Chip key={x} label={SUIT[x] + " " + SUIT_NAMES[x]} on={what === "suit:" + x} onPress={() => setWhat("suit:" + x)} />)}
+          {decks.map((d) => <Chip key={d.id} label={(deckEmoji(d) ? deckEmoji(d) + " " : "") + d.name} on={what === "deck:" + d.id} onPress={() => setWhat("deck:" + d.id)} />)}
+        </View>
+        <Field label="Or one card" value={cardQ} onChangeText={setCardQ} placeholder="Search your cards" />
+        {!!cardQ.trim() && <View style={st.chips}>{shown.map((c) => <Chip key={c.id} label={c.label} on={what === "card:" + c.id} onPress={() => setWhat("card:" + c.id)} />)}</View>}
+        <Text style={st.label}>WHEN</Text>
+        <View style={st.chips}>
+          <Chip label="On a schedule" on={kind === "sched"} onPress={() => setKind("sched")} />
+          <Chip label="For now" on={kind === "now"} onPress={() => setKind("now")} />
+          <Chip label="Always" on={kind === "always"} onPress={() => setKind("always")} />
+        </View>
+        {kind === "now" && <View style={st.chips}>{FOR_NOW.map(([v, l]) => <Chip key={l} label={l} on={dur === v} onPress={() => setDur(v)} />)}</View>}
+        {kind === "sched" && (
+          <>
+            <View style={st.chips}>
+              <Chip label="Every day" on={!days.length} onPress={() => setDays([])} />
+              {[1, 2, 3, 4, 5, 6, 0].map((d) => <Chip key={d} label={DAYNAME[d]} on={days.includes(d)} onPress={() => setDays(days.includes(d) ? days.filter((x) => x !== d) : [...days, d])} />)}
+            </View>
+            <View style={st.row}>
+              <View style={{ flex: 1 }}><TimeField label="From" value={from} onChange={(v) => setFrom(v || "00:00")} placeholder="10pm" /></View>
+              <View style={{ flex: 1 }}><TimeField label="To" value={to} onChange={(v) => setTo(v || "00:00")} placeholder="7am" /></View>
+            </View>
+            <Text style={[st.note, { textAlign: "left" }]}>Can run overnight, like 10 PM to 7 AM.</Text>
+          </>
+        )}
+        <Btn primary label="Add filter" onPress={build} />
+      </ScrollView>
     </Modal>
   );
 }
@@ -1872,6 +2002,7 @@ function makeStyles() { return StyleSheet.create({
   helpTxt: { fontSize: 20, fontWeight: "800", color: C.ink },
   spotRow: { gap: 8, padding: 10, borderRadius: 12, backgroundColor: C.paper },
   pickBtn: { minHeight: 44, justifyContent: "center", paddingHorizontal: 12, borderRadius: 10, borderWidth: 1.5, borderColor: C.line },
+  filterRow: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: 12, backgroundColor: C.paper },
   deckLogo: { position: "absolute", flexDirection: "row", gap: 2, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1.5, backgroundColor: C.paper },
   deckLogoTxt: { fontSize: 22 },
   emojiCell: { width: 44, height: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.paper, borderWidth: 2, borderColor: "transparent" },

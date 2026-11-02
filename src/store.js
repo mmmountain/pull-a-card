@@ -3,7 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config";
 import { MAP_LIBRARY, canPlayAt, fitsSpots, installMap, live, newlyMissed, placeCard } from "./maps";
-import { DECK_LIBRARY, everydayId, myDecks, SEED_CARDS, BEDTIME_CARD, takeoverActive, nudgedTempo, holdReminder, bufferBlock, bufferMessage, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
+import { filtersFor, DECK_LIBRARY, everydayId, myDecks, SEED_CARDS, BEDTIME_CARD, takeoverActive, nudgedTempo, holdReminder, bufferBlock, bufferMessage, activeLocks, canPlay, dealFrom, lockMessage, markDrawn, myChaos, myDeck, newId, nextTurn, pickCard } from "./model";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -141,7 +141,7 @@ export async function draw(room, me, win = {}) {
   const [cards, hands, tables, players, plays, decks, maps] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), listColl(room, "tables"), listColl(room, "players"), listColl(room, "plays"), listColl(room, "decks"), listColl(room, "maps")]);
   const up = tables.find((t) => t.id === me.id);
   const busy = up && !up.empty ? [up.cardId] : [];
-  const k = pickCard(myDeck(cards, players, me.id, decks, maps), busy, myChaos(players, me.id), Date.now(), Math.random, { ...win, plays, meId: me.id });
+  const k = pickCard(myDeck(cards, players, me.id, decks, maps), busy, myChaos(players, me.id), Date.now(), Math.random, { ...win, plays, meId: me.id, filters: filtersFor(players, me.id) });
   if (!k) return null;
   const t = dealFrom(k, Date.now(), Math.random, win);
   await upsert(room, "tables", me.id, t);
@@ -248,6 +248,8 @@ async function patchMe(room, me, patch) {
 export const setStackPer = (room, me, per) => patchMe(room, me, { stackPer: per });
 /** Which of your decks this table deals from (null = all of them). */
 export const setUseDecks = (room, me, ids) => patchMe(room, me, { useDecks: ids });
+/** Save a list of filters: yours (in your library room) or this table's. */
+export const setFilters = (room, me, list) => patchMe(room, me, { filters: list });
 /** Turn decks on at this table (when a map that uses them is put on). */
 export async function addUseDecks(room, me, ids) {
   const p = await getDoc(room, "players", me.id);
