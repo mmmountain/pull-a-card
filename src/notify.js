@@ -261,7 +261,7 @@ export async function scheduleTakeovers(cards, prefs = {}) {
     }
     Takeover.schedule(id, at, c.label.toUpperCase(), `It's ${fmtTime(hmDate(c.takeover))}. Play this card to make it stop.`, 3, 10);
   }
-  for (const id of existing) if (id !== "test" && !id.startsWith("lock-") && !id.startsWith("deal-") && !wanted.has(id)) Takeover.cancel(id);
+  for (const id of existing) if (id !== "test" && !id.startsWith("lock-") && !id.startsWith("deal-") && id !== "qp-idle" && !wanted.has(id)) Takeover.cancel(id);
 }
 
 /**
@@ -307,3 +307,10 @@ export const openFullScreenSettings = () => Takeover?.openFullScreenSettings();
 export const canDrawOver = () => (Takeover?.canDrawOverOtherApps ? Takeover.canDrawOverOtherApps() : false);
 export const openOverlaySettings = () => Takeover?.openOverlaySettings?.();
 export const consumeShowCard = () => (Takeover?.consumeShowCard ? Takeover.consumeShowCard() : false);
+
+/** Quick play's "still on it?" alarm: rings after `mins` idle. 0 turns it off. */
+export function qpIdle(mins, label = "") {
+  if (!Takeover) return;
+  Takeover.cancel("qp-idle");
+  if (mins > 0) Takeover.schedule("qp-idle", Date.now() + mins * 60e3, "STILL ON IT?", label ? "Up next: " + label : "Back to it.", 2, 10);
+}

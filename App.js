@@ -156,6 +156,8 @@ function Game({ profile, setProfile }) {
   const setTab = (t) => { setSection("play"); setTab0(t); };
   const [drawer, setDrawer] = useState(false);
   const [editReq, setEditReq] = useState(null);     // card id to open in My decks
+  const [qpDecks, setQpDecks] = useState(null);     // decks picked for quick play
+  const [qpRun, setQpRun] = useState(null);         // a running quick play session
   const [focusHand, setFocusHand] = useState(null);
   const [msg, setMsg] = useState("");
   const [boardTouch, setBoardTouch] = useState(false);
@@ -330,7 +332,8 @@ function Game({ profile, setProfile }) {
       <ScrollView scrollEnabled={!boardTouch} contentContainerStyle={{ padding: 16, paddingBottom: section === "play" ? 48 + WHEEL_H + 24 : 48, gap: 18 }}>
         {section === "play" && tab === "hand" && <HandView ctx={ctx} state={state} room={room} me={me} act={act} focusHand={focusHand} />}
         {section === "play" && tab === "table" && <TableTab ctx={ctx} onPickTable={switchTo} openTables={() => setSwitcher(true)} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
-        {section === "decks" && (states[lib] ? <DeckView state={M.libraryView(states[lib], state)} room={lib} me={me} act={libAct} editReq={editReq} clearEditReq={() => setEditReq(null)} /> : <ActivityIndicator color={C.accent} />)}
+        {section === "decks" && (states[lib] ? <DeckView state={M.libraryView(states[lib], state)} room={lib} me={me} act={libAct} editReq={editReq} clearEditReq={() => setEditReq(null)} onQuick={(id) => { setQpDecks([id]); setSection("quick"); }} /> : <ActivityIndicator color={C.accent} />)}
+        {section === "quick" && (states[lib] ? <QuickSetup libSt={states[lib]} me={me} initial={qpDecks} onStart={setQpRun} /> : <ActivityIndicator color={C.accent} />)}
         {section === "me" && <MeView part="me" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} openSwitcher={() => setSwitcher(true)} onLeave={() => leaveTable(room)}
           libSt={states[lib]} filters={states[lib]?.players.find((p) => p.id === me.id)?.filters || []} onFilters={(list) => libAct(() => S.setFilters(lib, me, list), "Filters saved")} />}
         {section === "settings" && <MeView part="settings" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
@@ -344,6 +347,7 @@ function Game({ profile, setProfile }) {
           )}
         </View>
       )}
+      {!!qpRun && !!states[lib] && <QuickPlay cfg={qpRun} libSt={states[lib]} me={me} libAct={libAct} say={say} onClose={() => setQpRun(null)} />}
       <TableSwitcher open={switcher} ctx={ctx} onClose={() => setSwitcher(false)} onPick={switchTo} onAdd={addTable} onLeave={leaveTable} onPause={togglePause} />
       <Drawer open={drawer} setOpen={setDrawer} section={section} name={me.name} room={room}
         onPick={(k) => { setDrawer(false); setSection(k); }} />
@@ -1139,7 +1143,7 @@ function TableView({ state, me, per = null }) {
 }
 
 /* ---------------- deck ---------------- */
-function DeckView({ state, room, me, act, editReq, clearEditReq }) {
+function DeckView({ state, room, me, act, editReq, clearEditReq, onQuick }) {
   const [edit, setEdit] = useState(null);
   const [lib, setLib] = useState(false);
   const [newName, setNewName] = useState("");
@@ -1181,6 +1185,7 @@ function DeckView({ state, room, me, act, editReq, clearEditReq }) {
             </View>
             <Switch value={deck.active} onValueChange={(v) => act(() => S.setDeckActive(room, me, deck, v), (v ? "Dealing from " : "Paused ") + deck.name)} trackColor={{ true: C.accent }} />
           </View>
+          <Btn primary label={"▶ Quick play " + deck.name} onPress={() => onQuick(deck.id)} />
           <Text style={st.label}>DECK LOGO · SHOWS ON EVERY CARD FROM THIS DECK</Text>
           <EmojiPicker value={deckEmoji(deck)} onPick={(e) => act(() => S.setDeckEmoji(room, me, deck, e), e ? "Logo " + e : "Logo removed")} />
           {deck.id !== everydayId(me.id) && (
@@ -1265,6 +1270,7 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
       <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]} keyboardShouldPersistTaps="handled">
         <Text style={st.h2}>{card.id ? "Edit card" : "New card"}</Text>
         <Field label="Label" value={c.label} onChangeText={(v) => setC({ ...c, label: v })} placeholder="squats" />
+        <Field label="Notes" value={c.notes || ""} onChangeText={(v) => setC({ ...c, notes: v || undefined })} placeholder="need the shelf brackets first" multiline />
         {(!!card.coveredBy || !!c.keepDup) && (
           <View style={st.panel}>
             <View style={[st.row, { justifyContent: "space-between" }]}>
@@ -1569,6 +1575,262 @@ function MapEditor({ map, cards, decks, onClose, onSave }) {
   );
 }
 
+/* ---------------- quick play ---------------- */
+// Cards as plain prompts, apart from your tables. A session runs under a profile:
+//   Prompt stream  a new card on a timer; ↑ = used it
+//   Stay on track  one task at a time; ↑ starts it, ↑ again = done; ignore the phone and it rings
+//   Flip through   at your own pace
+// Swipes: ↑ engage · → skip, more like this · ← skip, less like this · ↓ to your hand (with options:
+// add a note, copy it into another deck, or write a new card, e.g. on a shopping list).
+// Swipe up from the bottom edge to see your hand. Each set of decks keeps its own save state on this phone.
+const QP_PROFILES = [
+  ["stream", "Prompt stream", "A new card on a timer. ↑ marks it used; unswiped cards just pass.", { auto: true, interval: 35, idle: 0, order: "random" }],
+  ["track", "Stay on track", "One task at a time. ↑ starts it, ↑ again when it's done. Leave the phone idle too long and it rings.", { auto: false, interval: 0, idle: 5, order: "order" }],
+  ["flip", "Flip through", "Swipe at your own pace.", { auto: false, interval: 0, idle: 0, order: "random" }],
+];
+const QP_SCORE_KEY = "pac.qpScore.v1";
+const qpKey = (deckIds) => "pac.qp." + [...deckIds].sort().join(",");
+const fmtClock = (ms) => { const t = Math.max(0, Math.round(ms / 1000)); return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
+
+function QuickSetup({ libSt, me, initial, onStart }) {
+  const decks = myDecks(libSt.decks, me.id);
+  const all = myDeck(libSt.cards, libSt.players, me.id);
+  const count = (d) => all.filter((c) => deckOf(c, me.id) === d.id && c.active !== false).length;
+  const [sel, setSel] = useState(initial?.length ? initial : [decks[0]?.id].filter(Boolean));
+  const [prof, setProf] = useState("stream");
+  const base = QP_PROFILES.find((x) => x[0] === prof)[3];
+  const [interval, setIntervalS] = useState(35);
+  const [idle, setIdle] = useState(5);
+  const [order, setOrder] = useState(null);
+  const [saved, setSaved] = useState(null);
+  useEffect(() => { if (initial?.length) setSel(initial); }, [JSON.stringify(initial)]);
+  useEffect(() => { AsyncStorage.getItem(qpKey(sel)).then((v) => setSaved(v ? JSON.parse(v) : null)).catch(() => setSaved(null)); }, [sel.join(",")]);
+  const n = sel.reduce((a, id) => a + count({ id }), 0);
+  const start = (fresh) => onStart({ deckIds: sel, profile: prof, interval: base.auto ? interval : 0, idle: prof === "track" ? idle : 0, order: order || base.order, fresh });
+  return (
+    <>
+      <Text style={[st.note, { textAlign: "left" }]}>Cards as prompts, away from your tables. Nothing here changes what your tables deal.</Text>
+      <View style={st.panel}>
+        <Text style={st.label}>DECKS · {n} CARDS</Text>
+        <View style={st.chips}>{decks.map((d) => <Chip key={d.id} label={(deckEmoji(d) ? deckEmoji(d) + " " : "") + d.name + " · " + count(d)} on={sel.includes(d.id)} onPress={() => setSel(sel.includes(d.id) ? sel.filter((x) => x !== d.id) : [...sel, d.id])} />)}</View>
+      </View>
+      <View style={st.panel}>
+        <Text style={st.label}>MODE</Text>
+        {QP_PROFILES.map(([k, name, about]) => (
+          <Pressable key={k} onPress={() => { setProf(k); setOrder(null); }} style={[st.tableRow, prof === k && st.tableRowOn]} accessibilityRole="button" accessibilityState={{ selected: prof === k }}>
+            <View style={{ flex: 1 }}><Text style={st.h3}>{name}</Text><Text style={[st.note, { textAlign: "left" }]}>{about}</Text></View>
+          </Pressable>
+        ))}
+        {base.auto && (<><Text style={st.label}>NEW CARD EVERY</Text>
+          <View style={st.chips}>{[[15, "15 s"], [35, "35 s"], [60, "1 min"], [120, "2 min"], [300, "5 min"]].map(([v, l]) => <Chip key={v} label={l} on={interval === v} onPress={() => setIntervalS(v)} />)}</View></>)}
+        {prof === "track" && (<><Text style={st.label}>RING IF IDLE FOR</Text>
+          <View style={st.chips}>{[[0, "Never"], [3, "3 min"], [5, "5 min"], [10, "10 min"], [15, "15 min"]].map(([v, l]) => <Chip key={v} label={l} on={idle === v} onPress={() => setIdle(v)} />)}</View></>)}
+        <Text style={st.label}>ORDER</Text>
+        <View style={st.chips}>{[["random", "Shuffled"], ["order", "In order"]].map(([v, l]) => <Chip key={v} label={l} on={(order || base.order) === v} onPress={() => setOrder(v)} />)}</View>
+      </View>
+      {saved && (saved.used?.length || saved.hand?.length) ? (
+        <View style={st.row}>
+          <Btn flex primary disabled={!n} label={`Resume · ${saved.used?.length || 0} used, ${saved.hand?.length || 0} held`} onPress={() => start(false)} />
+          <Btn flex label="Start fresh" disabled={!n} onPress={() => start(true)} />
+        </View>
+      ) : <Btn primary disabled={!n} label="▶ Start" onPress={() => start(true)} />}
+    </>
+  );
+}
+
+function QuickPlay({ cfg, libSt, me, libAct, say, onClose }) {
+  const ins = useSafeAreaInsets();
+  const win = useWindowDimensions();
+  const prof = QP_PROFILES.find((x) => x[0] === cfg.profile);
+  const cards = useMemo(() => myDeck(libSt.cards, libSt.players, me.id).filter((c) => cfg.deckIds.includes(deckOf(c, me.id)) && c.active !== false)
+    .sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9) || a.label.localeCompare(b.label)), [libSt, cfg]);
+  const byId = (id) => cards.find((c) => c.id === id);
+  const decks = myDecks(libSt.decks, me.id);
+  const [S0, setS0] = useState(null);       // { queue, cur, used, hand, passed }
+  const [scores, setScores] = useState({});
+  const [doing, setDoing] = useState(null);  // track mode: when the current task was started
+  const [now, setNow] = useState(Date.now());
+  const [shown, setShown] = useState(Date.now());
+  const [handOpen, setHandOpen] = useState(false);
+  const [toHand, setToHand] = useState(null); // card just swiped down: what to do with it
+  const key = qpKey(cfg.deckIds);
+  const weight = (id) => Math.pow(2, Math.max(-4, Math.min(4, scores[id] || 0)));
+  // Choose the next card from the queue (not the one just shown), shuffled by rating or in order.
+  const pickNext = (st1, skip = []) => {
+    let queue = st1.queue.filter((id) => byId(id) && !st1.hand.includes(id));
+    let cand = queue.filter((id) => !skip.includes(id));
+    if (!cand.length) { queue = [...queue, ...cards.map((c) => c.id).filter((id) => !queue.includes(id) && !st1.hand.includes(id))]; cand = queue.filter((id) => !skip.includes(id)); } // new round
+    if (!cand.length) cand = queue;
+    if (!cand.length) return { ...st1, cur: null, queue: [] };
+    let i = 0;
+    if (cfg.order !== "order") { const w = cand.map(weight); let r = Math.random() * w.reduce((a, b) => a + b, 0); i = w.findIndex((x) => (r -= x) <= 0); if (i < 0) i = cand.length - 1; }
+    const cur = cand[i];
+    return { ...st1, cur, queue: queue.filter((id) => id !== cur) };
+  };
+  useEffect(() => {
+    (async () => {
+      let saved = null, sc = {};
+      try { sc = JSON.parse((await AsyncStorage.getItem(QP_SCORE_KEY)) || "{}"); } catch {}
+      if (!cfg.fresh) { try { saved = JSON.parse((await AsyncStorage.getItem(key)) || "null"); } catch {} }
+      setScores(sc);
+      const base = saved ? { queue: saved.queue || [], used: saved.used || [], hand: saved.hand || [], passed: saved.passed || 0, cur: saved.cur } : { queue: cards.map((c) => c.id), used: [], hand: [], passed: 0, cur: null };
+      setS0(base.cur && byId(base.cur) ? base : pickNext(base));
+      setShown(Date.now());
+    })();
+    return () => { N.qpIdle(0); };
+  }, []);
+  useEffect(() => { if (S0) AsyncStorage.setItem(key, JSON.stringify(S0)).catch(() => {}); }, [S0]);
+  useEffect(() => { AsyncStorage.setItem(QP_SCORE_KEY, JSON.stringify(scores)).catch(() => {}); }, [scores]);
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t); }, []);
+  const cur = S0?.cur ? byId(S0.cur) : null;
+  // Dead man's switch: any move re-arms it.
+  const poke = (label) => { if (cfg.idle) N.qpIdle(cfg.idle, label || cur?.label || ""); };
+  useEffect(() => { poke(); }, [S0?.cur, doing]);
+  const advance = (patch = {}) => { setS0((x) => pickNext({ ...x, ...patch }, [x.cur])); setDoing(null); setShown(Date.now()); };
+  // Prompt stream: the next card lands on top; an unswiped card just passes.
+  useEffect(() => {
+    if (!cfg.interval || !S0 || handOpen || toHand) return;
+    if (now - shown >= cfg.interval * 1000) advance({ passed: (S0.passed || 0) + 1 });
+  }, [now]);
+  const bump = (id, d) => setScores((x) => ({ ...x, [id]: Math.max(-4, Math.min(4, (x[id] || 0) + d)) }));
+  const onSwipe = (it) => {
+    if (!cur) return;
+    if (it.kind === "play") {
+      if (cfg.profile === "track" && !doing) { setDoing(Date.now()); return; }
+      bump(cur.id, 0.25);
+      advance({ used: [...S0.used, { id: cur.id, at: new Date().toISOString(), took: doing ? Date.now() - doing : null }] });
+    } else if (it.kind === "soon") { bump(cur.id, 1); advance({ queue: [...S0.queue.slice(0, 2), cur.id, ...S0.queue.slice(2)] }); }
+    else if (it.kind === "later") { bump(cur.id, -1); advance({ queue: [...S0.queue, cur.id] }); }
+    else if (it.kind === "hold") { setToHand(cur); advance({ hand: [...S0.hand, cur.id] }); }
+  };
+  const copyTo = (card, deckId) => { const { id, drawLog, lastDrawn, lastPlayed, plays, dueAt, tempo, ...def } = card; libAct(() => S.saveCard(M.libRoom(me.id), me, { ...def, deck: deckId, plays: 0 }), "Copied to " + (decks.find((d) => d.id === deckId)?.name || "deck")); };
+  const newCard = (label, deckId) => libAct(() => S.saveCard(M.libRoom(me.id), me, { label, suit: "home", imm: 3, active: true, plays: 0, quota: { n: 1, per: "week" }, deck: deckId }), "Added " + label);
+  const addNote = (card, note) => { const { ...c } = card; libAct(() => S.saveCard(M.libRoom(me.id), me, { ...c, notes: [c.notes, note].filter(Boolean).join("\n") }), "Note added"); };
+  const edge = useRef(PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => g.dy < -12 && Math.abs(g.dy) > Math.abs(g.dx),
+    onPanResponderRelease: (_, g) => { if (g.dy < -40) setHandOpen(true); },
+  })).current;
+  const col = cur ? C.suit[cur.suit] || C.accent : C.bg2;
+  const remain = cfg.interval ? cfg.interval * 1000 - (now - shown) : null;
+  const handCards = (S0?.hand || []).map(byId).filter(Boolean);
+  return (
+    <Modal visible animationType="fade" onRequestClose={onClose}>
+      <View style={[st.screen, { backgroundColor: C.bg }]}>
+        <View style={[st.row, { paddingTop: ins.top + 8, paddingHorizontal: 12, justifyContent: "space-between" }]}>
+          <Pressable onPress={onClose} hitSlop={10} style={st.menuBtn} accessibilityRole="button" accessibilityLabel="Leave quick play"><Text style={st.h3}>✕</Text></Pressable>
+          <View style={{ alignItems: "center" }}>
+            <Text style={st.label}>{prof[1].toUpperCase()}</Text>
+            <Text style={st.miniMeta}>{S0 ? `${S0.used.length} used · ${S0.passed || 0} passed · ${S0.hand.length} held` : ""}</Text>
+          </View>
+          <Text style={[st.h3, { width: 56, textAlign: "right" }]}>{remain != null ? fmtClock(remain) : doing ? fmtClock(now - doing) : ""}</Text>
+        </View>
+        {cur ? (
+          <QPCard key={S0.cur + ":" + shown} c={cur} col={col} doing={!!doing} emoji={deckEmoji(decks.find((d) => d.id === deckOf(cur, me.id)))} onSwipe={(it) => { poke(); onSwipe(it); }} W={win.width} />
+        ) : <View style={st.home}><Text style={st.h2}>No cards</Text><Text style={st.note}>These decks have no cards switched on.</Text></View>}
+        <Text style={[st.swipeHint, { marginBottom: 6 }]}>{cfg.profile === "track" ? (doing ? "↑ done" : "↑ start") : "↑ used it"} · ↓ hand · ← less like this · → more, later</Text>
+        <View {...edge.panHandlers} style={[st.qpEdge, { paddingBottom: ins.bottom + 10 }]}>
+          <Pressable onPress={() => setHandOpen(true)} hitSlop={8} accessibilityRole="button" accessibilityLabel={"Your hand, " + handCards.length + " cards"}>
+            <View style={st.qpGrip} />
+            <Text style={st.miniMeta}>▴ Hand · {handCards.length}</Text>
+          </Pressable>
+        </View>
+        {handOpen && (
+          <Pressable style={[StyleSheet.absoluteFill, st.drawerScrim]} onPress={() => setHandOpen(false)}>
+            <View style={[st.qpHand, { paddingBottom: ins.bottom + 16 }]} onStartShouldSetResponder={() => true}>
+              <Text style={st.label}>YOUR HAND · {handCards.length}</Text>
+              {!handCards.length && <Text style={[st.note, { textAlign: "left" }]}>Swipe a card down to put it here.</Text>}
+              <View style={{ paddingTop: 8 }}>
+                {handCards.map((c, i) => (
+                  <Pressable key={c.id + i} onPress={() => { setHandOpen(false); setToHand(c); }} style={[st.qpStackCard, { backgroundColor: C.suit[c.suit] || C.accent, marginTop: i ? -176 : 0, zIndex: i }]}>
+                    <Text style={st.qpStackTxt} numberOfLines={1}>{c.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          </Pressable>
+        )}
+        {!!toHand && <QPHandSheet c={toHand} decks={decks} meId={me.id} inHand={S0?.hand.includes(toHand.id)}
+          onClose={() => setToHand(null)}
+          onNote={(t) => { addNote(toHand, t); setToHand(null); }}
+          onCopy={(d) => { copyTo(toHand, d); setToHand(null); }}
+          onNew={(t, d) => { newCard(t, d); setToHand(null); }}
+          onBack={() => { const id = toHand.id; setToHand(null); setS0((x) => ({ ...x, hand: x.hand.filter((h) => h !== id), queue: x.cur ? [x.cur, ...x.queue] : x.queue, cur: id })); setShown(Date.now()); setDoing(null); }}
+          onRemove={() => { const id = toHand.id; setToHand(null); setS0((x) => ({ ...x, hand: x.hand.filter((h) => h !== id), queue: [...x.queue, id] })); }} />}
+      </View>
+    </Modal>
+  );
+}
+
+/** Quick play's card: a solid suit color and the words. */
+function QPCard({ c, col, doing, emoji, onSwipe, W }) {
+  const pos = useRef(new Animated.ValueXY()).current;
+  const [intent, setIntent] = useState(null);
+  const live = useRef(onSwipe); live.current = onSwipe;
+  const pr = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) + Math.abs(g.dy) > 6,
+    onPanResponderMove: (_, g) => { pos.setValue({ x: g.dx, y: g.dy }); setIntent(swipeIntent(g.dx, g.dy)); },
+    onPanResponderRelease: (_, g) => {
+      const it = swipeIntent(g.dx, g.dy); setIntent(null);
+      if (!it) return Animated.spring(pos, { toValue: { x: 0, y: 0 }, friction: 6, useNativeDriver: false }).start();
+      const d = Math.hypot(g.dx, g.dy) || 1;
+      Animated.timing(pos, { toValue: { x: (g.dx / d) * 900, y: (g.dy / d) * 1200 }, duration: 200, useNativeDriver: false }).start(() => { live.current(it); pos.setValue({ x: 0, y: 0 }); });
+    },
+    onPanResponderTerminate: () => { Animated.spring(pos, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start(); setIntent(null); },
+  }), []);
+  const rotate = pos.x.interpolate({ inputRange: [-300, 0, 300], outputRange: ["-8deg", "0deg", "8deg"] });
+  const variant = useMemo(() => { const v = (c.variants || []).filter(Boolean); return v.length ? v[Math.floor(Math.random() * v.length)] : ""; }, [c.id]);
+  const tag = !intent ? null : intent.kind === "play" ? (doing ? "Done" : "Go") : intent.kind === "hold" ? "To your hand" : intent.kind === "soon" ? "More like this · later" : "Less like this";
+  const cw = Math.min(W - 40, 420);
+  return (
+    <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+      <Animated.View {...pr.panHandlers} style={[st.qpCard, { width: cw, height: cw * 1.4, backgroundColor: col, transform: [{ translateX: pos.x }, { translateY: pos.y }, { rotate }] }]}>
+        {!!emoji && <Text style={st.qpEmoji}>{emoji}</Text>}
+        <Text style={st.qpTitle} adjustsFontSizeToFit numberOfLines={5}>{c.label.replace("#", "").trim()}</Text>
+        {!!variant && <Text style={st.qpSub} numberOfLines={3}>{variant}</Text>}
+        {!!c.notes && <Text style={[st.qpSub, { fontStyle: "italic" }]} numberOfLines={4}>{c.notes}</Text>}
+        {doing && <View style={st.qpDoing}><Text style={st.qpDoingTxt}>ON IT</Text></View>}
+        {!!tag && <View style={st.qpTag}><Text style={st.h3}>{tag}</Text></View>}
+      </Animated.View>
+    </View>
+  );
+}
+
+/** A card swiped into your hand: maybe it needs more, like supplies, a store run, or more detail. */
+function QPHandSheet({ c, decks, meId, inHand, onClose, onNote, onCopy, onNew, onBack, onRemove }) {
+  const [mode, setMode] = useState(null);
+  const [txt, setTxt] = useState("");
+  const [deck, setDeck] = useState(decks.find((d) => d.id !== deckOf(c, meId))?.id || decks[0]?.id);
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={st.scrim} onPress={onClose} />
+      <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]} keyboardShouldPersistTaps="handled">
+        <Text style={st.h2} numberOfLines={2}>{c.label}</Text>
+        <Text style={[st.note, { textAlign: "left" }]}>{inHand ? "It's in your hand. Anything it needs?" : "In your hand."}</Text>
+        {!mode && (
+          <View style={{ gap: 8 }}>
+            <Btn label="✎ Add a note (more detail)" onPress={() => setMode("note")} />
+            <Btn label="→ Copy it into another deck" onPress={() => setMode("copy")} />
+            <Btn label="+ New card in a deck (e.g. buy shelf brackets)" onPress={() => setMode("new")} />
+            {inHand && <View style={st.row}><Btn flex label="Back on screen" onPress={onBack} /><Btn flex label="Out of my hand" onPress={onRemove} /></View>}
+            <Btn primary label="Just hold it" onPress={onClose} />
+          </View>
+        )}
+        {mode === "note" && (<><Field label="Note" value={txt} onChangeText={setTxt} placeholder="needs a stepladder" multiline /><Btn primary disabled={!txt.trim()} label="Save note" onPress={() => onNote(txt.trim())} /></>)}
+        {(mode === "copy" || mode === "new") && (
+          <>
+            {mode === "new" && <Field label="New card" value={txt} onChangeText={setTxt} placeholder="buy shelf brackets" />}
+            <Text style={st.label}>INTO</Text>
+            <View style={st.chips}>{decks.map((d) => <Chip key={d.id} label={(deckEmoji(d) ? deckEmoji(d) + " " : "") + d.name} on={deck === d.id} onPress={() => setDeck(d.id)} />)}</View>
+            <Text style={[st.note, { textAlign: "left" }]}>Make a deck like “At the store” in My decks to keep a shopping list here.</Text>
+            <Btn primary disabled={mode === "new" && !txt.trim()} label={mode === "copy" ? "Copy" : "Add card"} onPress={() => (mode === "copy" ? onCopy(deck) : onNew(txt.trim(), deck))} />
+          </>
+        )}
+        {!!mode && <Btn label="Back" onPress={() => { setMode(null); setTxt(""); }} />}
+      </ScrollView>
+    </Modal>
+  );
+}
+
 /* ---------------- time blocks & filters ---------------- */
 // "No" or "Only", like ordering a burger: no onions, only onions. Each suit gets quick No / Only buttons
 // that stay on; "+ Add" covers decks, single cards, notifications, "for now" and schedules.
@@ -1705,7 +1967,7 @@ function EmojiPicker({ value, onPick }) {
 }
 
 /* ---------------- side menu ---------------- */
-const SECTIONS = [["play", "Play", "♠"], ["decks", "My decks", "▤"], ["me", "Me", "●"], ["settings", "Settings", "⚙"]];
+const SECTIONS = [["play", "Play", "♠"], ["quick", "Quick play", "▶"], ["decks", "My decks", "▤"], ["me", "Me", "●"], ["settings", "Settings", "⚙"]];
 const DRAWER_W = Math.min(300, Dimensions.get("window").width * 0.8);
 // Slides in from the left: tap the ☰ button, or drag from the left edge of the screen. Drag it back or tap outside to close.
 function Drawer({ open, setOpen, section, name, room, onPick }) {
@@ -2029,6 +2291,18 @@ function makeStyles() { return StyleSheet.create({
   spotRow: { gap: 8, padding: 10, borderRadius: 12, backgroundColor: C.paper },
   pickBtn: { minHeight: 44, justifyContent: "center", paddingHorizontal: 12, borderRadius: 10, borderWidth: 1.5, borderColor: C.line },
   filterRow: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: 12, backgroundColor: C.paper },
+  qpCard: { borderRadius: 24, padding: 28, alignItems: "center", justifyContent: "center", gap: 16, elevation: 8 },
+  qpEmoji: { position: "absolute", top: 18, left: 20, fontSize: 26 },
+  qpTitle: { fontSize: 40, fontWeight: "700", color: C.ink, textAlign: "center" },
+  qpSub: { fontSize: 18, color: C.ink, opacity: 0.75, textAlign: "center" },
+  qpDoing: { position: "absolute", bottom: 22, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999, backgroundColor: C.paper },
+  qpDoingTxt: { fontSize: 13, fontWeight: "800", letterSpacing: 2, color: C.ink },
+  qpTag: { position: "absolute", top: 70, backgroundColor: C.paper, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6 },
+  qpEdge: { alignItems: "center", paddingTop: 10 },
+  qpGrip: { width: 44, height: 5, borderRadius: 3, backgroundColor: C.line, alignSelf: "center", marginBottom: 4 },
+  qpHand: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: C.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, gap: 6, maxHeight: "75%" },
+  qpStackCard: { height: 200, borderRadius: 14, paddingHorizontal: 16, paddingTop: 7, borderWidth: 1.5, borderColor: C.paper, elevation: 4 },
+  qpStackTxt: { fontSize: 15, fontWeight: "700", color: C.ink },
   deckLogo: { position: "absolute", flexDirection: "row", gap: 2, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1.5, backgroundColor: C.paper },
   deckLogoTxt: { fontSize: 22 },
   emojiCell: { width: 44, height: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.paper, borderWidth: 2, borderColor: "transparent" },
