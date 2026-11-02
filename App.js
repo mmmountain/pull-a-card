@@ -1301,6 +1301,13 @@ function CardEditor({ card, onClose, onSave, onDelete }) {
         <Text style={st.label}>TIMING (OPTIONAL)</Text>
         <TimeField label="Can be dealt from" value={c.opensAt} onChange={(v) => setC({ ...c, opensAt: v })} placeholder="9:30pm" />
         <TimeField label="Deal until" value={c.closesAt} onChange={(v) => setC({ ...c, closesAt: v })} placeholder="11am" />
+        <View style={[st.row, { justifyContent: "space-between" }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={st.h3}>Always takes over the screen</Text>
+            <Text style={[st.note, { textAlign: "left" }]}>Every time it's dealt, it rings full screen over other apps.</Text>
+          </View>
+          <Switch value={!!c.alarm} onValueChange={(v) => setC({ ...c, alarm: v || undefined })} trackColor={{ true: C.accent }} />
+        </View>
         <TimeField label="Takes over the screen at" value={c.takeover} onChange={(v) => setC({ ...c, takeover: v })} placeholder="10:30pm" />
         <Text style={[st.note, { textAlign: "left" }]}>{c.takeover ? `From ${fmtTime(hmDate(c.takeover))} until you play it, it's the only card you can play and it rings full screen every few minutes.` : "Leave empty for a normal card."}</Text>
         <Text style={st.label}>WAIT BETWEEN PLAYS</Text>
@@ -1360,7 +1367,7 @@ function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitc
     <>
       <View style={st.panel}>
         <View style={[st.row, { justifyContent: "space-between" }]}><Text style={st.h3}>Deal me cards</Text><Switch value={prefs.notify} onValueChange={(v) => update({ notify: v })} trackColor={{ true: C.accent }} /></View>
-        <Text style={[st.note, { textAlign: "left" }]}>Cards are dealt when they fall behind their targets, checked every 20 minutes while you're awake.</Text>
+        <Text style={[st.note, { textAlign: "left" }]}>Cards are dealt when they fall behind their targets, checked every 5 minutes while you're awake.</Text>
         <Text style={st.label}>AWAKE FROM</Text>
         <View style={st.chips}>{[6, 7, 8, 9, 10].map((h) => <Chip key={h} label={h + " AM"} on={prefs.startHour === h} onPress={() => update({ startHour: h })} />)}</View>
         <Text style={st.label}>UNTIL</Text>

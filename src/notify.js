@@ -75,9 +75,10 @@ export async function cancelKind(kind, match) {
 }
 
 /** Replace this device's upcoming deals with a fresh plan from the current room state. */
-/** Replace this phone's upcoming deals: check every 20 minutes and deal only when a card is behind its target. */
+/** Replace this phone's upcoming deals: check every 5 minutes and deal only when a card is behind its target. */
 export async function rescheduleDeals(room, me, prefs, state) {
   await cancelKind("deal");
+  if (Takeover) for (const id of Takeover.ids()) if (id.startsWith("deal-")) Takeover.cancel(id);
   if (!prefs.notify || !state) return [];
   const chaos = myChaos(state.players, me.id, state.config?.chaos ?? 30);
   const win = { startHour: prefs.startHour, endHour: prefs.endHour, onlyDue: true, plays: state.plays, meId: me.id, filters: filtersFor(state.players, me.id) };
@@ -88,8 +89,8 @@ export async function rescheduleDeals(room, me, prefs, state) {
   // Late cards (like Go to bed at 9:30 PM) stretch the checking window past your usual end of day.
   const lateEnd = Math.min(24, Math.max(prefs.endHour, ...cards.map((c) => Math.ceil(((hmMinutes(c.takeover) ?? hmMinutes(c.opensAt) ?? 0) + 30) / 60))));
   const out = [];
-  for (const when of planChecks({ now: new Date(), stepMins: 20, startHour: prefs.startHour, endHour: lateEnd, hours: 24 })) {
-    if (out.length >= 24) break;
+  for (const when of planChecks({ now: new Date(), stepMins: 5, startHour: prefs.startHour, endHour: lateEnd, hours: 24 })) {
+    if (out.length >= 60) break; // re-planned whenever anything changes, so this covers plenty
     const k = pickCard(cards, [], chaos, when.getTime(), Math.random, win);
     if (!k) continue;
     const t = dealFrom(k, when.getTime(), Math.random, win);
@@ -106,6 +107,8 @@ export async function rescheduleDeals(room, me, prefs, state) {
       },
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: when, channelId: urgent ? "urgent" : "deals" },
     });
+    // Cards set to "always take over the screen" ring full screen when they're dealt.
+    if (k.alarm && Takeover) Takeover.schedule("deal-" + k.id + "-" + when.getTime(), when.getTime(), t.label.toUpperCase(), (t.variant ? t.variant + " · " : "") + "Open the card to play it.", 0, 0);
     out.push({ when, label: t.label });
   }
   return out;
@@ -258,7 +261,7 @@ export async function scheduleTakeovers(cards, prefs = {}) {
     }
     Takeover.schedule(id, at, c.label.toUpperCase(), `It's ${fmtTime(hmDate(c.takeover))}. Play this card to make it stop.`, 3, 10);
   }
-  for (const id of existing) if (id !== "test" && !id.startsWith("lock-") && !wanted.has(id)) Takeover.cancel(id);
+  for (const id of existing) if (id !== "test" && !id.startsWith("lock-") && !id.startsWith("deal-") && !wanted.has(id)) Takeover.cancel(id);
 }
 
 /**
