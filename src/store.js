@@ -248,6 +248,21 @@ async function patchMe(room, me, patch) {
 export const setStackPer = (room, me, per) => patchMe(room, me, { stackPer: per });
 /** Which of your decks this table deals from (null = all of them). */
 export const setUseDecks = (room, me, ids) => patchMe(room, me, { useDecks: ids });
+/**
+ * Reset one deck at this table: every card of it in your hand (and face up) goes back in the deck.
+ * With `counts`, also forget how many times its cards were dealt, so their pace starts over.
+ * Plays already made stay in the table's history. Returns how many held cards went back.
+ */
+export async function resetDeck(room, me, deckId, counts = false) {
+  const [cards, hands, top] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), getDoc(room, "tables", me.id)]);
+  const ids = new Set(cards.filter((c) => (c.owner || me.id) === me.id && (c.deck || everydayId(me.id)) === deckId).map((c) => c.id));
+  let n = 0;
+  for (const h of hands) if (h.seat === me.id && ids.has(h.cardId)) { await remove(room, "hands", h.id); n++; }
+  if (top && !top.empty && ids.has(top.cardId)) await upsert(room, "tables", me.id, { empty: true });
+  if (counts) for (const c of cards) if (ids.has(c.id)) { const { id, ...d } = c; await upsert(room, "cards", id, { ...d, drawLog: [], lastDrawn: null, dueAt: null }); }
+  return n;
+}
+
 /** Save a list of filters: yours (in your library room) or this table's. */
 export const setFilters = (room, me, list) => patchMe(room, me, { filters: list });
 /** Turn decks on at this table (when a map that uses them is put on). */

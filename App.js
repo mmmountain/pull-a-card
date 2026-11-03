@@ -13,7 +13,7 @@ import * as N from "./src/notify";
 import * as M from "./src/multi";
 import * as A from "./src/alarm";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { ORIGINAL, randomTheme } from "./src/theme";
+import { ORIGINAL, PINK_LEMONADE, randomTheme } from "./src/theme";
 import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./src/model";
 import { periodStart, myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
@@ -71,7 +71,8 @@ export default function App() {
   const [, setVer] = useState(0);
   useEffect(() => {
     redraw = () => setVer((v) => v + 1);
-    AsyncStorage.getItem(THEME_KEY).then((raw) => { if (raw) applyTheme(JSON.parse(raw), false); }).catch(() => {});
+    // A phone that saved the old pink default gets the new default; a scheme you picked stays.
+    AsyncStorage.getItem(THEME_KEY).then((raw) => { const t = raw && JSON.parse(raw); if (t?.bg && !/pink lemonade/i.test(t.name || "")) applyTheme(t, false); else if (t) AsyncStorage.removeItem(THEME_KEY).catch(() => {}); }).catch(() => {});
     return () => { redraw = null; };
   }, []);
   useEffect(() => {
@@ -784,6 +785,9 @@ function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, set
     const next = usesDeck(d) ? (use || ids).filter((x) => x !== d.id) : [...(use || []), d.id];
     act(() => S.setUseDecks(room, me, next.length === ids.length ? null : next), (usesDeck(d) ? "Not dealing " : "Dealing ") + d.name + " here");
   };
+  const [deckMenu, setDeckMenu] = useState(null);
+  const [armReset, setArmReset] = useState(null);
+  const heldOf = (d) => { const ids = new Set(state.cards.filter((c) => deckOf(c, me.id) === d.id).map((c) => c.id)); return state.hands.filter((h) => h.seat === me.id && ids.has(h.cardId)).length; };
   const mapName = cur ? cur.name : STACK_PERS.find((x) => x[0] === per)[1] + " stack";
   // Tables from before "one map at a time" may have several running; keep the first, save the rest.
   const nActive = maps.filter((m) => m.active !== false).length;
@@ -804,7 +808,7 @@ function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, set
       <View style={{ gap: 6 }}>
         <Text style={[st.label, { textAlign: "center" }]}>DECKS AT THIS TABLE{cur ? " · PLUS WHAT THE MAP NEEDS" : ""}</Text>
         <View style={[st.chips, { justifyContent: "center" }]}>
-          {decks.map((d) => <Chip key={d.id} label={(deckEmoji(d) ? deckEmoji(d) + " " : "") + d.name + (d.active ? "" : " (off)")} on={usesDeck(d) && d.active} onPress={() => toggleDeck(d)} />)}
+          {decks.map((d) => <Chip key={d.id} label={(deckEmoji(d) ? deckEmoji(d) + " " : "") + d.name + (d.active ? "" : " (off)") + " ⋯"} on={usesDeck(d) && d.active} onPress={() => setDeckMenu(d)} />)}
         </View>
         <Pressable onPress={() => setShowFilters(!showFilters)} hitSlop={8} style={{ alignSelf: "center" }}>
           <Text style={st.link}>This table's filters{(meP.filters || []).length ? " (" + meP.filters.filter((f) => filterLive(f)).length + " on)" : ""} {showFilters ? "▴" : "▾"}</Text>
@@ -820,6 +824,26 @@ function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, set
         : <TableView state={state} me={me} per={per} />}
       {!!editing && <MapEditor map={editing.id ? editing : null} cards={myDeck((libSt || state).cards, (libSt || state).players, me.id)} decks={decks}
         onClose={() => setEditing(null)} onSave={(d) => { const id = editing.id || null; setEditing(null); act(() => S.saveMap(room, me, id, d), (id ? "Saved " : "Playing ") + d.name); }} />}
+      {!!deckMenu && (
+        <Modal visible transparent animationType="slide" onRequestClose={() => { setDeckMenu(null); setArmReset(null); }}>
+          <Pressable style={st.scrim} onPress={() => { setDeckMenu(null); setArmReset(null); }} />
+          <View style={st.sheet}>
+            <Text style={st.h2}>{deckEmoji(deckMenu) ? deckEmoji(deckMenu) + " " : ""}{deckMenu.name} at {room}</Text>
+            <View style={[st.row, { justifyContent: "space-between" }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={st.h3}>Deal from it here</Text>
+                {!deckMenu.active && <Text style={[st.note, { textAlign: "left" }]}>Switched off in My decks, so nothing's dealt from it anywhere.</Text>}
+              </View>
+              <Switch value={usesDeck(deckMenu)} onValueChange={() => toggleDeck(deckMenu)} trackColor={{ true: C.accent }} />
+            </View>
+            <Btn label={armReset === "hand" ? "Tap again: put " + heldOf(deckMenu) + " back" : "Reset: held cards back in the deck (" + heldOf(deckMenu) + ")"} danger={armReset === "hand"} disabled={!heldOf(deckMenu) && !(state.tables[me.id] && !state.tables[me.id].empty)}
+              onPress={() => { if (armReset !== "hand") return setArmReset("hand"); const d = deckMenu; setDeckMenu(null); setArmReset(null); act(() => S.resetDeck(room, me, d.id, false), d.name + " reset at " + room); }} />
+            <Btn label={armReset === "all" ? "Tap again: full reset" : "Full reset: also start its counts over"} danger={armReset === "all"}
+              onPress={() => { if (armReset !== "all") return setArmReset("all"); const d = deckMenu; setDeckMenu(null); setArmReset(null); act(() => S.resetDeck(room, me, d.id, true), d.name + " fully reset at " + room); }} />
+            <Text style={[st.note, { textAlign: "left" }]}>Only at this table. Plays you've already made stay. Full reset also forgets how many times each card was dealt today, this week and this month, so it paces from zero. ↶ undoes either.</Text>
+          </View>
+        </Modal>
+      )}
       <Modal visible={mapMenu} transparent animationType="slide" onRequestClose={() => setMapMenu(false)}>
         <Pressable style={st.scrim} onPress={() => setMapMenu(false)} />
         <ScrollView style={st.sheetScroll} contentContainerStyle={[st.sheet, { position: "relative" }]}>
@@ -1079,7 +1103,7 @@ function PlacedCard({ e, x, y, rot, meta, badge }) {
   if (!e) return null;
   const col = C.suit[e.suit] || C.accent;
   return (
-    <View pointerEvents="none" style={{ position: "absolute", left: x - 29, top: y - 40, width: 58, height: 80, borderRadius: 7, backgroundColor: C.paper, elevation: 4, borderWidth: 1, borderColor: "rgba(58,22,48,.12)", transform: [{ rotate: rot.toFixed(1) + "deg" }], overflow: "visible" }}>
+    <View pointerEvents="none" style={{ position: "absolute", left: x - 29, top: y - 40, width: 58, height: 80, borderRadius: 7, backgroundColor: C.paper, elevation: 4, borderWidth: 1, borderColor: fade(C.ink, 0.12), transform: [{ rotate: rot.toFixed(1) + "deg" }], overflow: "visible" }}>
       <View style={{ height: 7, backgroundColor: col, borderTopLeftRadius: 7, borderTopRightRadius: 7 }} />
       <Text style={{ fontSize: 10, fontWeight: "800", color: col, marginLeft: 5 }}>{SUIT[e.suit] || "●"}</Text>
       <Text numberOfLines={3} style={{ fontSize: 10, fontWeight: "700", color: C.ink, textAlign: "center", paddingHorizontal: 3 }}>{e.label}</Text>
@@ -1439,6 +1463,7 @@ function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitc
         <View style={st.row}>
           <Btn primary flex label="Shuffle colors" onPress={() => applyTheme(randomTheme())} />
           <Btn flex label="Original" onPress={() => applyTheme(ORIGINAL)} />
+          <Btn flex label="Pink" onPress={() => applyTheme(PINK_LEMONADE)} />
         </View>
       </View>
       <TakeoverPanel act={act} />
@@ -2320,7 +2345,7 @@ function makeStyles() { return StyleSheet.create({
   chipTxt: { color: C.ink, fontWeight: "600" },
   input: { backgroundColor: C.paper, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16, color: C.ink },
   panel: { backgroundColor: C.bg2, borderRadius: 14, padding: 14, gap: 10 },
-  scrim: { flex: 1, backgroundColor: "rgba(58,22,48,0.35)" },
+  scrim: { flex: 1, backgroundColor: fade(C.ink, 0.35) },
   sheet: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: C.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 36, gap: 12 },
   sheetScroll: { position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "88%", backgroundColor: C.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
   board: { backgroundColor: C.felt, borderRadius: 18, overflow: "hidden" },
@@ -2361,7 +2386,7 @@ function makeStyles() { return StyleSheet.create({
   // A thin bar down the top half of the left edge, with a small tab, so you know the menu pulls out from there.
   edgeHandle: { position: "absolute", left: 0, top: "12%", height: "40%", width: 3, borderTopRightRadius: 3, borderBottomRightRadius: 3, backgroundColor: C.accent, opacity: 0.85, justifyContent: "center" },
   edgeTab: { width: 8, height: 44, borderTopRightRadius: 6, borderBottomRightRadius: 6, backgroundColor: C.accent },
-  drawerScrim: { backgroundColor: "rgba(58,22,48,0.35)" },
+  drawerScrim: { backgroundColor: fade(C.ink, 0.35) },
   drawer: { position: "absolute", left: 0, top: 0, bottom: 0, backgroundColor: C.bg, paddingHorizontal: 16, paddingTop: 12, elevation: 16, borderTopRightRadius: 20, borderBottomRightRadius: 20 },
   drawerBrand: { fontSize: 30, fontWeight: "800", color: C.ink, marginTop: 8 },
   drawerItem: { flexDirection: "row", alignItems: "center", gap: 14, minHeight: 52, paddingHorizontal: 14, borderRadius: 12 },

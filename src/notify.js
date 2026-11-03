@@ -4,7 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Takeover from "../modules/takeover";
 import { playedToday, hmMinutes, hmDate, activeLocks } from "./model";
 import { filtersFor, cardLine, fmtTime, parseLater, pickCard, planChecks, dealFrom, hoursSince, markDrawn, myChaos, myDeck } from "./model";
-const C_ACCENT = "#ff7eb6";
+const C_ACCENT = "#8db39a";
 import * as S from "./store";
 
 export const DEAL_CAT = "deal";
