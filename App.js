@@ -1624,8 +1624,8 @@ function Fork({ a, b, aSub, bSub, onA, onB, pick, tall }) {
   const side = (label, sub, dark, on, onPress) => (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={pick ? { selected: on } : undefined}
       style={[st.forkSide, tall && { minHeight: 150 }, dark ? st.forkDark : st.forkLight, pick && !on && { opacity: 0.35 }]}>
-      <Text style={[st.forkTxt, { color: dark ? C.paper : C.ink }]}>{label}</Text>
-      {!!sub && <Text style={[st.forkSub, { color: dark ? C.paper : C.muted }]}>{sub}</Text>}
+      <Text style={[st.forkTxt, { color: C.ink }]}>{label}</Text>
+      {!!sub && <Text style={[st.forkSub, { color: dark ? C.ink : C.muted }]}>{sub}</Text>}
     </Pressable>
   );
   return (
@@ -1907,7 +1907,12 @@ function QPCard({ c, col, doing, emoji, onSwipe, W }) {
   const [intent, setIntent] = useState(null);
   const live = useRef(onSwipe); live.current = onSwipe;
   const pr = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) + Math.abs(g.dy) > 6,
+    onStartShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponderCapture: () => false,
+    onMoveShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponderCapture: (_, g) => Math.abs(g.dx) + Math.abs(g.dy) > 6,
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => true,
     onPanResponderMove: (_, g) => { pos.setValue({ x: g.dx, y: g.dy }); setIntent(swipeIntent(g.dx, g.dy)); },
     onPanResponderRelease: (_, g) => {
       const it = swipeIntent(g.dx, g.dy); setIntent(null);
@@ -2441,10 +2446,10 @@ function makeStyles() { return StyleSheet.create({
   qpHand: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: C.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, gap: 6, maxHeight: "75%" },
   qpStackCard: { height: 200, borderRadius: 14, paddingHorizontal: 16, paddingTop: 7, borderWidth: 1.5, borderColor: C.paper, elevation: 4 },
   qpStackTxt: { fontSize: 15, fontWeight: "700", color: C.ink },
-  fork: { flexDirection: "row", borderRadius: 16, overflow: "hidden", borderWidth: 2, borderColor: C.ink },
+  fork: { flexDirection: "row", borderRadius: 16, overflow: "hidden", borderWidth: 1.5, borderColor: C.line },
   forkSide: { flex: 1, minHeight: 84, padding: 14, justifyContent: "center", alignItems: "center", gap: 4 },
-  forkDark: { backgroundColor: C.ink },
-  forkLight: { backgroundColor: C.paper },
+  forkDark: { backgroundColor: C.accent },
+  forkLight: { backgroundColor: C.bg2 },
   forkTxt: { fontSize: 18, fontWeight: "800", textAlign: "center" },
   forkSub: { fontSize: 12, textAlign: "center", opacity: 0.85 },
   deckLogo: { position: "absolute", flexDirection: "row", gap: 2, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1.5, backgroundColor: C.paper },
