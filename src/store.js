@@ -265,11 +265,32 @@ export const setUseDecks = (room, me, ids) => patchMe(room, me, { useDecks: ids 
 export async function resetDeck(room, me, deckId, counts = false) {
   const [cards, hands, top] = await Promise.all([listColl(room, "cards"), listColl(room, "hands"), getDoc(room, "tables", me.id)]);
   const ids = new Set(cards.filter((c) => (c.owner || me.id) === me.id && (c.deck || everydayId(me.id)) === deckId).map((c) => c.id));
-  let n = 0;
-  for (const h of hands) if (h.seat === me.id && ids.has(h.cardId)) { await remove(room, "hands", h.id); n++; }
+  const n = await returnHeld(room, me, hands.filter((h) => h.seat === me.id && ids.has(h.cardId)).map((h) => h.id));
   if (top && !top.empty && ids.has(top.cardId)) await upsert(room, "tables", me.id, { empty: true });
   if (counts) for (const c of cards) if (ids.has(c.id)) { const { id, ...d } = c; await upsert(room, "cards", id, { ...d, drawLog: [], lastDrawn: null, dueAt: null }); }
   return n;
+}
+
+/**
+ * Put held cards back in their decks without playing them (all of yours here, or just `handIds`).
+ * Each one's deal is taken back off its card's count, so it's owed again and comes back around.
+ * A held card is only: which card, the words as dealt, when you held it, and any reminder. Nothing else is lost.
+ */
+export async function returnHeld(room, me, handIds = null) {
+  const hands = (await listColl(room, "hands")).filter((h) => h.seat === me.id && (!handIds || handIds.includes(h.id)));
+  if (!hands.length) return 0;
+  const cards = new Map((await listColl(room, "cards")).map((c) => [c.id, c]));
+  const touched = new Set();
+  for (const h of hands) {
+    await remove(room, "hands", h.id);
+    const c = cards.get(h.cardId);
+    if (!c || !h.drawnAt) continue;
+    const log = [...(c.drawLog || [])];
+    const i = log.map((e) => (typeof e === "string" ? e : e.at)).lastIndexOf(h.drawnAt);
+    if (i >= 0) { log.splice(i, 1); cards.set(c.id, { ...c, drawLog: log }); touched.add(c.id); }
+  }
+  for (const id of touched) { const { id: _, ...d } = cards.get(id); await upsert(room, "cards", id, d); }
+  return hands.length;
 }
 
 /** Save a list of filters: yours (in your library room) or this table's. */

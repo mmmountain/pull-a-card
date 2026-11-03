@@ -533,6 +533,19 @@ function HandView({ ctx, state, room, me, act, focusHand }) {
   };
   if (!groups.length) return <View style={{ paddingTop: 60, gap: 8 }}><Text style={st.h2}>Empty hand.</Text><Text style={[st.note, { textAlign: "left" }]}>Cards you hold show up here.</Text></View>;
   const cardOf = (g) => ctx.states[g.places[0].room]?.cards.find((c) => c.id === g.places[0].h.cardId);
+  const libDecks = myDecks(ctx.states[M.libRoom(me.id)]?.decks || state.decks, me.id);
+  // The deck this held card really came from (not just any deck with a card of the same name).
+  const deckLine = (g) => { const c = cardOf(g); if (!c) return "card deleted"; const d = libDecks.find((x) => x.id === deckOf(c, me.id)); return d ? ((deckEmoji(d) ? deckEmoji(d) + " " : "") + d.name) : "deck deleted"; };
+  const [armReturn, setArmReturn] = useState(null);
+  const returnAll = (everywhere) => {
+    const rooms = everywhere ? ctx.rooms : [room];
+    setArmReturn(null); setSel([]);
+    act(async () => {
+      const ids = new Set();
+      for (const r of rooms) { for (const h of ctx.states[r]?.hands || []) if (h.seat === me.id) ids.add(h.id); await S.returnHeld(r, me); }
+      await N.cancelKind("reminder", (d) => ids.has(d.handId)).catch(() => {});
+    }, everywhere ? "Hand returned at every table" : "Hand returned at " + room);
+  };
   const tile = (g) => {
     const h = g.h, hot = heat(h), on = sel.includes(g.key), w = waitOf(g);
     const remind = h.remindAt && Date.parse(h.remindAt) > Date.now();
@@ -552,12 +565,18 @@ function HandView({ ctx, state, room, me, act, focusHand }) {
         ) : (
           <View style={st.awayTag}><Text style={st.awayTagTxt} numberOfLines={1}>↗ {elsewhere.join(", ")}</Text></View>
         )}
+        <Text style={st.handWhere} numberOfLines={2}>{deckLine(g)}{g.here ? " · " + [room, ...elsewhere].join(", ") : ""}</Text>
       </Pressable>
     );
   };
   return (
     <>
       {!!locks.length && <LockBanner locks={locks} />}
+      <View style={st.row}>
+        <Btn flex danger={armReturn === "here"} disabled={!here.length} label={armReturn === "here" ? "Tap again: return " + here.length : "Return all to their decks"} onPress={() => (armReturn === "here" ? returnAll(false) : setArmReturn("here"))} />
+        {!!away.length && <Btn flex danger={armReturn === "all"} label={armReturn === "all" ? "Tap again: every table" : "…at every table (" + groups.length + ")"} onPress={() => (armReturn === "all" ? returnAll(true) : setArmReturn("all"))} />}
+      </View>
+      {!!armReturn && <Text style={[st.note, { textAlign: "left" }]}>Not played, just put back: each card is owed again and comes back around. Reminders on them are cancelled. Plays and maps aren't touched. ↶ undoes it.</Text>}
       <Text style={st.label}>{here.length} AT THIS TABLE · TAP TO SELECT{picked.length > 1 ? " · " + picked.length + " SELECTED" : ""}</Text>
       {here.length ? <View style={st.handGrid}>{here.map(tile)}</View> : <Text style={[st.note, { textAlign: "left" }]}>Nothing held at this table.</Text>}
       {!!away.length && (
@@ -2389,6 +2408,7 @@ function makeStyles() { return StyleSheet.create({
   miniGrid: { width: "31%", aspectRatio: 5 / 7 },
   miniAway: { width: "22%", aspectRatio: 5 / 7, padding: 7, opacity: 0.6, elevation: 0, borderStyle: "dashed", borderColor: C.line, borderWidth: 2 },
   miniLabelAway: { fontSize: 12, fontWeight: "700", color: C.ink },
+  handWhere: { fontSize: 10, color: C.muted, marginTop: 2 },
   awayTag: { alignSelf: "flex-start", maxWidth: "100%", backgroundColor: C.bg2, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 },
   awayTagTxt: { fontSize: 10, fontWeight: "700", color: C.muted },
   topRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 10, paddingRight: 8, paddingTop: 4, paddingBottom: 10 },
