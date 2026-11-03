@@ -897,6 +897,7 @@ function TableTab({ ctx, onPickTable, openTables, state, room, me, act, say, set
 }
 
 function MapTable({ ctx, m0, state, room, me, act, setBoardTouch, onRemoved, onEdit }) {
+  const [armClear, setArmClear] = useState(false);
   const [selCard, setSelCard] = useState(null);
   const [selSpot, setSelSpot] = useState(null);
   const [arm, setArm] = useState(false);
@@ -959,6 +960,7 @@ function MapTable({ ctx, m0, state, room, me, act, setBoardTouch, onRemoved, onE
       </ScrollView>
       <View style={st.row}>
         <Btn flex label="✎ Edit map" onPress={onEdit} />
+        <Btn flex danger={armClear} label={armClear ? "Tap to clear" : "Clear round"} onPress={() => { if (!armClear) return setArmClear(true); setArmClear(false); act(() => S.clearRound(room, me, m0.id), "Cleared " + m0.name); }} />
         <Btn flex danger={arm} label={arm ? "Tap again to remove" : "Remove map"} onPress={() => {
           if (!arm) return setArm(true);
           onRemoved(); act(() => S.deleteMap(room, me, m0.id), "Removed " + m0.name);
@@ -1768,6 +1770,16 @@ function QuickSetup({ libSt, me, initial, onStart }) {
   const [idle, setIdle] = useState(5);
   const [order, setOrder] = useState(null);
   const [saved, setSaved] = useState(null);
+  const [armRate, setArmRate] = useState(false);
+  const [rated, setRated] = useState(0);
+  useEffect(() => {
+    AsyncStorage.getItem(QP_SCORE_KEY).then((v) => { const sc = JSON.parse(v || "{}"); const ids = new Set(all.filter((c) => sel.includes(deckOf(c, me.id))).map((c) => c.id)); setRated(Object.keys(sc).filter((k) => ids.has(k) && sc[k]).length); }).catch(() => setRated(0));
+  }, [sel.join(","), armRate]);
+  const resetRatings = async () => {
+    const ids = new Set(all.filter((c) => sel.includes(deckOf(c, me.id))).map((c) => c.id));
+    try { const sc = JSON.parse((await AsyncStorage.getItem(QP_SCORE_KEY)) || "{}"); for (const k of Object.keys(sc)) if (ids.has(k)) delete sc[k]; await AsyncStorage.setItem(QP_SCORE_KEY, JSON.stringify(sc)); } catch {}
+    setArmRate(false); setRated(0);
+  };
   useEffect(() => { if (initial?.length) setSel(initial); }, [JSON.stringify(initial)]);
   useEffect(() => { AsyncStorage.getItem(qpKey(sel)).then((v) => setSaved(v ? JSON.parse(v) : null)).catch(() => setSaved(null)); }, [sel.join(",")]);
   const n = sel.reduce((a, id) => a + count({ id }), 0);
@@ -1799,6 +1811,7 @@ function QuickSetup({ libSt, me, initial, onStart }) {
           <Btn flex label="Start fresh" disabled={!n} onPress={() => start(true)} />
         </View>
       ) : <Btn primary disabled={!n} label="▶ Start" onPress={() => start(true)} />}
+      {rated > 0 && <Btn danger={armRate} label={armRate ? "Tap again to forget " + rated + " ratings" : "Reset ratings (" + rated + " cards rated)"} onPress={() => (armRate ? resetRatings() : setArmRate(true))} />}
     </>
   );
 }

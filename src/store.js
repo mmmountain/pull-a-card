@@ -227,6 +227,15 @@ export async function addLibraryMap(room, me, key) {
  * Spots it missed while it was off are marked handled, so coming back doesn't flood your hand.
  * Pass null to play on the plain stack instead.
  */
+/** Empty a map's spots now instead of waiting for the next round. Missed spots don't hand you their cards again. */
+export async function clearRound(room, me, mapId) {
+  const m = await getDoc(room, "maps", mapId);
+  if (!m) return;
+  const spots = {};
+  for (const [id, sp] of Object.entries(m.spots || {})) { const { filled, total, pile, ...rest } = sp; spots[id] = rest; }
+  await upsert(room, "maps", mapId, { ...m, spots });
+}
+
 export async function useMap(room, me, mapId) {
   const now = Date.now();
   for (const m0 of (await listColl(room, "maps")).filter((m) => m.owner === me.id)) {
