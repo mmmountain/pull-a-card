@@ -14,8 +14,15 @@
 //   warm   warning                  always amber-ish
 //   suit   four suits      four hues spaced 90° apart, equal lightness and chroma
 
+// The default: stone, sage and clay. Shuffle still makes random schemes; Pink lemonade is the old default.
 export const ORIGINAL = {
-  name: "Original · pink lemonade",
+  name: "Original · sage and stone",
+  bg: "#eceee8", bg2: "#dce2d6", felt: "#d3dfd0", paper: "#fafaf7", ink: "#1f2b25", muted: "#55665c",
+  line: "#b6c4b3", accent: "#8db39a", hot: "#c4553d", warm: "#cf9a3a",
+  suit: { body: "#cf8468", home: "#7aa3bd", mind: "#cfae55", work: "#82ad84" },
+};
+export const PINK_LEMONADE = {
+  name: "Pink lemonade",
   bg: "#fff3a6", bg2: "#ffe57a", felt: "#ffd3e6", paper: "#fffdf7", ink: "#3a1630", muted: "#8a4f6c",
   line: "#f4a9c9", accent: "#ff7eb6", hot: "#ff4f86", warm: "#ffb020",
   suit: { body: "#ff5c93", home: "#6cbcff", mind: "#ffb81f", work: "#5fd394" },

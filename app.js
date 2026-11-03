@@ -20,7 +20,7 @@ function applyTheme(t, save = true) {
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", t.bg);
   if (save) try { localStorage.setItem(THEME_KEY, JSON.stringify(t)); } catch {}
 }
-try { const saved = JSON.parse(localStorage.getItem(THEME_KEY)); if (saved?.bg) applyTheme(saved, false); } catch {}
+try { const saved = JSON.parse(localStorage.getItem(THEME_KEY)); if (saved?.bg && !/pink lemonade/i.test(saved.name || "")) applyTheme(saved, false); else applyTheme(ORIGINAL, false); } catch { applyTheme(ORIGINAL, false); }
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const SUITC = { body: "var(--s-body)", home: "var(--s-home)", mind: "var(--s-mind)", work: "var(--s-work)" };
 const pips = (n) => `<div class="pips">${[1, 2, 3, 4, 5].map((i) => `<span class="pip${i <= n ? " on" : ""}"></span>`).join("")}</div>`;
