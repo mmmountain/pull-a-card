@@ -12,6 +12,7 @@ import * as S from "./src/store";
 import * as N from "./src/notify";
 import * as M from "./src/multi";
 import * as A from "./src/alarm";
+import * as CU from "./src/catchup";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, PINK_LEMONADE, randomTheme } from "./src/theme";
 import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./src/model";
@@ -24,6 +25,8 @@ import { DAYNAME, fmtMin, perLabel, layoutMap, SUIT_NAMES, MAP_LIBRARY, PER_NAME
 const C = { ...ORIGINAL, suit: { ...ORIGINAL.suit } };
 const THEME_KEY = "pac.theme.v1";
 const TRAY_KEY = "pac.cardTray.v1";
+const AWAY_KEY = "pac.lastActive.v1";
+const AWAY_MS = 6 * 36e5;
 let redraw = null;
 function applyTheme(t, save = true) {
   Object.assign(C, t, { suit: { ...t.suit } });
@@ -159,6 +162,9 @@ function Game({ profile, setProfile }) {
   const [editReq, setEditReq] = useState(null);     // card id to open in My decks
   const [qpDecks, setQpDecks] = useState(null);     // decks picked for quick play
   const [qpRun, setQpRun] = useState(null);         // a running quick play session
+  const [waiting, setWaiting] = useState([]);       // cards piled up (catch-up)
+  const [catchOpen, setCatchOpen] = useState(false);
+  const [autoCatch, setAutoCatch] = useState(false);
   const [focusHand, setFocusHand] = useState(null);
   const [msg, setMsg] = useState("");
   const [boardTouch, setBoardTouch] = useState(false);
@@ -194,10 +200,13 @@ function Game({ profile, setProfile }) {
     // Swipes and buttons on the full-screen alarm, applied as soon as the app's code is running.
     const runAlarm = () => A.applyAlarmActions().then((n) => { if (n) { say(n === 1 ? "Done from the alarm" : n + " alarm actions done"); refresh(); } }).catch(() => {});
     runAlarm();
+    checkAway();
     const offAlarm = A.onAlarmAction(runAlarm);
     const sub = Notifications.addNotificationResponseReceivedListener(onResponse);
     const app = AppState.addEventListener("change", (s) => {
+      if (s === "background") AsyncStorage.setItem(AWAY_KEY, String(Date.now())).catch(() => {});
       if (s === "active") {
+        checkAway();
         runAlarm();
         if (N.consumeShowCard()) setTab("card");
         N.claimDeliveredDeal(room, me).catch(() => {}).then(() => S.claimTakeover(room, me, prefs)).catch(() => {}).then(syncMaps).finally(refresh);
@@ -205,6 +214,15 @@ function Game({ profile, setProfile }) {
     });
     return () => { sub.remove(); app.remove(); offAlarm(); };
   }, [room]);
+
+  // Away 6+ hours with a pile waiting: open catch-up by itself.
+  async function checkAway() {
+    try {
+      const last = +(await AsyncStorage.getItem(AWAY_KEY)) || 0;
+      if (last && Date.now() - last >= AWAY_MS) setAutoCatch(true);
+      await AsyncStorage.setItem(AWAY_KEY, String(Date.now()));
+    } catch {}
+  }
 
   async function syncMaps() {
     try { const n = await S.syncMaps(room, me); if (n) say(n === 1 ? "You missed a map spot. Its card is in your hand." : `You missed ${n} map spots. Their cards are in your hand.`); } catch {}
@@ -250,6 +268,12 @@ function Game({ profile, setProfile }) {
     for (const r of ctx.live) for (const l of N.locksIn(states[r], me.id)) if (!all.has(l.cardId) || all.get(l.cardId).count < l.count) all.set(l.cardId, l);
     N.ringLocks([...all.values()]).catch(() => {});
   }, [lockKey]);
+
+  const waitKey = JSON.stringify([ctx.live, ctx.live.map((r) => states[r]?.tables?.[me.id]?.drawnAt || ""), states[room]?.plays?.length]);
+  useEffect(() => {
+    if (ctx.live.some((r) => !states[r])) return;
+    CU.gather(ctx).then((w) => { setWaiting(w); if (autoCatch && w.length >= 2) { setCatchOpen(true); } if (autoCatch) setAutoCatch(false); }).catch(() => {});
+  }, [waitKey, autoCatch, catchOpen]);
 
   const switchTo = async (r) => {
     setSwitcher(false);
@@ -322,6 +346,11 @@ function Game({ profile, setProfile }) {
         <Pressable onPress={() => setDrawer(true)} style={st.menuBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Open menu">
           <View style={st.menuLine} /><View style={st.menuLine} /><View style={st.menuLine} />
         </Pressable>
+        {cardMode && waiting.length >= 2 && (
+          <Pressable onPress={() => setCatchOpen(true)} style={st.waitPill} accessibilityRole="button" accessibilityLabel={waiting.length + " cards waiting. Catch up"}>
+            <Text style={st.waitPillTxt}>{waiting.length} waiting · catch up</Text>
+          </Pressable>
+        )}
         {!!undos.length && (
           <Pressable onPress={undo} disabled={undoing} style={st.undoBtn} hitSlop={6} accessibilityRole="button" accessibilityLabel={"Undo " + undos[undos.length - 1].label}>
             <Text style={st.undoIcon}>↶</Text>
@@ -349,6 +378,8 @@ function Game({ profile, setProfile }) {
         </View>
       )}
       {!!qpRun && !!states[lib] && <QuickPlay cfg={qpRun} libSt={states[lib]} me={me} libAct={libAct} say={say} onClose={() => setQpRun(null)} />}
+      {catchOpen && <CatchUp items={waiting} onClose={() => setCatchOpen(false)}
+        onApply={(decisions, label) => { setCatchOpen(false); act(async () => { await CU.apply(ctx, decisions); }, label); }} />}
       <TableSwitcher open={switcher} ctx={ctx} onClose={() => setSwitcher(false)} onPick={switchTo} onAdd={addTable} onLeave={leaveTable} onPause={togglePause} />
       <Drawer open={drawer} setOpen={setDrawer} section={section} name={me.name} room={room}
         onPick={(k) => { setDrawer(false); setSection(k); }} />
@@ -1761,6 +1792,114 @@ function BulkAdd({ mode, deck, onClose, onSave }) {
   );
 }
 
+/* ---------------- catching up ---------------- */
+// After time away: say roughly how much you did (a slider), fine-tune per card, and pick what happens to the rest.
+// Or go through the pile one card at a time with swipes.
+const REST = [["deck", "Back in the deck", "owed again, comes back around"], ["hold", "Hold", "into your hand"], ["drop", "Let it go", "gone, no catch-up"]];
+function PctSlider({ value, onChange }) {
+  const [w, setW] = useState(1);
+  const start = useRef(0);
+  const set = (x) => onChange(Math.max(0, Math.min(100, Math.round((x / w) * 20) * 5)));
+  const pr = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: (e) => { start.current = e.nativeEvent.locationX; set(start.current); },
+    onPanResponderMove: (_, g) => set(start.current + g.dx),
+  }), [w]);
+  return (
+    <View onLayout={(e) => setW(e.nativeEvent.layout.width || 1)} {...pr.panHandlers} style={st.sliderTrack} accessibilityRole="adjustable" accessibilityValue={{ min: 0, max: 100, now: value }}
+      accessibilityActions={[{ name: "increment" }, { name: "decrement" }]} onAccessibilityAction={(e) => onChange(Math.max(0, Math.min(100, value + (e.nativeEvent.actionName === "increment" ? 10 : -10))))}>
+      <View pointerEvents="none" style={[st.sliderFill, { width: value + "%" }]} />
+      <View pointerEvents="none" style={[st.sliderKnob, { left: `${value}%` }]} />
+    </View>
+  );
+}
+function CatchUp({ items, onClose, onApply }) {
+  const win = useWindowDimensions();
+  const gs = useMemo(() => CU.groups(items), [items]);
+  const [pct, setPct] = useState(50);
+  const [own, setOwn] = useState({});      // group key → how many you did, once you nudge it
+  const [rest, setRest] = useState("deck");
+  const [one, setOne] = useState(null);     // one-by-one: { i, picks: [] }
+  const sent = useRef(false);
+  const did = (g) => own[g.key] ?? CU.share(g.items.length, pct);
+  const total = gs.reduce((a, g) => a + did(g), 0);
+  const finish = (all) => {
+    const dec = new Map();
+    for (const g of gs) { const k = all ? g.items.length : did(g); g.items.forEach((it, i) => dec.set(it, i < k ? "did" : rest)); }
+    const n = all ? items.length : total;
+    onApply(dec, `Caught up: ${n} done${items.length - n ? ", " + (items.length - n) + " " + REST.find((r) => r[0] === rest)[1].toLowerCase() : ""}`);
+  };
+  if (one) {
+    const it = items[one.i];
+    if (!it) {
+      const dec = new Map(items.map((x, i) => [x, one.picks[i]]));
+      const n = one.picks.filter((p) => p === "did").length;
+      if (!sent.current) { sent.current = true; setTimeout(() => onApply(dec, `Caught up: ${n} done of ${items.length}`), 0); }
+      return null;
+    }
+    const pick = (what) => setOne({ i: one.i + 1, picks: [...one.picks, what] });
+    return (
+      <Modal visible animationType="fade" onRequestClose={onClose}>
+        <SafeAreaView style={st.screen} edges={["top", "bottom", "left", "right"]}>
+          <View style={[st.row, { padding: 12, justifyContent: "space-between" }]}>
+            <Btn label="‹ List" onPress={() => setOne(null)} />
+            <Text style={st.h3}>{one.i + 1} of {items.length}</Text>
+            <Text style={[st.miniMeta, { width: 70, textAlign: "right" }]}>{fmtTime(new Date(it.at))}</Text>
+          </View>
+          <QPCard key={one.i} c={{ id: it.t.cardId + one.i, label: it.t.label, suit: it.t.suit, variants: it.t.variant ? [it.t.variant] : [] }} col={C.suit[it.t.suit] || C.accent} W={win.width}
+            tags={{ play: "Did it", later: "Back in the deck", hold: "Hold", soon: "Let it go" }}
+            onSwipe={(s1) => pick(s1.kind === "play" ? "did" : s1.kind === "hold" ? "hold" : s1.kind === "soon" ? "drop" : "deck")} />
+          <Text style={[st.swipeHint, { marginBottom: 12 }]}>↑ did it · ← back in the deck · ↓ hold · → let it go</Text>
+        </SafeAreaView>
+      </Modal>
+    );
+  }
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={st.screen} edges={["top", "bottom", "left", "right"]}>
+        <View style={[st.row, { padding: 12, justifyContent: "space-between" }]}>
+          <Btn label="Later" onPress={onClose} />
+          <Text style={st.h3}>{items.length} waiting</Text>
+          <Btn primary label="Done" onPress={() => finish(false)} />
+        </View>
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 48 }}>
+          <View style={st.panel}>
+            <Text style={st.label}>ABOUT HOW MUCH DID YOU DO? · {pct}%</Text>
+            <PctSlider value={pct} onChange={(v) => { setPct(v); setOwn({}); }} />
+            <Text style={[st.note, { textAlign: "left" }]}>Sets every card below; nudge any of them with − and +. What you did counts at the time it came in.</Text>
+          </View>
+          {gs.map((g) => (
+            <View key={g.key} style={st.catchRow}>
+              <View style={[st.catchDot, { backgroundColor: C.suit[g.suit] || C.accent }]} />
+              <View style={{ flex: 1 }}>
+                <Text style={st.h3} numberOfLines={2}>{g.label}</Text>
+                <Text style={st.miniMeta}>×{g.items.length} · since {fmtTime(new Date(g.items[0].at))}</Text>
+              </View>
+              <Pressable onPress={() => setOwn({ ...own, [g.key]: Math.max(0, did(g) - 1) })} hitSlop={8} style={st.stepBtn} accessibilityLabel={"One fewer " + g.label}><Text style={st.h3}>−</Text></Pressable>
+              <Text style={[st.h3, { minWidth: 34, textAlign: "center" }]}>{did(g)}</Text>
+              <Pressable onPress={() => setOwn({ ...own, [g.key]: Math.min(g.items.length, did(g) + 1) })} hitSlop={8} style={st.stepBtn} accessibilityLabel={"One more " + g.label}><Text style={st.h3}>+</Text></Pressable>
+            </View>
+          ))}
+          <View style={st.panel}>
+            <Text style={st.label}>THE {items.length - total} YOU DIDN'T DO</Text>
+            {REST.map(([k, l, sub]) => (
+              <Pressable key={k} onPress={() => setRest(k)} style={[st.tableRow, rest === k && st.tableRowOn]} accessibilityRole="radio" accessibilityState={{ selected: rest === k }}>
+                <View style={{ flex: 1 }}><Text style={st.h3}>{l}</Text><Text style={[st.note, { textAlign: "left" }]}>{sub}</Text></View>
+              </Pressable>
+            ))}
+          </View>
+          <View style={st.row}>
+            <Btn flex label="One by one" onPress={() => setOne({ i: 0, picks: [] })} />
+            <Btn flex label="I did everything" onPress={() => finish(true)} />
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 /* ---------------- quick play ---------------- */
 // Cards as plain prompts, apart from your tables. A session runs under a profile:
 //   Prompt stream  a new card on a timer; ↑ = used it
@@ -1959,7 +2098,7 @@ function QuickPlay({ cfg, libSt, me, libAct, say, onClose }) {
 }
 
 /** Quick play's card: a solid suit color and the words. */
-function QPCard({ c, col, doing, emoji, onSwipe, W }) {
+function QPCard({ c, col, doing, emoji, onSwipe, W, tags }) {
   const pos = useRef(new Animated.ValueXY()).current;
   const [intent, setIntent] = useState(null);
   const live = useRef(onSwipe); live.current = onSwipe;
@@ -1981,7 +2120,7 @@ function QPCard({ c, col, doing, emoji, onSwipe, W }) {
   }), []);
   const rotate = pos.x.interpolate({ inputRange: [-300, 0, 300], outputRange: ["-8deg", "0deg", "8deg"] });
   const variant = useMemo(() => { const v = (c.variants || []).filter(Boolean); return v.length ? v[Math.floor(Math.random() * v.length)] : ""; }, [c.id]);
-  const tag = !intent ? null : intent.kind === "play" ? (doing ? "Done" : "Go") : intent.kind === "hold" ? "To your hand" : intent.kind === "soon" ? "More like this · later" : "Less like this";
+  const tag = !intent ? null : tags ? tags[intent.kind] : intent.kind === "play" ? (doing ? "Done" : "Go") : intent.kind === "hold" ? "To your hand" : intent.kind === "soon" ? "More like this · later" : "Less like this";
   const cw = Math.min(W - 40, 420);
   return (
     <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
@@ -2510,6 +2649,14 @@ function makeStyles() { return StyleSheet.create({
   forkLight: { backgroundColor: C.bg2 },
   forkTxt: { fontSize: 18, fontWeight: "800", textAlign: "center" },
   forkSub: { fontSize: 12, textAlign: "center", opacity: 0.85 },
+  waitPill: { minHeight: 40, paddingHorizontal: 12, borderRadius: 20, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, justifyContent: "center", elevation: 4 },
+  waitPillTxt: { fontSize: 13, fontWeight: "800", color: C.ink },
+  sliderTrack: { height: 36, borderRadius: 18, backgroundColor: C.paper, borderWidth: 1.5, borderColor: C.line, justifyContent: "center", overflow: "visible" },
+  sliderFill: { position: "absolute", left: 0, top: 0, bottom: 0, borderRadius: 18, backgroundColor: C.accent },
+  sliderKnob: { position: "absolute", width: 30, height: 30, marginLeft: -15, borderRadius: 15, backgroundColor: C.ink, borderWidth: 3, borderColor: C.paper },
+  catchRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 12, backgroundColor: C.bg2 },
+  catchDot: { width: 12, height: 12, borderRadius: 6 },
+  stepBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: C.paper, borderWidth: 1.5, borderColor: C.line },
   deckLogo: { position: "absolute", flexDirection: "row", gap: 2, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1.5, backgroundColor: C.paper },
   deckLogoTxt: { fontSize: 22 },
   emojiCell: { width: 44, height: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.paper, borderWidth: 2, borderColor: "transparent" },

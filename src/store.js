@@ -163,11 +163,13 @@ export async function placeOnTable(room, me, t) {
   return t;
 }
 
-async function logPlay(room, me, t, combo = null, at = null) {
-  const now = new Date().toISOString();
+async function logPlay(room, me, t, combo = null, at = null, meta = {}) {
+  // Catch-up credit is logged at the time the card was due, and marked so it can be told apart.
+  const now = meta.at || new Date().toISOString();
   const game = (await getDoc(room, "game", "main")) || { turn: 1 };
   await upsert(room, "plays", newId(), {
     seat: me.id, cardId: t.cardId, label: t.label, base: t.base || t.label, amount: t.amount ?? null, variant: t.variant || "", suit: t.suit, imm: t.imm, turn: game.turn || 1, at: now, combo,
+    ...(meta.catchup ? { catchup: true } : {}),
   });
   const card = await getDoc(room, "cards", t.cardId);
   if (card) await upsert(room, "cards", t.cardId, { ...card, lastPlayed: now, plays: (card.plays || 0) + 1 });
@@ -372,8 +374,9 @@ async function clearTableIf(room, me, cardId) {
   if (cur && !cur.empty && (!cardId || cur.cardId === cardId)) await upsert(room, "tables", me.id, { empty: true });
 }
 
-export async function playCard(room, me, t) { await guardLock(room, me, [t.cardId]);
-  await logPlay(room, me, t);
+export async function playCard(room, me, t, meta = {}) {
+  if (!meta.catchup) await guardLock(room, me, [t.cardId]);
+  await logPlay(room, me, t, null, null, meta);
   await clearTableIf(room, me, t.cardId);
   await advance(room, me);
 }
@@ -488,6 +491,38 @@ export async function swipeTop(room, me, t, it, handId = newId()) {
   if (it.kind === "later") await saveCard({ ...unDeal(), tempo: nudgedTempo(card?.tempo, it), dueAt: null });
   return {};
 }
+
+/* ---------- catching up ---------- */
+// For cards that piled up while you were away. A "note" is a deal notification still in the shade (never put
+// on the table, so not yet counted); a "top" is your face-up card (already counted when it was dealt).
+async function countDeal(room, t, at) {
+  const card = await getDoc(room, "cards", t.cardId);
+  if (card) await upsert(room, "cards", t.cardId, { ...card, ...markDrawn(card, at, t.amount) });
+}
+/** You did it (more or less): counted as dealt and played, at the time it came in. */
+export async function creditNote(room, me, t, at) {
+  await countDeal(room, t, at);
+  await logPlay(room, me, { ...t, drawnAt: at }, null, null, { at, catchup: true });
+}
+/** Into your hand. */
+export async function holdNote(room, me, t, at) {
+  await countDeal(room, t, at);
+  const { empty, id, ...card } = t;
+  await upsert(room, "hands", newId(), { ...card, drawnAt: at, seat: me.id, heldAt: new Date().toISOString(), remindAt: null });
+}
+/** Let it go: counted as dealt, so it isn't owed again, but not played. */
+export const dropNote = (room, t, at) => countDeal(room, t, at);
+/** Face-up card back in the deck: off the table, and its deal taken back so it's owed again. */
+export async function returnTop(room, me, t) {
+  await clearTableIf(room, me, t.cardId);
+  const card = await getDoc(room, "cards", t.cardId);
+  if (!card) return;
+  const log = [...(card.drawLog || [])];
+  const i = log.map((e) => (typeof e === "string" ? e : e.at)).lastIndexOf(t.drawnAt);
+  if (i >= 0) { log.splice(i, 1); await upsert(room, "cards", t.cardId, { ...card, drawLog: log }); }
+}
+/** Face-up card let go: off the table, still counted as dealt. */
+export const dropTop = (room, me, t) => clearTableIf(room, me, t.cardId);
 
 /** If a takeover card is due and nothing is face up, put it on the table. */
 export async function claimTakeover(room, me, win = {}) {

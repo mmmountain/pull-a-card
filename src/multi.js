@@ -79,7 +79,9 @@ async function each(list, fn) {
   return out;
 }
 
-export const playTop = (ctx, origin, t) => each(copiesOfTop(ctx, origin, t), (r, tr) => S.playCard(r, ctx.me, tr));
+export const playTop = (ctx, origin, t, meta = {}) => each(copiesOfTop(ctx, origin, t), (r, tr) => S.playCard(r, ctx.me, tr, meta));
+export const returnTopAll = (ctx, origin, t) => each(copiesOfTop(ctx, origin, t), (r, tr) => S.returnTop(r, ctx.me, tr));
+export const dropTopAll = (ctx, origin, t) => each(copiesOfTop(ctx, origin, t), (r, tr) => S.dropTop(r, ctx.me, tr));
 
 export async function holdTop(ctx, origin, t, remindAt = null) {
   const handId = newId();
