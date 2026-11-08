@@ -62,6 +62,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <button data-op="1" aria-pressed="false">Difference</button>
     <button data-op="2" aria-pressed="false">Add</button>
     <button data-op="3" aria-pressed="false">Over</button>
+    <button id="mirror" aria-pressed="false" title="A second copy of the loop turning the opposite way">Mirror ⇋</button>
   </div>
   <div class="params">
     <label class="param"><b>Rotate</b><span id="v-rot"></span><input id="p-rot" type="range" min="-180" max="180" step="0.5"></label>
@@ -90,7 +91,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   if (!gl) { say("This browser can't run WebGL 2."); return; }
 
   // ---- parameters (the Transform / Level / Composite TOPs) ----
-  const P = { rot: 60, scale: 1.005, op: 0.98, mode: 0, src: "pattern", vig: 0.85, fea: 0.35, wob: 0.35 };
+  const P = { rot: 60, scale: 1.005, op: 0.98, mode: 0, src: "pattern", vig: 0.85, fea: 0.35, wob: 0.35, mirror: false };
 
   // ---- shaders ----
   const VS = `#version 300 es
@@ -138,11 +139,12 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   const FS_FEEDBACK = `#version 300 es
   precision highp float; in vec2 uv; out vec4 o;
   uniform sampler2D prev; uniform sampler2D src; uniform vec2 res;
-  uniform float rot; uniform float scale; uniform float opacity; uniform int mode; uniform float vig; uniform float feather;
-  void main(){
+  uniform float rot; uniform float scale; uniform float opacity; uniform int mode; uniform float vig; uniform float feather; uniform int mirror2;
+  // One Transform TOP's worth of feedback: rotate + scale around the center, faded and softly edged.
+  vec4 look(float deg){
     float aspect = res.x/res.y;
     vec2 p = uv - 0.5; p.x *= aspect;
-    float a = radians(rot);
+    float a = radians(deg);
     p = mat2(cos(a), -sin(a), sin(a), cos(a)) * p / scale;   // a shader looks backwards: where was this pixel?
     p.x /= aspect; vec2 fu = p + 0.5;
     vec4 fb = texture(prev, fu) * opacity;
@@ -150,6 +152,12 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     fb *= e.x * e.y;  // extend: zero, with a soft edge instead of a hard frame line
     // The same soft oval inside the loop, so the rotated frame never shows as a hard polygon.
     fb *= 1.0 - smoothstep(vig + 0.1, vig + 0.1 + feather * 1.5, length((fu - 0.5) * 2.0));
+    return fb;
+  }
+  void main(){
+    vec4 fb = look(rot);
+    // Mirror: a second Transform at the opposite rotation, composited (maximum) with the first.
+    if (mirror2 == 1) fb = max(fb, look(-rot));
     vec4 s = texture(src, uv);
     vec3 c;
     if (mode == 0) c = max(s.rgb, fb.rgb);                 // Maximum
@@ -245,7 +253,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, inp.tex); gl.uniform1i(progFb.u.src, 1);
     gl.uniform2f(progFb.u.res, W, H); gl.uniform1f(progFb.u.rot, P.rot); gl.uniform1f(progFb.u.scale, P.scale);
     gl.uniform1f(progFb.u.opacity, P.op); gl.uniform1i(progFb.u.mode, P.mode);
-    gl.uniform1f(progFb.u.vig, P.vig); gl.uniform1f(progFb.u.feather, P.fea);
+    gl.uniform1f(progFb.u.vig, P.vig); gl.uniform1f(progFb.u.feather, P.fea); gl.uniform1i(progFb.u.mirror2, P.mirror ? 1 : 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     // 3) out
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.useProgram(progOut.pr);
@@ -262,7 +270,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     $("p-rot").value = P.rot; $("p-scale").value = P.scale; $("p-op").value = P.op;
     $("v-vig").textContent = P.vig.toFixed(2); $("v-fea").textContent = P.fea.toFixed(2); $("v-wob").textContent = P.wob.toFixed(2);
     $("p-vig").value = P.vig; $("p-fea").value = P.fea; $("p-wob").value = P.wob;
-    try { localStorage.setItem("fbloop", JSON.stringify({ rot: P.rot, scale: P.scale, op: P.op, mode: P.mode, vig: P.vig, fea: P.fea, wob: P.wob })); } catch {}
+    $("mirror").setAttribute("aria-pressed", P.mirror);
+    try { localStorage.setItem("fbloop", JSON.stringify({ rot: P.rot, scale: P.scale, op: P.op, mode: P.mode, vig: P.vig, fea: P.fea, wob: P.wob, mirror: P.mirror })); } catch {}
   };
   try { Object.assign(P, JSON.parse(localStorage.getItem("fbloop") || "{}")); } catch {}
   $("p-rot").oninput = (e) => { P.rot = +e.target.value; fmt(); };
@@ -271,6 +280,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   $("p-vig").oninput = (e) => { P.vig = +e.target.value; fmt(); };
   $("p-fea").oninput = (e) => { P.fea = +e.target.value; fmt(); };
   $("p-wob").oninput = (e) => { P.wob = +e.target.value; fmt(); };
+  $("mirror").onclick = () => { P.mirror = !P.mirror; fmt(); };
   document.querySelectorAll("[data-op]").forEach((b) => {
     b.onclick = () => { P.mode = +b.dataset.op; document.querySelectorAll("[data-op]").forEach((x) => x.setAttribute("aria-pressed", x === b)); fmt(); };
     b.setAttribute("aria-pressed", +b.dataset.op === P.mode);
