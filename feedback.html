@@ -68,6 +68,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <label class="param"><b>Scale</b><span id="v-scale"></span><input id="p-scale" type="range" min="0.95" max="1.05" step="0.0005"></label>
     <label class="param"><b>Opacity</b><span id="v-op"></span><input id="p-op" type="range" min="0.80" max="0.999" step="0.001"></label>
   </div>
+  <div class="params">
+    <label class="param"><b>Vignette</b><span id="v-vig"></span><input id="p-vig" type="range" min="0.3" max="1.4" step="0.01"></label>
+    <label class="param"><b>Feather</b><span id="v-fea"></span><input id="p-fea" type="range" min="0.02" max="0.8" step="0.01"></label>
+    <label class="param"><b>Wobble</b><span id="v-wob"></span><input id="p-wob" type="range" min="0" max="1" step="0.01"></label>
+  </div>
   <div class="row" style="justify-content: space-between">
     <span class="hint">Drag the picture: ↔ rotate · ↕ scale · two fingers ↕ opacity</span>
     <span class="row"><button id="clear">Clear</button><button id="hide">Hide</button></span>
@@ -85,7 +90,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   if (!gl) { say("This browser can't run WebGL 2."); return; }
 
   // ---- parameters (the Transform / Level / Composite TOPs) ----
-  const P = { rot: 60, scale: 1.005, op: 0.98, mode: 0, src: "pattern" };
+  const P = { rot: 60, scale: 1.005, op: 0.98, mode: 0, src: "pattern", vig: 0.85, fea: 0.35, wob: 0.35 };
 
   // ---- shaders ----
   const VS = `#version 300 es
@@ -95,31 +100,45 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   const FS_INPUT = `#version 300 es
   precision highp float; in vec2 uv; out vec4 o;
   uniform sampler2D tex; uniform int useTex; uniform vec2 res; uniform vec2 texRes; uniform float t; uniform int mirror;
+  uniform float vig; uniform float feather; uniform float wob;
   vec3 pal(float x){ return 0.5+0.5*cos(6.2831*(x+vec3(0.0,0.33,0.67))); }
+  float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+    return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y); }
+  float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { v += a*noise(p); p *= 2.03; a *= 0.5; } return v; }
   void main(){
+    vec3 col = vec3(0.0);
     if (useTex == 1) {
       float ca = res.x/res.y, ta = texRes.x/texRes.y;
       vec2 p = uv - 0.5;
       if (ca > ta) p.y *= ta/ca; else p.x *= ca/ta;
       p += 0.5; if (mirror == 1) p.x = 1.0 - p.x;
-      o = vec4(texture(tex, vec2(p.x, 1.0-p.y)).rgb, 1.0); return;
+      col = texture(tex, vec2(p.x, 1.0-p.y)).rgb;
+    } else {
+      vec2 p = (uv-0.5) * vec2(res.x/res.y, 1.0);
+      for (int i = 0; i < 3; i++) {
+        float fi = float(i);
+        vec2 q = 0.28*vec2(cos(t*(0.7+0.2*fi)+fi*2.1), sin(t*(0.9+0.15*fi)+fi*1.3));
+        float d = length(p-q);
+        col += pal(fi*0.31 + t*0.05) * smoothstep(0.035, 0.0, abs(d-0.06));
+      }
     }
-    vec2 p = (uv-0.5) * vec2(res.x/res.y, 1.0);
-    vec3 c = vec3(0.0);
-    for (int i = 0; i < 3; i++) {
-      float fi = float(i);
-      vec2 q = 0.28*vec2(cos(t*(0.7+0.2*fi)+fi*2.1), sin(t*(0.9+0.15*fi)+fi*1.3));
-      float d = length(p-q);
-      c += pal(fi*0.31 + t*0.05) * smoothstep(0.035, 0.0, abs(d-0.06));
-    }
-    o = vec4(c, 1.0);
+    // Vignette with transparency: a big oval that fills the frame, its rim breathing with layered noise,
+    // plus a slow inner noise so the transparency comes in patches (noise TOPs composited onto a ramp).
+    vec2 q = (uv - 0.5) * 2.0;
+    float ang = atan(q.y, q.x);
+    float rim = fbm(vec2(cos(ang), sin(ang)) * 1.6 + vec2(t*0.15, -t*0.11)) - 0.5;
+    float inner = fbm(q * 1.8 + vec2(-t*0.07, t*0.09)) - 0.5;
+    float r = length(q) + wob * (rim + 0.6*inner);
+    float m = 1.0 - smoothstep(vig - feather, vig + feather*0.5, r);
+    o = vec4(col * m, m);
   }`;
 
   // Feedback TOP → Level (opacity) → Transform (rotate, scale) → Composite with the input.
   const FS_FEEDBACK = `#version 300 es
   precision highp float; in vec2 uv; out vec4 o;
   uniform sampler2D prev; uniform sampler2D src; uniform vec2 res;
-  uniform float rot; uniform float scale; uniform float opacity; uniform int mode;
+  uniform float rot; uniform float scale; uniform float opacity; uniform int mode; uniform float vig; uniform float feather;
   void main(){
     float aspect = res.x/res.y;
     vec2 p = uv - 0.5; p.x *= aspect;
@@ -127,13 +146,16 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     p = mat2(cos(a), -sin(a), sin(a), cos(a)) * p / scale;   // a shader looks backwards: where was this pixel?
     p.x /= aspect; vec2 fu = p + 0.5;
     vec4 fb = texture(prev, fu) * opacity;
-    if (any(lessThan(fu, vec2(0.0))) || any(greaterThan(fu, vec2(1.0)))) fb = vec4(0.0);  // extend: zero
+    vec2 e = smoothstep(vec2(0.0), vec2(0.08), fu) * smoothstep(vec2(0.0), vec2(0.08), 1.0 - fu);
+    fb *= e.x * e.y;  // extend: zero, with a soft edge instead of a hard frame line
+    // The same soft oval inside the loop, so the rotated frame never shows as a hard polygon.
+    fb *= 1.0 - smoothstep(vig + 0.1, vig + 0.1 + feather * 1.5, length((fu - 0.5) * 2.0));
     vec4 s = texture(src, uv);
     vec3 c;
     if (mode == 0) c = max(s.rgb, fb.rgb);                 // Maximum
     else if (mode == 1) c = abs(s.rgb - fb.rgb);           // Difference
     else if (mode == 2) c = s.rgb + fb.rgb;                // Add
-    else c = mix(fb.rgb, s.rgb, step(0.08, dot(s.rgb, vec3(0.333))));  // Over (dark input is see-through)
+    else c = mix(fb.rgb, s.rgb / max(s.a, 1e-3), s.a);   // Over, through the vignette's transparency
     o = vec4(clamp(c, 0.0, 4.0), 1.0);
   }`;
 
@@ -215,6 +237,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     gl.uniform1i(progIn.u.tex, 0); gl.uniform1i(progIn.u.useTex, useTex);
     gl.uniform2f(progIn.u.res, W, H); gl.uniform2f(progIn.u.texRes, tw || 1, th || 1); gl.uniform1f(progIn.u.t, t);
     gl.uniform1i(progIn.u.mirror, P.src === "camera" && facing === "user" ? 1 : 0);
+    gl.uniform1f(progIn.u.vig, P.vig); gl.uniform1f(progIn.u.feather, P.fea); gl.uniform1f(progIn.u.wob, P.wob);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     // 2) feedback: read ping, write pong
     gl.bindFramebuffer(gl.FRAMEBUFFER, pong.fb); gl.useProgram(progFb.pr);
@@ -222,6 +245,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, inp.tex); gl.uniform1i(progFb.u.src, 1);
     gl.uniform2f(progFb.u.res, W, H); gl.uniform1f(progFb.u.rot, P.rot); gl.uniform1f(progFb.u.scale, P.scale);
     gl.uniform1f(progFb.u.opacity, P.op); gl.uniform1i(progFb.u.mode, P.mode);
+    gl.uniform1f(progFb.u.vig, P.vig); gl.uniform1f(progFb.u.feather, P.fea);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     // 3) out
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.useProgram(progOut.pr);
@@ -236,12 +260,17 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   const fmt = () => {
     $("v-rot").textContent = P.rot.toFixed(1) + "°"; $("v-scale").textContent = P.scale.toFixed(4); $("v-op").textContent = P.op.toFixed(3);
     $("p-rot").value = P.rot; $("p-scale").value = P.scale; $("p-op").value = P.op;
-    try { localStorage.setItem("fbloop", JSON.stringify({ rot: P.rot, scale: P.scale, op: P.op, mode: P.mode })); } catch {}
+    $("v-vig").textContent = P.vig.toFixed(2); $("v-fea").textContent = P.fea.toFixed(2); $("v-wob").textContent = P.wob.toFixed(2);
+    $("p-vig").value = P.vig; $("p-fea").value = P.fea; $("p-wob").value = P.wob;
+    try { localStorage.setItem("fbloop", JSON.stringify({ rot: P.rot, scale: P.scale, op: P.op, mode: P.mode, vig: P.vig, fea: P.fea, wob: P.wob })); } catch {}
   };
   try { Object.assign(P, JSON.parse(localStorage.getItem("fbloop") || "{}")); } catch {}
   $("p-rot").oninput = (e) => { P.rot = +e.target.value; fmt(); };
   $("p-scale").oninput = (e) => { P.scale = +e.target.value; fmt(); };
   $("p-op").oninput = (e) => { P.op = +e.target.value; fmt(); };
+  $("p-vig").oninput = (e) => { P.vig = +e.target.value; fmt(); };
+  $("p-fea").oninput = (e) => { P.fea = +e.target.value; fmt(); };
+  $("p-wob").oninput = (e) => { P.wob = +e.target.value; fmt(); };
   document.querySelectorAll("[data-op]").forEach((b) => {
     b.onclick = () => { P.mode = +b.dataset.op; document.querySelectorAll("[data-op]").forEach((x) => x.setAttribute("aria-pressed", x === b)); fmt(); };
     b.setAttribute("aria-pressed", +b.dataset.op === P.mode);
