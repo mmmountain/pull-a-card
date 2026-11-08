@@ -1,0 +1,308 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>*{box-sizing:border-box}body{margin:0}[hidden]{display:none!important}</style></head><body>
+<title>Feedback Loop</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the GL canvas is the whole screen; a parameter strip (TouchDesigner-style readouts) floats at the bottom. Single dark look on purpose. */
+:root {
+  --bg: #0b0d0c; --panel: rgba(16,19,18,.82); --line: #2c3431; --fg: #e8ece9; --dim: #8d9a94; --accent: #9fd8b3;
+  --mono: "DM Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--mono); overflow: hidden; touch-action: none; }
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+.hud {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 2;
+  padding: 10px max(12px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+  background: var(--panel); border-top: 1px solid var(--line); backdrop-filter: blur(8px);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.hud[hidden] { display: none !important; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.lbl { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); min-width: 64px; }
+button {
+  font: 500 13px var(--mono); color: var(--fg); background: transparent; border: 1px solid var(--line);
+  border-radius: 8px; min-height: 38px; padding: 0 10px; cursor: pointer;
+}
+button[aria-pressed="true"] { background: var(--accent); color: #0b0d0c; border-color: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.params { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.param { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; min-width: 0; }
+.param b { display: block; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); font-weight: 400; }
+.param input[type=range] { width: 100%; accent-color: var(--accent); margin: 4px 0 0; height: 26px; }
+.param span { font-variant-numeric: tabular-nums; font-size: 15px; }
+.hint { font-size: 11px; color: var(--dim); }
+.msg { font-size: 12px; color: var(--accent); }
+.msg a { color: var(--accent); }
+.show {
+  position: fixed; z-index: 3; right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--panel);
+}
+.show[hidden] { display: none !important; }
+#file { display: none; }
+@media (prefers-reduced-motion: reduce) { .hud { backdrop-filter: none; } }
+</style>
+
+<canvas id="gl" aria-label="Feedback loop output"></canvas>
+
+<div class="hud" id="hud">
+  <div class="row">
+    <span class="lbl">Input</span>
+    <button id="src-pattern" aria-pressed="true">Pattern</button>
+    <button id="src-camera" aria-pressed="false">Camera</button>
+    <button id="src-flip" hidden>Flip</button>
+    <button id="src-file" aria-pressed="false">Video file</button>
+    <input type="file" id="file" accept="video/*,image/*">
+  </div>
+  <div class="row">
+    <span class="lbl">Comp</span>
+    <button data-op="0" aria-pressed="true">Maximum</button>
+    <button data-op="1" aria-pressed="false">Difference</button>
+    <button data-op="2" aria-pressed="false">Add</button>
+    <button data-op="3" aria-pressed="false">Over</button>
+  </div>
+  <div class="params">
+    <label class="param"><b>Rotate</b><span id="v-rot"></span><input id="p-rot" type="range" min="-180" max="180" step="0.5"></label>
+    <label class="param"><b>Scale</b><span id="v-scale"></span><input id="p-scale" type="range" min="0.95" max="1.05" step="0.0005"></label>
+    <label class="param"><b>Opacity</b><span id="v-op"></span><input id="p-op" type="range" min="0.80" max="0.999" step="0.001"></label>
+  </div>
+  <div class="row" style="justify-content: space-between">
+    <span class="hint">Drag the picture: ↔ rotate · ↕ scale · two fingers ↕ opacity</span>
+    <span class="row"><button id="clear">Clear</button><button id="hide">Hide</button></span>
+  </div>
+  <div class="msg" id="msg" hidden></div>
+</div>
+<button class="show" id="show" hidden>Controls</button>
+
+<script>
+(() => {
+  const canvas = document.getElementById("gl");
+  const gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: false });
+  const msg = document.getElementById("msg");
+  const say = (html) => { msg.innerHTML = html; msg.hidden = !html; };
+  if (!gl) { say("This browser can't run WebGL 2."); return; }
+
+  // ---- parameters (the Transform / Level / Composite TOPs) ----
+  const P = { rot: 60, scale: 1.005, op: 0.98, mode: 0, src: "pattern" };
+
+  // ---- shaders ----
+  const VS = `#version 300 es
+  in vec2 a; out vec2 uv; void main(){ uv = a*0.5+0.5; gl_Position = vec4(a,0.,1.); }`;
+
+  // Movie File In TOP: a moving pattern, or the camera / a video (cover-fit).
+  const FS_INPUT = `#version 300 es
+  precision highp float; in vec2 uv; out vec4 o;
+  uniform sampler2D tex; uniform int useTex; uniform vec2 res; uniform vec2 texRes; uniform float t; uniform int mirror;
+  vec3 pal(float x){ return 0.5+0.5*cos(6.2831*(x+vec3(0.0,0.33,0.67))); }
+  void main(){
+    if (useTex == 1) {
+      float ca = res.x/res.y, ta = texRes.x/texRes.y;
+      vec2 p = uv - 0.5;
+      if (ca > ta) p.y *= ta/ca; else p.x *= ca/ta;
+      p += 0.5; if (mirror == 1) p.x = 1.0 - p.x;
+      o = vec4(texture(tex, vec2(p.x, 1.0-p.y)).rgb, 1.0); return;
+    }
+    vec2 p = (uv-0.5) * vec2(res.x/res.y, 1.0);
+    vec3 c = vec3(0.0);
+    for (int i = 0; i < 3; i++) {
+      float fi = float(i);
+      vec2 q = 0.28*vec2(cos(t*(0.7+0.2*fi)+fi*2.1), sin(t*(0.9+0.15*fi)+fi*1.3));
+      float d = length(p-q);
+      c += pal(fi*0.31 + t*0.05) * smoothstep(0.035, 0.0, abs(d-0.06));
+    }
+    o = vec4(c, 1.0);
+  }`;
+
+  // Feedback TOP → Level (opacity) → Transform (rotate, scale) → Composite with the input.
+  const FS_FEEDBACK = `#version 300 es
+  precision highp float; in vec2 uv; out vec4 o;
+  uniform sampler2D prev; uniform sampler2D src; uniform vec2 res;
+  uniform float rot; uniform float scale; uniform float opacity; uniform int mode;
+  void main(){
+    float aspect = res.x/res.y;
+    vec2 p = uv - 0.5; p.x *= aspect;
+    float a = radians(rot);
+    p = mat2(cos(a), -sin(a), sin(a), cos(a)) * p / scale;   // a shader looks backwards: where was this pixel?
+    p.x /= aspect; vec2 fu = p + 0.5;
+    vec4 fb = texture(prev, fu) * opacity;
+    if (any(lessThan(fu, vec2(0.0))) || any(greaterThan(fu, vec2(1.0)))) fb = vec4(0.0);  // extend: zero
+    vec4 s = texture(src, uv);
+    vec3 c;
+    if (mode == 0) c = max(s.rgb, fb.rgb);                 // Maximum
+    else if (mode == 1) c = abs(s.rgb - fb.rgb);           // Difference
+    else if (mode == 2) c = s.rgb + fb.rgb;                // Add
+    else c = mix(fb.rgb, s.rgb, step(0.08, dot(s.rgb, vec3(0.333))));  // Over (dark input is see-through)
+    o = vec4(clamp(c, 0.0, 4.0), 1.0);
+  }`;
+
+  const FS_OUT = `#version 300 es
+  precision highp float; in vec2 uv; out vec4 o; uniform sampler2D img;
+  void main(){ o = vec4(clamp(texture(img, uv).rgb, 0.0, 1.0), 1.0); }`;
+
+  function program(fs) {
+    const mk = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+    const pr = gl.createProgram();
+    gl.attachShader(pr, mk(gl.VERTEX_SHADER, VS)); gl.attachShader(pr, mk(gl.FRAGMENT_SHADER, fs));
+    gl.bindAttribLocation(pr, 0, "a"); gl.linkProgram(pr);
+    if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr));
+    const u = {}; const n = gl.getProgramParameter(pr, gl.ACTIVE_UNIFORMS);
+    for (let i = 0; i < n; i++) { const name = gl.getActiveUniform(pr, i).name; u[name] = gl.getUniformLocation(pr, name); }
+    return { pr, u };
+  }
+  let progIn, progFb, progOut;
+  try { progIn = program(FS_INPUT); progFb = program(FS_FEEDBACK); progOut = program(FS_OUT); }
+  catch (e) { say("Shader error: " + e.message); return; }
+
+  const quad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  // Float targets keep long trails from sticking at a dim gray (8-bit can't fade below a few steps).
+  const floatOK = !!gl.getExtension("EXT_color_buffer_float");
+  gl.getExtension("OES_texture_float_linear");
+  function target(w, h) {
+    const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+    if (floatOK) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    return { tex, fb, w, h };
+  }
+  let W = 0, H = 0, inp, ping, pong;
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.max(2, Math.floor(canvas.clientWidth * dpr)), h = Math.max(2, Math.floor(canvas.clientHeight * dpr));
+    if (w === W && h === H) return;
+    W = canvas.width = w; H = canvas.height = h;
+    inp = target(W, H); ping = target(W, H); pong = target(W, H);
+    clearLoop();
+  }
+  function clearLoop() { for (const t of [ping, pong]) { gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT); } }
+
+  // ---- video texture (camera or file) ----
+  const vtex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, vtex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const video = document.createElement("video");
+  video.muted = true; video.playsInline = true; video.loop = true; video.setAttribute("playsinline", "");
+  let image = null, stream = null, facing = "environment";
+  const mediaReady = () => (P.src === "camera" || P.src === "file") && ((image && image.complete) || video.readyState >= 2);
+
+  // ---- render loop ----
+  const t0 = performance.now();
+  function frame() {
+    resize();
+    const t = (performance.now() - t0) / 1000;
+    gl.viewport(0, 0, W, H);
+    // 1) input
+    gl.bindFramebuffer(gl.FRAMEBUFFER, inp.fb); gl.useProgram(progIn.pr);
+    let useTex = 0, tw = 1, th = 1;
+    if (mediaReady()) {
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, vtex);
+      try {
+        const el = image || video;
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, el);
+        useTex = 1; tw = image ? image.naturalWidth : video.videoWidth; th = image ? image.naturalHeight : video.videoHeight;
+      } catch (e) { useTex = 0; }
+    }
+    gl.uniform1i(progIn.u.tex, 0); gl.uniform1i(progIn.u.useTex, useTex);
+    gl.uniform2f(progIn.u.res, W, H); gl.uniform2f(progIn.u.texRes, tw || 1, th || 1); gl.uniform1f(progIn.u.t, t);
+    gl.uniform1i(progIn.u.mirror, P.src === "camera" && facing === "user" ? 1 : 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    // 2) feedback: read ping, write pong
+    gl.bindFramebuffer(gl.FRAMEBUFFER, pong.fb); gl.useProgram(progFb.pr);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, ping.tex); gl.uniform1i(progFb.u.prev, 0);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, inp.tex); gl.uniform1i(progFb.u.src, 1);
+    gl.uniform2f(progFb.u.res, W, H); gl.uniform1f(progFb.u.rot, P.rot); gl.uniform1f(progFb.u.scale, P.scale);
+    gl.uniform1f(progFb.u.opacity, P.op); gl.uniform1i(progFb.u.mode, P.mode);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    // 3) out
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.useProgram(progOut.pr);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, pong.tex); gl.uniform1i(progOut.u.img, 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    [ping, pong] = [pong, ping];
+    requestAnimationFrame(frame);
+  }
+
+  // ---- controls ----
+  const $ = (id) => document.getElementById(id);
+  const fmt = () => {
+    $("v-rot").textContent = P.rot.toFixed(1) + "°"; $("v-scale").textContent = P.scale.toFixed(4); $("v-op").textContent = P.op.toFixed(3);
+    $("p-rot").value = P.rot; $("p-scale").value = P.scale; $("p-op").value = P.op;
+    try { localStorage.setItem("fbloop", JSON.stringify({ rot: P.rot, scale: P.scale, op: P.op, mode: P.mode })); } catch {}
+  };
+  try { Object.assign(P, JSON.parse(localStorage.getItem("fbloop") || "{}")); } catch {}
+  $("p-rot").oninput = (e) => { P.rot = +e.target.value; fmt(); };
+  $("p-scale").oninput = (e) => { P.scale = +e.target.value; fmt(); };
+  $("p-op").oninput = (e) => { P.op = +e.target.value; fmt(); };
+  document.querySelectorAll("[data-op]").forEach((b) => {
+    b.onclick = () => { P.mode = +b.dataset.op; document.querySelectorAll("[data-op]").forEach((x) => x.setAttribute("aria-pressed", x === b)); fmt(); };
+    b.setAttribute("aria-pressed", +b.dataset.op === P.mode);
+  });
+  const setSrc = (s) => {
+    P.src = s;
+    for (const k of ["pattern", "camera", "file"]) $("src-" + k).setAttribute("aria-pressed", k === s);
+    $("src-flip").hidden = s !== "camera";
+  };
+  const stopMedia = () => { if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; } video.pause(); video.removeAttribute("src"); video.srcObject = null; image = null; };
+  $("src-pattern").onclick = () => { stopMedia(); setSrc("pattern"); say(""); };
+  async function startCamera() {
+    stopMedia();
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("no camera API");
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1280 } }, audio: false });
+      video.srcObject = stream; await video.play(); setSrc("camera"); say("");
+    } catch (e) {
+      setSrc("pattern");
+      say('The camera isn’t available on this page. Open the full version to use it: <a href="https://mmmountain.github.io/pull-a-card/feedback.html" target="_blank" rel="noopener">mmmountain.github.io/pull-a-card/feedback.html</a>. Or pick a video file.');
+    }
+  }
+  $("src-camera").onclick = startCamera;
+  $("src-flip").onclick = () => { facing = facing === "environment" ? "user" : "environment"; startCamera(); };
+  $("src-file").onclick = () => $("file").click();
+  $("file").onchange = (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    stopMedia(); const url = URL.createObjectURL(f);
+    if (f.type.startsWith("image/")) { image = new Image(); image.src = url; }
+    else { video.src = url; video.play().catch(() => {}); }
+    setSrc("file"); say("");
+  };
+  $("clear").onclick = clearLoop;
+  $("hide").onclick = () => { $("hud").hidden = true; $("show").hidden = false; };
+  $("show").onclick = () => { $("hud").hidden = false; $("show").hidden = true; };
+
+  // ---- gestures on the picture ----
+  const pts = new Map(); let start = null;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  canvas.addEventListener("pointerdown", (e) => {
+    canvas.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    start = { rot: P.rot, scale: P.scale, op: P.op, n: pts.size, pts: new Map([...pts].map(([k, v]) => [k, { ...v }])) };
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!pts.has(e.pointerId) || !start) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    let dx = 0, dy = 0, n = 0;
+    for (const [k, p] of pts) { const s = start.pts.get(k); if (s) { dx += p.x - s.x; dy += p.y - s.y; n++; } }
+    if (!n) return; dx /= n; dy /= n;
+    const h = canvas.clientHeight || 1;
+    if (pts.size >= 2) P.op = clamp(start.op - (dy / h) * 0.4, 0.8, 0.999);
+    else { P.rot = clamp(start.rot + dx * 0.4, -180, 180); P.scale = clamp(start.scale - (dy / h) * 0.06, 0.95, 1.05); }
+    fmt();
+  });
+  const up = (e) => { pts.delete(e.pointerId); start = pts.size ? { rot: P.rot, scale: P.scale, op: P.op, pts: new Map([...pts].map(([k, v]) => [k, { ...v }])) } : null; };
+  canvas.addEventListener("pointerup", up); canvas.addEventListener("pointercancel", up);
+  window.addEventListener("resize", resize);
+
+  fmt();
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body></html>
