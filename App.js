@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions, ActivityIndicator, Alert, AppState, KeyboardAvoidingView, Modal, Platform, Pressable, Share,
   ScrollView, StyleSheet, Switch, Text, TextInput, View,
-  Animated, PanResponder, Vibration, useWindowDimensions,
+  Animated, PanResponder, Vibration, useWindowDimensions, AccessibilityInfo, Easing,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -357,9 +357,10 @@ function Game({ profile, setProfile }) {
           </Pressable>
         )}
       </View>
+      {section === "play" && <ModeWheel mode={tab} onPick={setTab} handN={hereN} handMore={groups.length - hereN} />}
       {section !== "play" && <View style={st.header}><Text style={st.h2}>{SECTIONS.find((x) => x[0] === section)[1]}</Text></View>}
       {!cardMode && (
-      <ScrollView scrollEnabled={!boardTouch} contentContainerStyle={{ padding: 16, paddingBottom: section === "play" ? 48 + WHEEL_H + 24 : 48, gap: 18 }}>
+      <ScrollView scrollEnabled={!boardTouch} contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 18 }}>
         {section === "play" && tab === "hand" && <HandView ctx={ctx} state={state} room={room} me={me} act={act} focusHand={focusHand} />}
         {section === "play" && tab === "table" && <TableTab ctx={ctx} onPickTable={switchTo} openTables={() => setSwitcher(true)} state={state} room={room} me={me} act={act} say={say} setBoardTouch={setBoardTouch} />}
         {section === "decks" && (states[lib] ? <DeckView state={M.libraryView(states[lib], state)} room={lib} me={me} act={libAct} editReq={editReq} clearEditReq={() => setEditReq(null)} onQuick={(id) => { setQpDecks([id]); setSection("quick"); }} /> : <ActivityIndicator color={C.accent} />)}
@@ -368,7 +369,6 @@ function Game({ profile, setProfile }) {
           libSt={states[lib]} filters={states[lib]?.players.find((p) => p.id === me.id)?.filters || []} onFilters={(list) => libAct(() => S.setFilters(lib, me, list), "Filters saved")} />}
         {section === "settings" && <MeView part="settings" profile={profile} rooms={rooms} prefs={prefs} setProfile={setProfile} act={act} state={state} />}
       </ScrollView>)}
-      {section === "play" && <ModeWheel mode={tab} onPick={setTab} handN={hereN} handMore={groups.length - hereN} />}
       {!!msg && (
         <View style={[st.toast, st.row, { alignItems: "center" }]}>
           <Text style={[st.toastTxt, { flex: 1 }]}>{msg}</Text>
@@ -424,23 +424,27 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
   const locks = activeLocks(fromState.cards, fromState.hands, me.id);
   const wait = top && bufferBlock(card, fromState.plays, me.id);
   const blocked = top && (!canPlay(locks, [top.cardId]) || !!wait);
-  const padTop = 64, padBottom = ins.bottom + WHEEL_H + 44;
+  const padTop = 64 + WHEEL_BOX, padBottom = ins.bottom + 16;
   const canPull = drawable(state.cards, state.players, state.hands, state.tables, me.id, state.decks, state.maps).length > 0;
   const win = useWindowDimensions();
-  const topSpace = ins.top + 58, bottomSpace = padBottom + (tray && top ? 92 : 0);
+  const topSpace = ins.top + 58 + WHEEL_BOX, bottomSpace = padBottom + (tray && top ? 92 : 0);
   const availH = win.height - topSpace - bottomSpace - 8;
   const cw = Math.max(200, Math.min(win.width - 20, availH * 5 / 7)), ch = cw * 7 / 5;
   const box = { left: (win.width - cw) / 2, top: topSpace + Math.max(0, (availH - ch) / 2), width: cw, height: ch };
   const bandH = Math.round(ch * 0.15), footH = Math.round(ch * 0.08), k = cw / 360;
+  const tilt = useTilt(true);
+  const [rings, setRings] = useState([]);
+  const ring = () => setRings((r) => [...r, Date.now()]);
   return (
     <View style={StyleSheet.absoluteFill}>
+      {rings.map((id) => <PlayRing key={id} box={box} color={sc} onDone={() => setRings((r) => r.filter((x) => x !== id))} />)}
       {top ? (
         <>
-          <SwipeCard key={top.drawnAt} t={top} tint={tint} box={box} say={say} blockedMsg={wait ? "Not yet. " + bufferMessage(wait) : blocked ? lockMessage(locks) : ""}
-            onSwipe={(it) => act(async () => {
+          <SwipeCard key={top.drawnAt} t={top} tint={tint} box={box} say={say} gloss={<CardGloss w={box.width} h={box.height} tilt={tilt} />} blockedMsg={wait ? "Not yet. " + bufferMessage(wait) : blocked ? lockMessage(locks) : ""}
+            onSwipe={(it) => (it.kind === "play" && ring(), act(async () => {
               const r = await M.swipeAll(ctx, from, top, it);
               if (r?.handId && r.remindAt) await N.scheduleReminder(from, r.handId, top, r.remindAt);
-            }, swipeLabel(it) + ": " + top.label)}>
+            }, swipeLabel(it) + ": " + top.label))}>
             {/* Suit color does the talking: a solid band up top, a tinted face, double rules and frame in a darker shade. */}
             <View pointerEvents="none" style={[st.cardBand, { height: bandH, backgroundColor: sc }]}>
               <View style={[st.bandRule, { backgroundColor: ink2, bottom: 0 }]} />
@@ -504,7 +508,7 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
               ))}
             </View>
             <View style={[st.row, { width: "100%" }]}>
-              <Btn primary flex label={wait ? "Wait" : blocked ? "Locked" : "Play"} disabled={blocked} onPress={() => act(() => M.playTop(ctx, from, top), "Played: " + top.label)} />
+              <Btn primary flex label={wait ? "Wait" : blocked ? "Locked" : "Play"} disabled={blocked} onPress={() => { ring(); act(() => M.playTop(ctx, from, top), "Played: " + top.label); }} />
               <Btn flex label="Hold" onPress={() => act(() => M.holdTop(ctx, from, top), "Held: " + top.label)} />
             </View>
             <Pressable onPress={() => setLater(true)} hitSlop={10}><Text style={st.link}>Snooze…</Text></Pressable>
@@ -520,6 +524,7 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
       ) : canPull ? (
         <Pressable onPress={() => act(() => M.drawAll(ctx, prefs))} style={[st.fullBack, box]} accessibilityRole="button" accessibilityLabel="Tap to pull a card">
           <View style={st.fullBackInner}><View style={st.drawBtn}><Text style={st.drawTxt}>Tap to pull a card</Text></View></View>
+          <CardGloss w={box.width} h={box.height} tilt={tilt} />
         </Pressable>
       ) : (
         <View style={[st.home, { paddingTop: ins.top + padTop }]}>
@@ -667,7 +672,7 @@ function Stack({ s, fresh }) {
 }
 
 /* The top card, swipeable: up play · down hold · lean right "sooner/more" · lean left "later/less". */
-function SwipeCard({ t, tint, box, blockedMsg, onSwipe, say, children }) {
+function SwipeCard({ t, tint, box, blockedMsg, onSwipe, say, children, gloss }) {
   const ins = useSafeAreaInsets();
   const pos = useRef(new Animated.ValueXY()).current;
   const [intent, setIntent] = useState(null);
@@ -700,6 +705,7 @@ function SwipeCard({ t, tint, box, blockedMsg, onSwipe, say, children }) {
   return (
     <Animated.View {...pr.panHandlers} style={[st.fullCard, box, tint && { backgroundColor: tint }, { transform: [{ translateX: pos.x }, { translateY: pos.y }, { rotate }] }]}>
       {children}
+      {gloss}
       {!!intent && (
         <View pointerEvents="none" style={[st.swipeTag, { top: (box?.height || 400) * 0.22, borderColor: tone }]}>
           <Text style={[st.swipeTagTxt, { color: C.ink }]}>{swipeLabel(intent)}</Text>
@@ -709,11 +715,76 @@ function SwipeCard({ t, tint, box, blockedMsg, onSwipe, say, children }) {
   );
 }
 
+/* ---------------- card gloss and the play ring ---------------- */
+// Laminated playing-card stock: a broad soft sheen and a small hot glint that slide as you tilt the phone,
+// plus a faint bevel on the edges. The tilt follows the accelerometer relative to how you're holding it.
+let Sensors = null;
+try { Sensors = require("expo-sensors"); } catch {}
+function useTilt(active) {
+  const v = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  useEffect(() => {
+    if (!active || !Sensors?.Accelerometer) return;
+    let sub = null, alive = true, base = null, sx = 0, sy = 0;
+    AccessibilityInfo.isReduceMotionEnabled().then((reduce) => {
+      if (reduce || !alive) return;
+      try {
+        Sensors.Accelerometer.setUpdateInterval(33);
+        sub = Sensors.Accelerometer.addListener(({ x, y }) => {
+          if (!base) base = { x, y };
+          base.x += (x - base.x) * 0.004; base.y += (y - base.y) * 0.004;   // slowly re-centers on how you hold it
+          sx += ((x - base.x) - sx) * 0.2; sy += ((y - base.y) - sy) * 0.2;
+          v.setValue({ x: Math.max(-1, Math.min(1, sx * 2.5)), y: Math.max(-1, Math.min(1, sy * 2.5)) });
+        });
+      } catch {}
+    }).catch(() => {});
+    return () => { alive = false; sub?.remove?.(); };
+  }, [active]);
+  return v;
+}
+const SHEEN = Array.from({ length: 22 }, (_, i) => Math.exp(-Math.pow((i - 10.5) / 4.2, 2)));
+function CardGloss({ w, h, tilt, radius = 20 }) {
+  const band = { width: w * 2.4, height: h * 0.7 };
+  const glint = Math.min(w, h) * 0.55;
+  return (
+    <View pointerEvents="none" style={[StyleSheet.absoluteFill, { borderRadius: radius, overflow: "hidden" }]}>
+      <Animated.View style={{ position: "absolute", left: (w - band.width) / 2, top: (h - band.height) / 2, width: band.width, height: band.height,
+        transform: [{ translateX: Animated.multiply(tilt.x, -w * 0.55) }, { translateY: Animated.multiply(tilt.y, h * 0.45) }, { rotate: "-28deg" }] }}>
+        {SHEEN.map((a, i) => <View key={i} style={{ flex: 1, backgroundColor: `rgba(255,255,255,${(a * 0.2).toFixed(3)})` }} />)}
+      </Animated.View>
+      <Animated.View style={{ position: "absolute", left: w * 0.62 - glint / 2, top: h * 0.2 - glint / 2, width: glint, height: glint,
+        transform: [{ translateX: Animated.multiply(tilt.x, -w * 0.8) }, { translateY: Animated.multiply(tilt.y, h * 0.6) }] }}>
+        {[1, 0.75, 0.52, 0.32, 0.16].map((r, i) => (
+          <View key={i} style={{ position: "absolute", left: glint * (1 - r) / 2, top: glint * (1 - r) / 2, width: glint * r, height: glint * r, borderRadius: glint * r / 2, backgroundColor: "rgba(255,255,255,0.07)" }} />
+        ))}
+      </Animated.View>
+      <View style={[StyleSheet.absoluteFill, { borderRadius: radius, borderWidth: 1.5, borderTopColor: "rgba(255,255,255,0.55)", borderLeftColor: "rgba(255,255,255,0.35)", borderRightColor: "rgba(0,0,0,0.10)", borderBottomColor: "rgba(0,0,0,0.14)" }]} />
+    </View>
+  );
+}
+/** One slow ring that spreads from the card when it's played. */
+function PlayRing({ box, color, onDone }) {
+  const a = useRef(new Animated.Value(0)).current, b = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(a, { toValue: 1, duration: 1300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.sequence([Animated.delay(170), Animated.timing(b, { toValue: 1, duration: 1300, easing: Easing.out(Easing.cubic), useNativeDriver: true })]),
+    ]).start(() => onDone?.());
+  }, []);
+  const d = box.width;
+  const ring = (v, wdt, peak) => (
+    <Animated.View pointerEvents="none" style={{ position: "absolute", left: box.left + box.width / 2 - d / 2, top: box.top + box.height / 2 - d / 2, width: d, height: d, borderRadius: d / 2,
+      borderWidth: wdt, borderColor: color, opacity: v.interpolate({ inputRange: [0, 0.15, 1], outputRange: [0, peak, 0] }),
+      transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.35, 2.6] }) }] }} />
+  );
+  return <>{ring(a, 3, 0.7)}{ring(b, 1.5, 0.45)}</>;
+}
+
 /* ---------------- play-mode wheel ---------------- */
 // Table, Card and Hand sit 120° apart on one wheel, seen tilted so its rim is a wide, shallow ellipse.
 // Changing view turns the wheel a third of a turn. It loops: no first view, no last.
 const MODES = [["table", "Table"], ["card", "Card"], ["hand", "Hand"]];
 const WHEEL_H = 56;
+const WHEEL_BOX = WHEEL_H + 8; // the wheel's height at the top of Play
 const mod3 = (n) => ((n % 3) + 3) % 3;
 /** Blend two "#rrggbb" colors: t=0 → a, t=1 → b. */
 const mix = (a, b, t) => { const p = (h) => { const x = String(h).replace("#", ""); const n = parseInt(x.length === 3 ? x.replace(/./g, "$&$&") : x, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
@@ -742,14 +813,14 @@ function ModeWheel({ mode, onPick, handN, handMore }) {
     onPanResponderRelease: (_, g) => { if (Math.abs(g.dx) > 40) live.current(g.dx < 0 ? 1 : -1); },
   })).current;
   return (
-    <View style={[st.wheel, { height: WHEEL_H + ins.bottom + 44, paddingBottom: ins.bottom + 4 }]} {...swipe.panHandlers}>
-      {/* Fog: the screen behind the menu fades out toward the bottom. */}
+    <View style={[st.wheel, { height: WHEEL_BOX }]} {...swipe.panHandlers}>
+      {/* Fog: whatever is behind the menu fades out toward the top. */}
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-        {Array.from({ length: 14 }, (_, i) => (
-          <View key={i} style={{ flex: 1, backgroundColor: fade(C.bg, Math.min(0.97, Math.pow((i + 1) / 14, 0.8))) }} />
+        {Array.from({ length: 10 }, (_, i) => (
+          <View key={i} style={{ flex: 1, backgroundColor: fade(C.bg, Math.min(0.95, Math.pow((10 - i) / 10, 0.7))) }} />
         ))}
       </View>
-      <View style={[st.row, { flex: 1, alignItems: "flex-end", paddingHorizontal: 10 }]}>
+      <View style={[st.row, { flex: 1, alignItems: "center", paddingHorizontal: 10 }]}>
         <Pressable onPress={() => go(-1)} hitSlop={12} style={st.wheelArrow} accessibilityRole="button" accessibilityLabel={"Previous: " + MODES[mod3(cur - 1)][1]}>
           <Text style={st.wheelArrowTxt}>‹</Text>
         </Pressable>
@@ -2609,14 +2680,14 @@ function makeStyles() { return StyleSheet.create({
   fullBack: { position: "absolute", borderRadius: 20, backgroundColor: C.paper, padding: 8, elevation: 8 },
   fullBackInner: { flex: 1, borderRadius: 18, backgroundColor: C.accent, alignItems: "center", justifyContent: "center" },
   miniBeef: { fontSize: 18, fontWeight: "800", color: C.ink },
-  wheel: { position: "absolute", left: 0, right: 0, bottom: 0 },
-  wheelArrow: { width: 34, height: 34, marginBottom: 14, alignItems: "center", justifyContent: "center", borderRadius: 20, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 3 },
+  wheel: { zIndex: 5 },
+  wheelArrow: { width: 34, height: 34, marginBottom: 6, alignItems: "center", justifyContent: "center", borderRadius: 20, backgroundColor: C.bg, borderWidth: 1.5, borderColor: C.line, elevation: 3 },
   wheelArrowTxt: { fontSize: 20, fontWeight: "800", color: C.ink, marginTop: -2 },
-  wheelSlot: { position: "absolute", left: 0, right: 0, top: 14, alignItems: "center" },
-  wheelTxt: { fontFamily: Platform.select({ ios: "HelveticaNeue-Light", default: "sans-serif-light" }), fontSize: 16, fontWeight: "300", color: C.muted, letterSpacing: 0.3 },
-  wheelTxtOn: { fontSize: 20, color: C.ink, letterSpacing: 0.5 },
+  wheelSlot: { position: "absolute", left: 0, right: 0, top: 4, alignItems: "center" },
+  wheelTxt: { fontFamily: Platform.select({ ios: "HelveticaNeue", default: "sans-serif" }), fontSize: 16, fontWeight: "400", color: C.muted, letterSpacing: 0.3 },
+  wheelTxtOn: { fontFamily: Platform.select({ ios: "HelveticaNeue-Medium", default: "sans-serif-medium" }), fontWeight: "500", fontSize: 21, color: C.ink, letterSpacing: 0.6 },
   wheelCount: { fontSize: 13, color: C.accent },
-  wheelDot: { position: "absolute", top: 4, width: 6, height: 6, marginLeft: -3, borderRadius: 3, backgroundColor: C.accent },
+  wheelDot: { position: "absolute", top: 34, width: 6, height: 6, marginLeft: -3, borderRadius: 3, backgroundColor: C.accent },
   cardFrame: { position: "absolute", left: 12, right: 12, borderRadius: 14, borderWidth: 2, borderColor: C.line },
   cardBand: { position: "absolute", left: 0, right: 0, top: 0 },
   cardFoot: { position: "absolute", left: 0, right: 0, bottom: 0 },
