@@ -432,7 +432,6 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
   const cw = Math.max(200, Math.min(win.width - 20, availH * 5 / 7)), ch = cw * 7 / 5;
   const box = { left: (win.width - cw) / 2, top: topSpace + Math.max(0, (availH - ch) / 2), width: cw, height: ch };
   const bandH = Math.round(ch * 0.15), footH = Math.round(ch * 0.08), k = cw / 360;
-  const tilt = useTilt(true);
   const [rings, setRings] = useState([]);
   const ring = () => setRings((r) => [...r, Date.now()]);
   return (
@@ -440,7 +439,7 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
       {rings.map((id) => <PlayRing key={id} box={box} color={sc} onDone={() => setRings((r) => r.filter((x) => x !== id))} />)}
       {top ? (
         <>
-          <SwipeCard key={top.drawnAt} t={top} tint={tint} box={box} say={say} gloss={<CardGloss w={box.width} h={box.height} tilt={tilt} />} blockedMsg={wait ? "Not yet. " + bufferMessage(wait) : blocked ? lockMessage(locks) : ""}
+          <SwipeCard key={top.drawnAt} t={top} tint={tint} box={box} say={say} gloss={<CardGloss w={box.width} h={box.height} />} blockedMsg={wait ? "Not yet. " + bufferMessage(wait) : blocked ? lockMessage(locks) : ""}
             onSwipe={(it) => (it.kind === "play" && ring(), act(async () => {
               const r = await M.swipeAll(ctx, from, top, it);
               if (r?.handId && r.remindAt) await N.scheduleReminder(from, r.handId, top, r.remindAt);
@@ -524,7 +523,7 @@ function CardView({ ctx, state, room, me, act, goTo, prefs, say, onTogglePause: 
       ) : canPull ? (
         <Pressable onPress={() => act(() => M.drawAll(ctx, prefs))} style={[st.fullBack, box]} accessibilityRole="button" accessibilityLabel="Tap to pull a card">
           <View style={st.fullBackInner}><View style={st.drawBtn}><Text style={st.drawTxt}>Tap to pull a card</Text></View></View>
-          <CardGloss w={box.width} h={box.height} tilt={tilt} />
+          <CardGloss w={box.width} h={box.height} />
         </Pressable>
       ) : (
         <View style={[st.home, { paddingTop: ins.top + padTop }]}>
@@ -716,46 +715,33 @@ function SwipeCard({ t, tint, box, blockedMsg, onSwipe, say, children, gloss }) 
 }
 
 /* ---------------- card gloss and the play ring ---------------- */
-// Laminated playing-card stock: a broad soft sheen and a small hot glint that slide as you tilt the phone,
-// plus a faint bevel on the edges. The tilt follows the accelerometer relative to how you're holding it.
-let Sensors = null;
-try { Sensors = require("expo-sensors"); } catch {}
-function useTilt(active) {
-  const v = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+// A cel-shaded glint, anime style: two hard-edged white stripes snap across the card and a little four-point
+// star pops where they leave. Once about a second after the card turns up, then every 30 seconds.
+function CardGloss({ w, h, radius = 20 }) {
+  const sweep = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    if (!active || !Sensors?.Accelerometer) return;
-    let sub = null, alive = true, base = null, sx = 0, sy = 0;
-    AccessibilityInfo.isReduceMotionEnabled().then((reduce) => {
-      if (reduce || !alive) return;
-      try {
-        Sensors.Accelerometer.setUpdateInterval(33);
-        sub = Sensors.Accelerometer.addListener(({ x, y }) => {
-          if (!base) base = { x, y };
-          base.x += (x - base.x) * 0.004; base.y += (y - base.y) * 0.004;   // slowly re-centers on how you hold it
-          sx += ((x - base.x) - sx) * 0.2; sy += ((y - base.y) - sy) * 0.2;
-          v.setValue({ x: Math.max(-1, Math.min(1, sx * 2.5)), y: Math.max(-1, Math.min(1, sy * 2.5)) });
-        });
-      } catch {}
-    }).catch(() => {});
-    return () => { alive = false; sub?.remove?.(); };
-  }, [active]);
-  return v;
-}
-const SHEEN = Array.from({ length: 22 }, (_, i) => Math.exp(-Math.pow((i - 10.5) / 4.2, 2)));
-function CardGloss({ w, h, tilt, radius = 20 }) {
-  const band = { width: w * 2.4, height: h * 0.7 };
-  const glint = Math.min(w, h) * 0.55;
+    let alive = true, iv = null;
+    const run = () => { sweep.setValue(0); Animated.timing(sweep, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: true }).start(); };
+    const t = setTimeout(() => { if (!alive) return; run(); iv = setInterval(run, 30000); }, 1000);
+    AccessibilityInfo.isReduceMotionEnabled().then((r) => { if (r) { alive = false; clearTimeout(t); } }).catch(() => {});
+    return () => { alive = false; clearTimeout(t); if (iv) clearInterval(iv); };
+  }, []);
+  const span = Math.hypot(w, h);
+  const x = sweep.interpolate({ inputRange: [0, 1], outputRange: [-span * 0.75, span * 0.75] });
+  const show = sweep.interpolate({ inputRange: [0, 0.02, 0.98, 1], outputRange: [0, 1, 1, 0] });
+  const star = sweep.interpolate({ inputRange: [0, 0.7, 0.85, 1], outputRange: [0, 0, 1, 0] });
+  const sz = Math.min(w, h) * 0.13;
   return (
     <View pointerEvents="none" style={[StyleSheet.absoluteFill, { borderRadius: radius, overflow: "hidden" }]}>
-      <Animated.View style={{ position: "absolute", left: (w - band.width) / 2, top: (h - band.height) / 2, width: band.width, height: band.height,
-        transform: [{ translateX: Animated.multiply(tilt.x, -w * 0.55) }, { translateY: Animated.multiply(tilt.y, h * 0.45) }, { rotate: "-28deg" }] }}>
-        {SHEEN.map((a, i) => <View key={i} style={{ flex: 1, backgroundColor: `rgba(255,255,255,${(a * 0.2).toFixed(3)})` }} />)}
+      <Animated.View style={{ position: "absolute", left: w / 2 - span / 2, top: h / 2 - span / 2, width: span, height: span, opacity: show,
+        transform: [{ rotate: "-32deg" }, { translateX: x }] }}>
+        <View style={{ position: "absolute", top: 0, bottom: 0, left: span / 2 - w * 0.07, width: w * 0.14, backgroundColor: "rgba(255,255,255,0.62)" }} />
+        <View style={{ position: "absolute", top: 0, bottom: 0, left: span / 2 + w * 0.1, width: w * 0.035, backgroundColor: "rgba(255,255,255,0.62)" }} />
       </Animated.View>
-      <Animated.View style={{ position: "absolute", left: w * 0.62 - glint / 2, top: h * 0.2 - glint / 2, width: glint, height: glint,
-        transform: [{ translateX: Animated.multiply(tilt.x, -w * 0.8) }, { translateY: Animated.multiply(tilt.y, h * 0.6) }] }}>
-        {[1, 0.75, 0.52, 0.32, 0.16].map((r, i) => (
-          <View key={i} style={{ position: "absolute", left: glint * (1 - r) / 2, top: glint * (1 - r) / 2, width: glint * r, height: glint * r, borderRadius: glint * r / 2, backgroundColor: "rgba(255,255,255,0.07)" }} />
-        ))}
+      <Animated.View style={{ position: "absolute", left: w * 0.78 - sz / 2, top: h * 0.12 - sz / 2, width: sz, height: sz, opacity: star,
+        transform: [{ scale: star.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }) }, { rotate: "12deg" }] }}>
+        <View style={{ position: "absolute", left: sz * 0.44, top: 0, width: sz * 0.12, height: sz, borderRadius: sz, backgroundColor: "#ffffff" }} />
+        <View style={{ position: "absolute", top: sz * 0.44, left: 0, height: sz * 0.12, width: sz, borderRadius: sz, backgroundColor: "#ffffff" }} />
       </Animated.View>
       <View style={[StyleSheet.absoluteFill, { borderRadius: radius, borderWidth: 1.5, borderTopColor: "rgba(255,255,255,0.55)", borderLeftColor: "rgba(255,255,255,0.35)", borderRightColor: "rgba(0,0,0,0.10)", borderBottomColor: "rgba(0,0,0,0.14)" }]} />
     </View>
