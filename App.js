@@ -18,7 +18,7 @@ import { ORIGINAL, PINK_LEMONADE, randomTheme } from "./src/theme";
 import { bufferBlock, bufferMessage, BUFFER_STEPS, swipeIntent, swipeLabel, hmDate, toHM } from "./src/model";
 import { periodStart, myChaos, myDeck, stackPlays, lastMove, drawable, activeLocks, canPlay, lockMessage, quotaLabel, PERIODS, PERIOD_NAMES, effectiveQuota, amountLabel } from "./src/model";
 import { SUIT, SUITS, ago, cardLine, fmtTime, heat, newId, parseLater } from "./src/model";
-import { DECK_LIBRARY, deckOf, everydayId, myDecks, deckEmoji, cardEmojis, coverage, filterLive, filtersFor, parseCardList, seriesLines, aiDeckPrompt } from "./src/model";
+import { DECK_LIBRARY, deckOf, everydayId, myDecks, deckEmoji, cardEmojis, coverage, filterLive, filtersFor, parseCardList, seriesLines, aiDeckPrompt, intervalHours, dealFrom } from "./src/model";
 import { DAYNAME, fmtMin, perLabel, layoutMap, SUIT_NAMES, MAP_LIBRARY, PER_NAMES, amountText, canPlayAt, describeAccepts, fitsSpots, jitter, live, parseWhen, shapeEdges, shortWhen, spotPos, spotState } from "./src/maps";
 
 // Live color palette. applyTheme() swaps it in place and redraws the app.
@@ -26,6 +26,7 @@ const C = { ...ORIGINAL, suit: { ...ORIGINAL.suit } };
 const THEME_KEY = "pac.theme.v1";
 const TRAY_KEY = "pac.cardTray.v1";
 const AWAY_KEY = "pac.lastActive.v1";
+const FOCUS_KEY = "pac.focus.v1";
 const AWAY_MS = 6 * 36e5;
 let redraw = null;
 function applyTheme(t, save = true) {
@@ -163,6 +164,8 @@ function Game({ profile, setProfile }) {
   const [qpDecks, setQpDecks] = useState(null);     // decks picked for quick play
   const [qpRun, setQpRun] = useState(null);         // a running quick play session
   const [waiting, setWaiting] = useState([]);       // cards piled up (catch-up)
+  const [focusOn, setFocusOn] = useState(false);
+  useEffect(() => { AsyncStorage.getItem(FOCUS_KEY).then((v) => setFocusOn(v === "1")).catch(() => {}); }, []);
   const [catchOpen, setCatchOpen] = useState(false);
   const [autoCatch, setAutoCatch] = useState(false);
   const [focusHand, setFocusHand] = useState(null);
@@ -275,6 +278,29 @@ function Game({ profile, setProfile }) {
     CU.gather(ctx).then((w) => { setWaiting(w); if (autoCatch && w.length >= 2) { setCatchOpen(true); } if (autoCatch) setAutoCatch(false); }).catch(() => {});
   }, [waitKey, autoCatch, catchOpen]);
 
+  // Focus: only self-care is dealt while it's on (personal "Only" filters tagged focus), shown as a desk scene.
+  const startFocus = () => {
+    setFocusOn(true); AsyncStorage.setItem(FOCUS_KEY, "1").catch(() => {});
+    libAct(async () => {
+      const deckId = me.id + ":selfcare";
+      let libSt1 = await S.fetchRoom(lib);
+      if (!(libSt1.decks || []).some((d) => d.id === deckId)) { await S.addLibraryDeck(lib, me, "selfcare"); libSt1 = await S.fetchRoom(lib); }
+      const water = myDeck(libSt1.cards, libSt1.players, me.id).find((c) => /\bwater\b/i.test(c.label) && deckOf(c, me.id) === everydayId(me.id)) || myDeck(libSt1.cards, libSt1.players, me.id).find((c) => /\bwater\b/i.test(c.label));
+      const until = new Date(Date.now() + 16 * 36e5).toISOString();
+      const mine = (libSt1.players.find((p) => p.id === me.id)?.filters || []).filter((f) => !f.focus);
+      await S.setFilters(lib, me, [...mine,
+        { id: "focus-deck", focus: true, on: true, mode: "only", what: "deck:" + deckId, when: { kind: "until", at: until } },
+        ...(water ? [{ id: "focus-water", focus: true, on: true, mode: "only", what: "card:" + water.id, when: { kind: "until", at: until } }] : [])]);
+      for (const r of ctx.live) await S.addUseDecks(r, me, [deckId]).catch(() => {});
+    }, "Focus: self-care only");
+  };
+  const endFocus = () => {
+    setFocusOn(false); AsyncStorage.setItem(FOCUS_KEY, "0").catch(() => {});
+    N.focusAlarms([]);
+    const mine = (states[lib]?.players.find((p) => p.id === me.id)?.filters || []).filter((f) => !f.focus);
+    libAct(() => S.setFilters(lib, me, mine), "Focus ended");
+  };
+
   const switchTo = async (r) => {
     setSwitcher(false);
     if (r === room) return;
@@ -378,11 +404,12 @@ function Game({ profile, setProfile }) {
         </View>
       )}
       {!!qpRun && !!states[lib] && <QuickPlay cfg={qpRun} libSt={states[lib]} me={me} libAct={libAct} say={say} onClose={() => setQpRun(null)} />}
+      {focusOn && !!states[lib] && <FocusView ctx={ctx} libSt={states[lib]} me={me} prefs={prefs} act={act} onEnd={endFocus} />}
       {catchOpen && <CatchUp items={waiting} onClose={() => setCatchOpen(false)}
         onApply={(decisions, label) => { setCatchOpen(false); act(async () => { await CU.apply(ctx, decisions); }, label); }} />}
       <TableSwitcher open={switcher} ctx={ctx} onClose={() => setSwitcher(false)} onPick={switchTo} onAdd={addTable} onLeave={leaveTable} onPause={togglePause} />
       <Drawer open={drawer} setOpen={setDrawer} section={section} name={me.name} room={room}
-        onPick={(k) => { setDrawer(false); setSection(k); }} />
+        onPick={(k) => { setDrawer(false); if (k === "focus") return startFocus(); setSection(k); }} />
     </SafeAreaView>
   );
 }
@@ -1849,6 +1876,154 @@ function BulkAdd({ mode, deck, onClose, onSave }) {
   );
 }
 
+/* ---------------- focus: the self-care desk ---------------- */
+// Water, bathroom, stretch, walk and eat as things on a desk that fill up over time, each at the pace of its
+// card (Drink water at 24 a day fills in about 40 minutes). Swipe a thing up when you've done it: it plays the
+// card and empties. Full for 10 minutes rings the full-screen alarm. Meant to stay open while you work.
+let KeepAwake = null;
+try { KeepAwake = require("expo-keep-awake"); } catch {}
+const NEEDS = [
+  { key: "water", re: /\bwater\b/i, name: "Water", color: "#5aa9e6" },
+  { key: "eat", re: /\beat\b|meal|snack|lunch/i, name: "Eat", color: "#e3964b" },
+  { key: "stretch", re: /stretch/i, name: "Stretch", color: "#6fb26f" },
+  { key: "bathroom", re: /bathroom|restroom|toilet/i, name: "Bathroom", color: "#e6c84f" },
+  { key: "walk", re: /\bwalk\b/i, name: "Walk", color: "#9a7fd1" },
+];
+function useFocusNeeds(ctx, libSt, me, prefs, now) {
+  return useMemo(() => {
+    const all = myDeck(libSt.cards, libSt.players, me.id).filter((c) => c.active !== false);
+    const self = me.id + ":selfcare";
+    const win = { startHour: prefs.startHour, endHour: prefs.endHour };
+    const dayStart = new Date(now); dayStart.setHours(prefs.startHour ?? 8, 0, 0, 0);
+    return NEEDS.map((n) => {
+      const hits = all.filter((c) => n.re.test(c.label));
+      const card = hits.find((c) => deckOf(c, me.id) === (n.key === "water" ? everydayId(me.id) : self)) || hits[0];
+      if (!card) return null;
+      let last = 0;
+      for (const r of ctx.live) { const c = ctx.states[r]?.cards.find((x) => x.id === card.id); if (c?.lastPlayed) last = Math.max(last, Date.parse(c.lastPlayed)); }
+      last = Math.max(last, dayStart.getTime());
+      const every = intervalHours(card, win) * 36e5;
+      return { ...n, card, every, last, fill: Math.max(0, (now - last) / every), fullAt: last + every };
+    }).filter(Boolean);
+  }, [ctx.states, libSt, now, prefs.startHour, prefs.endHour]);
+}
+function FocusView({ ctx, libSt, me, prefs, act, onEnd }) {
+  const ins = useSafeAreaInsets();
+  const win = useWindowDimensions();
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 15000); return () => clearInterval(t); }, []);
+  useEffect(() => { try { KeepAwake?.activateKeepAwakeAsync?.("focus"); } catch {} return () => { try { KeepAwake?.deactivateKeepAwake?.("focus"); } catch {} }; }, []);
+  const needs = useFocusNeeds(ctx, libSt, me, prefs, now);
+  const alarmKey = needs.map((n) => n.card.id + ":" + Math.round(n.fullAt / 6e4)).join("|");
+  useEffect(() => { N.focusAlarms(needs.map((n) => ({ cardId: n.card.id, label: n.card.label, fullAt: n.fullAt }))); }, [alarmKey]);
+  const play = (n) => act(async () => {
+    const room = ctx.live.find((r) => ctx.states[r]?.cards.some((c) => c.id === n.card.id)) || ctx.room;
+    const top = ctx.states[room]?.tables?.[me.id];
+    if (top && !top.empty && top.cardId === n.card.id) await M.playTop(ctx, room, top);
+    else await S.playNow(room, me, dealFrom(ctx.states[room]?.cards.find((c) => c.id === n.card.id) || n.card));
+  }, n.card.label + " ✓");
+  const W = Math.min(win.width - 24, 520), H = Math.min(W * 1.25, win.height - ins.top - ins.bottom - 190);
+  const hour = new Date(now).getHours();
+  const sky = hour < 7 || hour >= 20 ? "#2b3a67" : hour < 10 ? "#bfe0f2" : hour < 17 ? "#9fd1ef" : "#f2b98a";
+  const by = Object.fromEntries(needs.map((n) => [n.key, n]));
+  const left = (n) => n.fill >= 1 ? "now" : Math.max(1, Math.round((n.fullAt - now) / 6e4)) + "m";
+  return (
+    <Modal visible animationType="fade" onRequestClose={onEnd}>
+      <View style={[st.screen, { paddingTop: ins.top + 8, paddingBottom: ins.bottom + 12, alignItems: "center" }]}>
+        <View style={[st.row, { width: W, justifyContent: "space-between" }]}>
+          <View><Text style={st.label}>FOCUS · SELF-CARE ONLY</Text><Text style={st.miniMeta}>Swipe a thing up when you've done it.</Text></View>
+          <Btn label="End focus" onPress={onEnd} />
+        </View>
+        <View style={[st.scene, { width: W, height: H, marginTop: 12 }]}>
+          {/* window */}
+          <View style={[st.sceneWindow, { left: W * 0.07, top: H * 0.07, width: W * 0.4, height: H * 0.28, backgroundColor: sky }]}>
+            <View style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 3, marginLeft: -1.5, backgroundColor: C.paper }} />
+            <View style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 3, marginTop: -1.5, backgroundColor: C.paper }} />
+            <View style={{ position: "absolute", right: "18%", top: "18%", width: W * 0.06, height: W * 0.06, borderRadius: W, backgroundColor: hour < 7 || hour >= 20 ? "#f3f0d8" : "#ffe58a" }} />
+          </View>
+          {/* door: bathroom */}
+          {by.bathroom && <NeedThing n={by.bathroom} onPlay={play} left={left(by.bathroom)} box={{ left: W * 0.66, top: H * 0.08, width: W * 0.27, height: H * 0.6 }}>
+            {(f) => (<View style={[st.sceneDoor]}>
+              <View style={[st.sceneGauge, { left: "22%", right: "22%", top: "10%", height: "26%", borderRadius: 999 }]}><Fill f={f} color={by.bathroom.color} /></View>
+              <View style={{ position: "absolute", right: "12%", top: "55%", width: 8, height: 8, borderRadius: 4, backgroundColor: C.ink }} />
+            </View>)}
+          </NeedThing>}
+          {/* desk */}
+          <View style={[st.sceneDesk, { left: 0, right: 0, top: H * 0.66, height: H * 0.06 }]} />
+          <View style={[st.sceneLeg, { left: W * 0.06, top: H * 0.72, height: H * 0.28 }]} />
+          <View style={[st.sceneLeg, { left: W * 0.56, top: H * 0.72, height: H * 0.28 }]} />
+          {/* glass: water */}
+          {by.water && <NeedThing n={by.water} onPlay={play} left={left(by.water)} box={{ left: W * 0.08, top: H * 0.43, width: W * 0.13, height: H * 0.23 }}>
+            {(f) => <View style={[st.sceneGauge, { left: 0, right: 0, top: 0, bottom: 0, borderTopLeftRadius: 4, borderTopRightRadius: 4, borderBottomLeftRadius: 12, borderBottomRightRadius: 12 }]}><Fill f={f} color={by.water.color} /></View>}
+          </NeedThing>}
+          {/* bowl: eat */}
+          {by.eat && <NeedThing n={by.eat} onPlay={play} left={left(by.eat)} box={{ left: W * 0.26, top: H * 0.55, width: W * 0.2, height: H * 0.11 }}>
+            {(f) => <View style={[st.sceneGauge, { left: 0, right: 0, top: 0, bottom: 0, borderTopLeftRadius: 4, borderTopRightRadius: 4, borderBottomLeftRadius: 999, borderBottomRightRadius: 999 }]}><Fill f={f} color={by.eat.color} /></View>}
+          </NeedThing>}
+          {/* plant: stretch */}
+          {by.stretch && <NeedThing n={by.stretch} onPlay={play} left={left(by.stretch)} box={{ left: W * 0.49, top: H * 0.4, width: W * 0.12, height: H * 0.26 }}>
+            {(f) => (<View style={{ flex: 1, justifyContent: "flex-end", alignItems: "center" }}>
+              <View style={{ width: 4, height: `${Math.min(1, f) * 62}%`, backgroundColor: by.stretch.color, borderRadius: 2 }} />
+              <View style={{ position: "absolute", bottom: `${22 + Math.min(1, f) * 55}%`, width: "70%", height: "16%", borderRadius: 999, backgroundColor: by.stretch.color, transform: [{ rotate: f >= 1 ? "-25deg" : "-8deg" }] }} />
+              <View style={[st.sceneGauge, { position: "relative", width: "80%", height: "32%", borderBottomLeftRadius: 8, borderBottomRightRadius: 8, backgroundColor: "#b8794e", borderColor: C.ink }]} />
+            </View>)}
+          </NeedThing>}
+          {/* shoe: walk */}
+          {by.walk && <NeedThing n={by.walk} onPlay={play} left={left(by.walk)} box={{ left: W * 0.68, top: H * 0.82, width: W * 0.24, height: H * 0.1 }}>
+            {(f) => <View style={[st.sceneGauge, { left: 0, right: 0, top: 0, bottom: 0, borderTopLeftRadius: 999, borderTopRightRadius: 14, borderBottomLeftRadius: 8, borderBottomRightRadius: 8 }]}><Fill f={f} color={by.walk.color} /></View>}
+          </NeedThing>}
+        </View>
+        <View style={[st.row, { width: W, flexWrap: "wrap", gap: 6, marginTop: 12 }]}>
+          {needs.map((n) => (
+            <Pressable key={n.key} onPress={() => play(n)} style={[st.focusChip, n.fill >= 1 && { borderColor: n.color, backgroundColor: fade(n.color, 0.18) }]} accessibilityRole="button" accessibilityLabel={n.card.label + ", " + (n.fill >= 1 ? "full" : left(n) + " until full") + ". Mark done"}>
+              <View style={[st.catchDot, { backgroundColor: n.color }]} /><Text style={st.miniMeta}>{n.name} · {left(n)} · done</Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+function Fill({ f, color }) {
+  const h = Math.min(1, f) * 100;
+  return <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: h + "%", backgroundColor: color, opacity: 0.9 }} />;
+}
+/** One thing on the desk: shows its fill, wiggles when full, and plays its card when swiped up. */
+function NeedThing({ n, box, left, onPlay, children }) {
+  const y = useRef(new Animated.Value(0)).current;
+  const wob = useRef(new Animated.Value(0)).current;
+  const full = n.fill >= 1;
+  useEffect(() => {
+    if (!full) return;
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(wob, { toValue: 1, duration: 120, useNativeDriver: true }), Animated.timing(wob, { toValue: -1, duration: 240, useNativeDriver: true }),
+      Animated.timing(wob, { toValue: 0, duration: 120, useNativeDriver: true }), Animated.delay(2600)]));
+    loop.start(); return () => loop.stop();
+  }, [full]);
+  const live = useRef(onPlay); live.current = onPlay;
+  const nn = useRef(n); nn.current = n;
+  const pr = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderMove: (_, g) => y.setValue(Math.min(0, g.dy)),
+    onPanResponderRelease: (_, g) => {
+      if (g.dy < -50) Animated.timing(y, { toValue: -160, duration: 180, useNativeDriver: true }).start(() => { live.current(nn.current); y.setValue(0); });
+      else Animated.spring(y, { toValue: 0, useNativeDriver: true }).start();
+    },
+  }), []);
+  return (
+    <View style={{ position: "absolute", ...box }}>
+      <Animated.View {...pr.panHandlers} style={{ flex: 1, transform: [{ translateY: y }, { rotate: wob.interpolate({ inputRange: [-1, 1], outputRange: ["-4deg", "4deg"] }) }] }}
+        accessibilityRole="adjustable" accessibilityLabel={n.card.label + (full ? ", full" : "")}>
+        {children(n.fill)}
+        {full && <View style={[st.sceneBubble, { borderColor: n.color }]}><Text style={st.sceneBubbleTxt}>!</Text></View>}
+      </Animated.View>
+      <Text style={st.sceneLbl} numberOfLines={1}>{n.name} · {left}</Text>
+    </View>
+  );
+}
+
 /* ---------------- catching up ---------------- */
 // After time away: say roughly how much you did (a slider), fine-tune per card, and pick what happens to the rest.
 // Or go through the pile one card at a time with swipes.
@@ -2363,7 +2538,7 @@ function EmojiPicker({ value, onPick }) {
 }
 
 /* ---------------- side menu ---------------- */
-const SECTIONS = [["play", "Play", "♠"], ["quick", "Quick play", "▶"], ["decks", "My decks", "▤"], ["me", "Me", "●"], ["settings", "Settings", "⚙"]];
+const SECTIONS = [["play", "Play", "♠"], ["focus", "Focus", "◐"], ["quick", "Quick play", "▶"], ["decks", "My decks", "▤"], ["me", "Me", "●"], ["settings", "Settings", "⚙"]];
 const DRAWER_W = Math.min(300, Dimensions.get("window").width * 0.8);
 // Slides in from the left: tap the ☰ button, or drag from the left edge of the screen. Drag it back or tap outside to close.
 function Drawer({ open, setOpen, section, name, room, onPick }) {
@@ -2714,6 +2889,16 @@ function makeStyles() { return StyleSheet.create({
   catchRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 12, backgroundColor: C.bg2 },
   catchDot: { width: 12, height: 12, borderRadius: 6 },
   stepBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: C.paper, borderWidth: 1.5, borderColor: C.line },
+  scene: { borderRadius: 20, backgroundColor: C.bg2, overflow: "hidden", borderWidth: 1.5, borderColor: C.line },
+  sceneWindow: { position: "absolute", borderRadius: 8, borderWidth: 3, borderColor: C.paper, overflow: "hidden" },
+  sceneDoor: { flex: 1, borderRadius: 6, backgroundColor: C.paper, borderWidth: 2, borderColor: C.ink },
+  sceneDesk: { position: "absolute", backgroundColor: "#c99b6d", borderTopWidth: 2, borderColor: C.ink },
+  sceneLeg: { position: "absolute", width: 10, backgroundColor: "#a87b52" },
+  sceneGauge: { position: "absolute", overflow: "hidden", backgroundColor: fade("#ffffff", 0.55), borderWidth: 2, borderColor: C.ink },
+  sceneLbl: { position: "absolute", left: -20, right: -20, bottom: -18, textAlign: "center", fontSize: 11, fontWeight: "700", color: C.ink },
+  sceneBubble: { position: "absolute", top: -14, right: -10, width: 24, height: 24, borderRadius: 12, backgroundColor: C.paper, borderWidth: 2, alignItems: "center", justifyContent: "center" },
+  sceneBubbleTxt: { fontSize: 14, fontWeight: "900", color: C.ink },
+  focusChip: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 40, paddingHorizontal: 10, borderRadius: 20, borderWidth: 1.5, borderColor: C.line },
   deckLogo: { position: "absolute", flexDirection: "row", gap: 2, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1.5, backgroundColor: C.paper },
   deckLogoTxt: { fontSize: 22 },
   emojiCell: { width: 44, height: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.paper, borderWidth: 2, borderColor: "transparent" },

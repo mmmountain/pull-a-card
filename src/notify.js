@@ -261,7 +261,7 @@ export async function scheduleTakeovers(cards, prefs = {}) {
     }
     Takeover.schedule(id, at, c.label.toUpperCase(), `It's ${fmtTime(hmDate(c.takeover))}. Play this card to make it stop.`, 3, 10);
   }
-  for (const id of existing) if (id !== "test" && !id.startsWith("lock-") && !id.startsWith("deal-") && id !== "qp-idle" && !wanted.has(id)) Takeover.cancel(id);
+  for (const id of existing) if (id !== "test" && !id.startsWith("lock-") && !id.startsWith("deal-") && !id.startsWith("focus-") && id !== "qp-idle" && !wanted.has(id)) Takeover.cancel(id);
 }
 
 /**
@@ -313,4 +313,14 @@ export function qpIdle(mins, label = "") {
   if (!Takeover) return;
   Takeover.cancel("qp-idle");
   if (mins > 0) Takeover.schedule("qp-idle", Date.now() + mins * 60e3, "STILL ON IT?", label ? "Up next: " + label : "Back to it.", 2, 10);
+}
+
+/**
+ * Focus mode: ring full screen when a need has been full for 10 minutes. `needs` = [{ cardId, label, fullAt }].
+ * Pass [] to stop them all. Swipes on the alarm play the card like any other alarm.
+ */
+export function focusAlarms(needs) {
+  if (!Takeover) return;
+  for (const id of Takeover.ids()) if (id.startsWith("focus-")) Takeover.cancel(id);
+  for (const n of needs) Takeover.schedule("focus-" + n.cardId, Math.max(Date.now() + 5000, n.fullAt + 10 * 60e3), n.label.toUpperCase(), "It's full. Swipe up when you've done it.", 3, 10);
 }

@@ -8,7 +8,7 @@ import * as S from "./store";
 import * as M from "./multi";
 import { dealFrom } from "./model";
 
-const cardOf = (id) => id.startsWith("lock-") || id.startsWith("card-") ? id.slice(5) : id.startsWith("deal-") ? id.slice(5).replace(/-\d+$/, "") : null;
+const cardOf = (id) => id.startsWith("lock-") || id.startsWith("card-") ? id.slice(5) : id.startsWith("focus-") ? id.slice(6) : id.startsWith("deal-") ? id.slice(5).replace(/-\d+$/, "") : null;
 
 async function makeCtx(me, rooms, paused, room) {
   const states = {};

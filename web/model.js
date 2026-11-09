@@ -516,7 +516,7 @@ export function myDecks(decks, meId) {
 }
 
 /** A deck's little logo: the emoji you picked, else a default for the built-in decks. */
-const DECK_EMOJI = { everyday: "☀️", powerlifting: "🏋️", mindful: "🧘", artists: "🎨" };
+const DECK_EMOJI = { everyday: "☀️", powerlifting: "🏋️", mindful: "🧘", artists: "🎨", selfcare: "🌿" };
 export function deckEmoji(deck) {
   if (!deck) return "";
   if (deck.emoji) return deck.emoji;
@@ -574,6 +574,17 @@ export const DECK_LIBRARY = [
       { key: "stretch", label: "Slow stretch", suit: "body", imm: 2, quota: { n: 1, per: "day" } },
       { key: "read", label: "Read 20 min", suit: "mind", imm: 2, quota: { n: 1, per: "day" } },
       { key: "gratitude", label: "Write three good things", suit: "mind", imm: 2, quota: { n: 1, per: "day" } },
+    ],
+  },
+  {
+    key: "selfcare",
+    name: "Self-care",
+    about: "The body stuff that slips while you work: bathroom, stretching, walking, eating. Focus mode shows these (and Drink water) as a little desk scene.",
+    cards: [
+      { key: "bathroom", label: "Bathroom break", suit: "body", imm: 3, beef: 1, quota: { n: 6, per: "day" } },
+      { key: "stretch", label: "Stretch", variants: ["Neck and shoulders", "Stand up, reach high", "Hips and hamstrings", "Wrists and hands"], suit: "body", imm: 2, beef: 1, quota: { n: 8, per: "day" } },
+      { key: "walk", label: "Take a walk", variants: ["Around the block", "Five minutes outside", "Up and down the stairs"], suit: "body", imm: 2, beef: 2, quota: { n: 4, per: "day" } },
+      { key: "eat", label: "Eat something", variants: ["A real meal", "A snack with protein", "Some fruit"], suit: "body", imm: 3, beef: 2, quota: { n: 3, per: "day" } },
     ],
   },
   {

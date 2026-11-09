@@ -504,6 +504,12 @@ export async function creditNote(room, me, t, at) {
   await countDeal(room, t, at);
   await logPlay(room, me, { ...t, drawnAt: at }, null, null, { at, catchup: true });
 }
+/** Played right now without being dealt first (focus mode): counted as dealt and played. */
+export async function playNow(room, me, t) {
+  const at = new Date().toISOString();
+  await countDeal(room, t, at);
+  await logPlay(room, me, { ...t, drawnAt: at });
+}
 /** Into your hand. */
 export async function holdNote(room, me, t, at) {
   await countDeal(room, t, at);
