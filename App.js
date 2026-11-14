@@ -1996,25 +1996,25 @@ function FocusView({ ctx, libSt, me, prefs, act, onEnd }) {
 /* ---------------- focus looks ---------------- */
 const LOOK_KEY = "pac.focusLook.v1";
 const FOCUS_LOOKS = [["aero", "Frutiger Aero"], ["classic", "Classic desk"]];
-// Frutiger Aero: one 3D world (sky, sea, beach) rendered in three.js, with each need at its own depth:
-// a planet far off in the sky (walk: its golden orbit fills), a bowl bobbing on the sea (eat), a sprouting
-// island (stretch), a door on the beach (bathroom: its porthole fills), a glass of water up close.
+// Frutiger Aero: one 3D world (sky, sea, beach) rendered in three.js (tools/aero), with each need at its own depth:
+// a planet far off in the sky (walk: its golden orbit fills), a sprouting island in the shallows (stretch: blooms when
+// full), a door on the beach (bathroom: its porthole fills), a fruit bowl on the sand (eat), a glass of water up close.
 // Generated from tools/aero (scene.html → render3.js): the world, and each need at 8 fill levels, cropped.
 const AERO = {
-  size: [1080, 1920], levels: [0, 15, 30, 45, 60, 75, 90, 100],
-  bg: require("./assets/aero2/bg.jpg"), gull: require("./assets/aero2/sprite-gull.png"), fish: require("./assets/aero2/sprite-fish.png"),
-  layers: {"walk": {x: 162, y: 400, w: 417, h: 301}, "eat": {x: 261, y: 1103, w: 223, h: 101}, "stretch": {x: 438, y: 837, w: 338, h: 378}, "bathroom": {x: 586, y: 896, w: 439, h: 682}, "water": {x: 0, y: 1044, w: 374, h: 830}},
+  size: [1080, 1920], levels: [0,  15,  30,  45,  60,  75,  90,  100],
+  bg: require("./assets/aero3/bg.jpg"), gull: require("./assets/aero3/sprite-gull.png"), fish: require("./assets/aero3/sprite-fish.png"),
+  layers: {"walk": {x: 141, y: 324, w: 544, h: 382}, "eat": {x: 369, y: 1227, w: 417, h: 269}, "stretch": {x: 347, y: 884, w: 453, h: 390}, "bathroom": {x: 521, y: 884, w: 542, h: 666}, "water": {x: 0, y: 958, w: 374, h: 743}},
   frames: {
-    walk: { 0: require("./assets/aero2/walk-0.png"), 15: require("./assets/aero2/walk-15.png"), 30: require("./assets/aero2/walk-30.png"), 45: require("./assets/aero2/walk-45.png"), 60: require("./assets/aero2/walk-60.png"), 75: require("./assets/aero2/walk-75.png"), 90: require("./assets/aero2/walk-90.png"), 100: require("./assets/aero2/walk-100.png") },
-    eat: { 0: require("./assets/aero2/eat-0.png"), 15: require("./assets/aero2/eat-15.png"), 30: require("./assets/aero2/eat-30.png"), 45: require("./assets/aero2/eat-45.png"), 60: require("./assets/aero2/eat-60.png"), 75: require("./assets/aero2/eat-75.png"), 90: require("./assets/aero2/eat-90.png"), 100: require("./assets/aero2/eat-100.png") },
-    stretch: { 0: require("./assets/aero2/stretch-0.png"), 15: require("./assets/aero2/stretch-15.png"), 30: require("./assets/aero2/stretch-30.png"), 45: require("./assets/aero2/stretch-45.png"), 60: require("./assets/aero2/stretch-60.png"), 75: require("./assets/aero2/stretch-75.png"), 90: require("./assets/aero2/stretch-90.png"), 100: require("./assets/aero2/stretch-100.png") },
-    bathroom: { 0: require("./assets/aero2/bathroom-0.png"), 15: require("./assets/aero2/bathroom-15.png"), 30: require("./assets/aero2/bathroom-30.png"), 45: require("./assets/aero2/bathroom-45.png"), 60: require("./assets/aero2/bathroom-60.png"), 75: require("./assets/aero2/bathroom-75.png"), 90: require("./assets/aero2/bathroom-90.png"), 100: require("./assets/aero2/bathroom-100.png") },
-    water: { 0: require("./assets/aero2/water-0.png"), 15: require("./assets/aero2/water-15.png"), 30: require("./assets/aero2/water-30.png"), 45: require("./assets/aero2/water-45.png"), 60: require("./assets/aero2/water-60.png"), 75: require("./assets/aero2/water-75.png"), 90: require("./assets/aero2/water-90.png"), 100: require("./assets/aero2/water-100.png") },
+    walk: { 0: require("./assets/aero3/walk-0.webp"), 15: require("./assets/aero3/walk-15.webp"), 30: require("./assets/aero3/walk-30.webp"), 45: require("./assets/aero3/walk-45.webp"), 60: require("./assets/aero3/walk-60.webp"), 75: require("./assets/aero3/walk-75.webp"), 90: require("./assets/aero3/walk-90.webp"), 100: require("./assets/aero3/walk-100.webp") },
+    eat: { 0: require("./assets/aero3/eat-0.webp"), 15: require("./assets/aero3/eat-15.webp"), 30: require("./assets/aero3/eat-30.webp"), 45: require("./assets/aero3/eat-45.webp"), 60: require("./assets/aero3/eat-60.webp"), 75: require("./assets/aero3/eat-75.webp"), 90: require("./assets/aero3/eat-90.webp"), 100: require("./assets/aero3/eat-100.webp") },
+    stretch: { 0: require("./assets/aero3/stretch-0.webp"), 15: require("./assets/aero3/stretch-15.webp"), 30: require("./assets/aero3/stretch-30.webp"), 45: require("./assets/aero3/stretch-45.webp"), 60: require("./assets/aero3/stretch-60.webp"), 75: require("./assets/aero3/stretch-75.webp"), 90: require("./assets/aero3/stretch-90.webp"), 100: require("./assets/aero3/stretch-100.webp") },
+    bathroom: { 0: require("./assets/aero3/bathroom-0.webp"), 15: require("./assets/aero3/bathroom-15.webp"), 30: require("./assets/aero3/bathroom-30.webp"), 45: require("./assets/aero3/bathroom-45.webp"), 60: require("./assets/aero3/bathroom-60.webp"), 75: require("./assets/aero3/bathroom-75.webp"), 90: require("./assets/aero3/bathroom-90.webp"), 100: require("./assets/aero3/bathroom-100.webp") },
+    water: { 0: require("./assets/aero3/water-0.webp"), 15: require("./assets/aero3/water-15.webp"), 30: require("./assets/aero3/water-30.webp"), 45: require("./assets/aero3/water-45.webp"), 60: require("./assets/aero3/water-60.webp"), 75: require("./assets/aero3/water-75.webp"), 90: require("./assets/aero3/water-90.webp"), 100: require("./assets/aero3/water-100.webp") },
   },
 };
 const AERO_INK = "#0b3d6e";
 const AERO_ORDER = ["walk", "eat", "stretch", "bathroom", "water"]; // far to near
-const AERO_BOB = { walk: 7, eat: 4 };
+const AERO_BOB = { walk: 7 };
 function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
   const ins = useSafeAreaInsets();
   const win = useWindowDimensions();
@@ -2105,13 +2105,13 @@ function AeroLife({ s, ox, oy, W }) {
     ];
     loops.forEach((l) => l.start()); return () => loops.forEach((l) => l.stop());
   }, []);
-  const sea = oy + 1000 * s; // the horizon line in the art
+  const sea = oy + 1010 * s; // the horizon line in the art
   const gull = (v, top, size, flip) => (
     <Animated.Image source={AERO.gull} resizeMode="contain" style={{ position: "absolute", top, left: 0, width: size, height: size * 0.6,
       transform: [{ translateX: v.interpolate({ inputRange: [0, 1], outputRange: flip ? [W + size, -size * 2] : [-size * 2, W + size] }) },
         { translateY: v.interpolate({ inputRange: [0, 0.25, 0.5, 0.75, 1], outputRange: [0, -10, 4, -8, 0] }) }, { scaleX: flip ? -1 : 1 }] }} />
   );
-  const fx = ox + 560 * s, fw = 90 * s;
+  const fx = ox + 420 * s, fw = 80 * s;
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       {gull(g1, oy + 300 * s, 120 * s, false)}
