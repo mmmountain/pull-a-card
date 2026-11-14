@@ -1996,34 +1996,44 @@ function FocusView({ ctx, libSt, me, prefs, act, onEnd }) {
 /* ---------------- focus looks ---------------- */
 const LOOK_KEY = "pac.focusLook.v1";
 const FOCUS_LOOKS = [["aero", "Frutiger Aero"], ["classic", "Classic desk"]];
-// Frutiger Aero: glass orbs over a bright sky and glossy hills. Art is pre-rendered (3D icons in three.js,
-// glass and liquid layers on canvas) and lives in assets/aero.
+// Frutiger Aero: one 3D world (sky, sea, beach) rendered in three.js, with each need at its own depth:
+// a planet far off in the sky (walk: its golden orbit fills), a bowl bobbing on the sea (eat), a sprouting
+// island (stretch), a door on the beach (bathroom: its porthole fills), a glass of water up close.
+// Generated from tools/aero (scene.html → render3.js): the world, and each need at 8 fill levels, cropped.
 const AERO = {
-  land: require("./assets/aero/landscape.jpg"), back: require("./assets/aero/orb-back.png"), front: require("./assets/aero/orb-front.png"), halo: require("./assets/aero/halo.png"),
-  liquid: { water: require("./assets/aero/liquid-water.png"), eat: require("./assets/aero/liquid-eat.png"), stretch: require("./assets/aero/liquid-stretch.png"), bathroom: require("./assets/aero/liquid-bathroom.png"), walk: require("./assets/aero/liquid-walk.png") },
-  icon: { water: require("./assets/aero/icon-drop.png"), eat: require("./assets/aero/icon-bowl.png"), stretch: require("./assets/aero/icon-leaf.png"), bathroom: require("./assets/aero/icon-door.png"), walk: require("./assets/aero/icon-sneaker.png") },
+  size: [1080, 1920], levels: [0, 15, 30, 45, 60, 75, 90, 100],
+  bg: require("./assets/aero2/bg.jpg"), gull: require("./assets/aero2/sprite-gull.png"), fish: require("./assets/aero2/sprite-fish.png"),
+  layers: {"walk": {x: 162, y: 400, w: 417, h: 301}, "eat": {x: 261, y: 1103, w: 223, h: 101}, "stretch": {x: 438, y: 837, w: 338, h: 378}, "bathroom": {x: 586, y: 896, w: 439, h: 682}, "water": {x: 0, y: 1044, w: 374, h: 830}},
+  frames: {
+    walk: { 0: require("./assets/aero2/walk-0.png"), 15: require("./assets/aero2/walk-15.png"), 30: require("./assets/aero2/walk-30.png"), 45: require("./assets/aero2/walk-45.png"), 60: require("./assets/aero2/walk-60.png"), 75: require("./assets/aero2/walk-75.png"), 90: require("./assets/aero2/walk-90.png"), 100: require("./assets/aero2/walk-100.png") },
+    eat: { 0: require("./assets/aero2/eat-0.png"), 15: require("./assets/aero2/eat-15.png"), 30: require("./assets/aero2/eat-30.png"), 45: require("./assets/aero2/eat-45.png"), 60: require("./assets/aero2/eat-60.png"), 75: require("./assets/aero2/eat-75.png"), 90: require("./assets/aero2/eat-90.png"), 100: require("./assets/aero2/eat-100.png") },
+    stretch: { 0: require("./assets/aero2/stretch-0.png"), 15: require("./assets/aero2/stretch-15.png"), 30: require("./assets/aero2/stretch-30.png"), 45: require("./assets/aero2/stretch-45.png"), 60: require("./assets/aero2/stretch-60.png"), 75: require("./assets/aero2/stretch-75.png"), 90: require("./assets/aero2/stretch-90.png"), 100: require("./assets/aero2/stretch-100.png") },
+    bathroom: { 0: require("./assets/aero2/bathroom-0.png"), 15: require("./assets/aero2/bathroom-15.png"), 30: require("./assets/aero2/bathroom-30.png"), 45: require("./assets/aero2/bathroom-45.png"), 60: require("./assets/aero2/bathroom-60.png"), 75: require("./assets/aero2/bathroom-75.png"), 90: require("./assets/aero2/bathroom-90.png"), 100: require("./assets/aero2/bathroom-100.png") },
+    water: { 0: require("./assets/aero2/water-0.png"), 15: require("./assets/aero2/water-15.png"), 30: require("./assets/aero2/water-30.png"), 45: require("./assets/aero2/water-45.png"), 60: require("./assets/aero2/water-60.png"), 75: require("./assets/aero2/water-75.png"), 90: require("./assets/aero2/water-90.png"), 100: require("./assets/aero2/water-100.png") },
+  },
 };
 const AERO_INK = "#0b3d6e";
-const AERO_SPOTS = { water: [0.5, 0.25, 0.46], eat: [0.25, 0.53, 0.32], stretch: [0.75, 0.52, 0.32], bathroom: [0.27, 0.77, 0.3], walk: [0.73, 0.76, 0.3] }; // center x, center y, size (of width)
+const AERO_ORDER = ["walk", "eat", "stretch", "bathroom", "water"]; // far to near
+const AERO_BOB = { walk: 7, eat: 4 };
 function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
   const ins = useSafeAreaInsets();
   const win = useWindowDimensions();
   const W = win.width, H = win.height;
-  const name = FOCUS_LOOKS.find((l) => l[0] === look)?.[1] || "";
+  const s = Math.max(W / AERO.size[0], H / AERO.size[1]);
+  const ox = (W - AERO.size[0] * s) / 2, oy = (H - AERO.size[1] * s) / 2;
+  const by = Object.fromEntries(needs.map((n) => [n.key, n]));
   return (
-    <ImageBackground source={AERO.land} resizeMode="cover" style={{ flex: 1, backgroundColor: "#4cbcff" }}>
+    <View style={{ flex: 1, backgroundColor: "#0b86e6", overflow: "hidden" }}>
+      <Image source={AERO.bg} style={{ position: "absolute", left: ox, top: oy, width: AERO.size[0] * s, height: AERO.size[1] * s }} />
+      <AeroLife s={s} ox={ox} oy={oy} W={W} />
+      {AERO_ORDER.filter((k) => by[k]).map((k, i) => <AeroThing key={k} n={by[k]} i={i} s={s} ox={ox} oy={oy} left={left(by[k])} onPlay={onPlay} />)}
       <View style={[st.aeroBar, { marginTop: ins.top + 8 }]}>
         <View style={{ flex: 1 }}>
           <Text style={st.aeroTitle}>Focus</Text>
-          <Text style={st.aeroSub}>Swipe a bubble up when you've done it.</Text>
+          <Text style={st.aeroSub}>Swipe a thing up when you've done it.</Text>
         </View>
         <Pressable onPress={onEnd} style={st.aeroBtn} accessibilityRole="button"><Text style={st.aeroBtnTxt}>End</Text></Pressable>
       </View>
-      {needs.map((n, i) => {
-        const [cx, cy, sz] = AERO_SPOTS[n.key] || [0.5, 0.5, 0.3];
-        const size = Math.min(W * sz, H * sz * 0.6);
-        return <AeroOrb key={n.key} n={n} i={i} size={size} x={W * cx - size / 2} y={ins.top + 70 + (H - ins.top - ins.bottom - 150) * cy - size / 2} left={left(n)} onPlay={onPlay} />;
-      })}
       <View style={[st.aeroLooks, { bottom: ins.bottom + 14 }]}>
         <Text style={st.aeroSub}>LOOK</Text>
         {FOCUS_LOOKS.map(([k, l]) => (
@@ -2032,26 +2042,26 @@ function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
           </Pressable>
         ))}
       </View>
-    </ImageBackground>
+    </View>
   );
 }
-/** A glass bubble: liquid rises inside at its card's pace, the 3D icon floats in front. Swipe up to play. */
-function AeroOrb({ n, i, size, x, y, left, onPlay }) {
-  const bob = useRef(new Animated.Value(0)).current;
-  const sway = useRef(new Animated.Value(0)).current;
-  const lift = useRef(new Animated.Value(0)).current;
-  const pulse = useRef(new Animated.Value(0)).current;
-  const level = useRef(new Animated.Value(Math.min(1.02, n.fill))).current;
-  const full = n.fill >= 1;
+/** One need in the world: its frame shows how full it is; it bobs if it floats; swipe it up to play its card. */
+function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
+  const L = AERO.layers[n.key];
+  const [cleared, setCleared] = useState(false);
+  useEffect(() => { setCleared(false); }, [Math.round(n.last / 1000)]);
+  const pct = cleared ? 0 : Math.min(100, n.fill * 100);
+  const lvl = AERO.levels.filter((l) => l <= pct + 0.01).pop() || 0;
+  const full = !cleared && n.fill >= 1;
+  const bob = useRef(new Animated.Value(0)).current, lift = useRef(new Animated.Value(0)).current, pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    const a = Animated.loop(Animated.sequence([Animated.timing(bob, { toValue: 1, duration: 2600 + i * 370, easing: Easing.inOut(Easing.sin), useNativeDriver: true }), Animated.timing(bob, { toValue: 0, duration: 2600 + i * 370, easing: Easing.inOut(Easing.sin), useNativeDriver: true })]));
-    const b = Animated.loop(Animated.sequence([Animated.timing(sway, { toValue: 1, duration: 1900 + i * 230, easing: Easing.inOut(Easing.sin), useNativeDriver: true }), Animated.timing(sway, { toValue: -1, duration: 1900 + i * 230, easing: Easing.inOut(Easing.sin), useNativeDriver: true })]));
-    a.start(); b.start(); return () => { a.stop(); b.stop(); };
+    if (!AERO_BOB[n.key]) return;
+    const a = Animated.loop(Animated.sequence([Animated.timing(bob, { toValue: 1, duration: 2400 + i * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true }), Animated.timing(bob, { toValue: 0, duration: 2400 + i * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true })]));
+    a.start(); return () => a.stop();
   }, []);
-  useEffect(() => { Animated.timing(level, { toValue: Math.min(1.02, n.fill), duration: 900, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(); }, [n.fill]);
   useEffect(() => {
     if (!full) { pulse.setValue(0); return; }
-    const l = Animated.loop(Animated.sequence([Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }), Animated.timing(pulse, { toValue: 0, duration: 700, useNativeDriver: true })]));
+    const l = Animated.loop(Animated.sequence([Animated.timing(pulse, { toValue: 1, duration: 650, useNativeDriver: true }), Animated.timing(pulse, { toValue: 0, duration: 650, useNativeDriver: true })]));
     l.start(); return () => l.stop();
   }, [full]);
   const live = useRef(onPlay); live.current = onPlay;
@@ -2060,37 +2070,66 @@ function AeroOrb({ n, i, size, x, y, left, onPlay }) {
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderTerminationRequest: () => false,
-    onPanResponderMove: (_, g) => lift.setValue(Math.min(0, g.dy)),
+    onPanResponderMove: (_, g) => lift.setValue(Math.min(0, g.dy) * 0.6),
     onPanResponderRelease: (_, g) => {
       if (g.dy < -50) {
-        Animated.timing(lift, { toValue: -900, duration: 420, easing: Easing.in(Easing.quad), useNativeDriver: true }).start(() => {
-          live.current(nn.current); level.setValue(0); lift.setValue(220);
-          Animated.spring(lift, { toValue: 0, friction: 6, useNativeDriver: true }).start();
-        });
+        Animated.sequence([Animated.timing(lift, { toValue: -60, duration: 160, useNativeDriver: true }), Animated.spring(lift, { toValue: 0, friction: 4, useNativeDriver: true })]).start();
+        setCleared(true); live.current(nn.current);
       } else Animated.spring(lift, { toValue: 0, useNativeDriver: true }).start();
     },
   }), []);
-  const lw = size * 1.3, lh = lw * 900 / 640;
-  const liqY = level.interpolate({ inputRange: [0, 1.02], outputRange: [size * 1.02, -size * 0.07] });
+  const x = ox + L.x * s, y = oy + L.y * s, w = L.w * s, h = L.h * s;
+  const labelTop = n.key === "water" ? -26 : h + 4;
   return (
     <Animated.View {...pr.panHandlers} accessibilityRole="adjustable" accessibilityLabel={n.card.label + (full ? ", full" : ", " + left + " until full")}
-      style={{ position: "absolute", left: x, top: y, width: size, height: size + 34, alignItems: "center",
-        transform: [{ translateY: Animated.add(lift, bob.interpolate({ inputRange: [0, 1], outputRange: [-5, 5] })) },
-          { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.05] }) }] }}>
-      <View style={{ width: size, height: size }}>
-        <Image source={AERO.back} style={StyleSheet.absoluteFill} />
-        <View style={{ position: "absolute", left: size * 0.012, top: size * 0.012, width: size * 0.976, height: size * 0.976, borderRadius: size, overflow: "hidden" }}>
-          <Animated.Image source={AERO.liquid[n.key]} style={{ position: "absolute", left: -(lw - size) / 2, top: 0, width: lw, height: lh,
-            transform: [{ translateY: liqY }, { translateX: sway.interpolate({ inputRange: [-1, 1], outputRange: [-size * 0.08, size * 0.08] }) }] }} />
-        </View>
-        <Image source={AERO.halo} style={{ position: "absolute", left: size * 0.12, top: size * 0.12, width: size * 0.76, height: size * 0.76, opacity: 0.85 }} />
-        <Animated.Image source={AERO.icon[n.key]} style={{ position: "absolute", left: size * 0.13, top: size * 0.11, width: size * 0.74, height: size * 0.74,
-          transform: [{ translateY: bob.interpolate({ inputRange: [0, 1], outputRange: [3, -3] }) }] }} />
-        <Image source={AERO.front} style={StyleSheet.absoluteFill} />
-        {full && <View style={st.aeroBang}><Text style={st.aeroBangTxt}>!</Text></View>}
+      style={{ position: "absolute", left: x, top: y, width: w, height: h,
+        transform: [{ translateY: Animated.add(lift, bob.interpolate({ inputRange: [0, 1], outputRange: [-(AERO_BOB[n.key] || 0), AERO_BOB[n.key] || 0] })) },
+          { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }) }] }}>
+      <Image source={AERO.frames[n.key][lvl]} style={{ width: w, height: h }} />
+      <View style={[st.aeroLabel, { position: "absolute", top: labelTop, alignSelf: "center" }, full && { backgroundColor: "#ffffff", borderColor: "#ffb020" }]}>
+        <Text style={st.aeroLabelTxt} numberOfLines={1}>{full ? "! " : ""}{n.name} · {left}</Text>
       </View>
-      <View style={st.aeroLabel}><Text style={st.aeroLabelTxt} numberOfLines={1}>{n.name} · {left}</Text></View>
     </Animated.View>
+  );
+}
+/** Things that live in the world: gulls crossing the sky, a fish that leaps now and then, bubbles drifting up. */
+function AeroLife({ s, ox, oy, W }) {
+  const g1 = useRef(new Animated.Value(0)).current, g2 = useRef(new Animated.Value(0)).current, fish = useRef(new Animated.Value(0)).current;
+  const bubbles = useRef([0, 1, 2, 3, 4, 5].map(() => new Animated.Value(0))).current;
+  useEffect(() => {
+    const loops = [
+      Animated.loop(Animated.timing(g1, { toValue: 1, duration: 46000, easing: Easing.linear, useNativeDriver: true })),
+      Animated.loop(Animated.sequence([Animated.delay(9000), Animated.timing(g2, { toValue: 1, duration: 70000, easing: Easing.linear, useNativeDriver: true })])),
+      Animated.loop(Animated.sequence([Animated.delay(14000), Animated.timing(fish, { toValue: 1, duration: 1300, easing: Easing.linear, useNativeDriver: true }), Animated.timing(fish, { toValue: 0, duration: 0, useNativeDriver: true })])),
+      ...bubbles.map((b, i) => Animated.loop(Animated.sequence([Animated.delay(i * 2300), Animated.timing(b, { toValue: 1, duration: 16000 + i * 2100, easing: Easing.linear, useNativeDriver: true }), Animated.timing(b, { toValue: 0, duration: 0, useNativeDriver: true })]))),
+    ];
+    loops.forEach((l) => l.start()); return () => loops.forEach((l) => l.stop());
+  }, []);
+  const sea = oy + 1000 * s; // the horizon line in the art
+  const gull = (v, top, size, flip) => (
+    <Animated.Image source={AERO.gull} resizeMode="contain" style={{ position: "absolute", top, left: 0, width: size, height: size * 0.6,
+      transform: [{ translateX: v.interpolate({ inputRange: [0, 1], outputRange: flip ? [W + size, -size * 2] : [-size * 2, W + size] }) },
+        { translateY: v.interpolate({ inputRange: [0, 0.25, 0.5, 0.75, 1], outputRange: [0, -10, 4, -8, 0] }) }, { scaleX: flip ? -1 : 1 }] }} />
+  );
+  const fx = ox + 560 * s, fw = 90 * s;
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {gull(g1, oy + 300 * s, 120 * s, false)}
+      {gull(g2, oy + 560 * s, 70 * s, true)}
+      <Animated.Image source={AERO.fish} resizeMode="contain" style={{ position: "absolute", left: fx, top: sea - 40 * s, width: fw, height: fw * 0.8,
+        opacity: fish.interpolate({ inputRange: [0, 0.02, 0.95, 1], outputRange: [0, 1, 1, 0] }),
+        transform: [{ translateX: fish.interpolate({ inputRange: [0, 1], outputRange: [-80 * s, 140 * s] }) },
+          { translateY: fish.interpolate({ inputRange: [0, 0.5, 1], outputRange: [40 * s, -170 * s, 40 * s] }) },
+          { rotate: fish.interpolate({ inputRange: [0, 1], outputRange: ["-40deg", "50deg"] }) }] }} />
+      {bubbles.map((b, i) => {
+        const r = [10, 16, 7, 22, 12, 30][i] * s * 1.6, x0 = ox + [160, 420, 690, 880, 300, 760][i] * s;
+        return <Animated.View key={i} style={[st.aeroBubble, { left: x0, top: oy + 1500 * s, width: r * 2, height: r * 2, borderRadius: r,
+          opacity: b.interpolate({ inputRange: [0, 0.1, 0.85, 1], outputRange: [0, 0.9, 0.9, 0] }),
+          transform: [{ translateY: b.interpolate({ inputRange: [0, 1], outputRange: [0, -1300 * s] }) }, { translateX: b.interpolate({ inputRange: [0, 0.3, 0.6, 1], outputRange: [0, 14, -10, 8] }) }] }]}>
+          <View style={{ position: "absolute", left: r * 0.35, top: r * 0.3, width: r * 0.45, height: r * 0.28, borderRadius: r, backgroundColor: "rgba(255,255,255,0.85)", transform: [{ rotate: "-30deg" }] }} />
+        </Animated.View>;
+      })}
+    </View>
   );
 }
 
@@ -3017,6 +3056,7 @@ function makeStyles() { return StyleSheet.create({
   aeroBtnTxt: { fontSize: 15, fontWeight: "700", color: "#0b3d6e" },
   aeroLabel: { marginTop: 6, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.55)", borderWidth: 1, borderColor: "rgba(255,255,255,0.95)" },
   aeroLabelTxt: { fontSize: 12, fontWeight: "700", color: "#0b3d6e" },
+  aeroBubble: { position: "absolute", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.8)", backgroundColor: "rgba(200,240,255,0.12)" },
   aeroBang: { position: "absolute", top: 0, right: 0, width: 28, height: 28, borderRadius: 14, backgroundColor: "#ffffff", borderWidth: 2, borderColor: "#ffb020", alignItems: "center", justifyContent: "center", elevation: 4 },
   aeroBangTxt: { fontSize: 16, fontWeight: "900", color: "#e07b00" },
   aeroLooks: { position: "absolute", left: 14, right: 14, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, padding: 8, borderRadius: 22,

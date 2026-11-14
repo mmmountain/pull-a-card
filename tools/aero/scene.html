@@ -1,0 +1,273 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<script type="importmap">{ "imports": { "three": "./node_modules/three/build/three.module.js", "three/addons/": "./node_modules/three/examples/jsm/" } }</script>
+<style>body{margin:0;background:transparent}</style></head>
+<body>
+<script type="module">
+// Prompt · Focus · Frutiger Aero, take 2: one 3D world (sky, sea, beach) with the five needs at different depths.
+// window.renderLayer("bg") renders the world; renderLayer(name, level) renders one need alone (with its own
+// contact shadow) from the same camera, so the app can stack them on the background.
+import * as THREE from "three";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+
+const W = 1080, H = 1920;
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H); renderer.setPixelRatio(1);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.localClippingEnabled = true;
+document.body.appendChild(renderer.domElement);
+
+let seed = 11; const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+const R = (a, b) => a + rnd() * (b - a);
+
+const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 2000);
+camera.position.set(0, 2.0, 11); camera.lookAt(0, 2.3, 0);
+
+// ---------- sky (gradient dome) and its reflections ----------
+const SUN = new THREE.Vector3(0.24, 0.62, -1).normalize();
+function skyMaterial() {
+  return new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    uniforms: { sun: { value: SUN } },
+    vertexShader: `varying vec3 vDir; void main(){ vDir = normalize((modelMatrix*vec4(position,1.)).xyz); gl_Position = projectionMatrix*viewMatrix*modelMatrix*vec4(position,1.); }`,
+    fragmentShader: `varying vec3 vDir; uniform vec3 sun;
+      void main(){ float h = clamp(vDir.y, -0.2, 1.0);
+        vec3 top = vec3(0.0, 0.16, 0.58), mid = vec3(0.0, 0.48, 0.95), hor = vec3(0.72, 0.92, 1.0);
+        vec3 c = mix(hor, mid, smoothstep(0.0, 0.18, h)); c = mix(c, top, smoothstep(0.18, 0.75, h));
+        float s = max(dot(normalize(vDir), sun), 0.0);
+        c += vec3(1.0, 0.97, 0.85) * (pow(s, 2500.0) * 3.0 + pow(s, 120.0) * 0.35 + pow(s, 8.0) * 0.12);
+        gl_FragColor = vec4(c, 1.0); }`,
+  });
+}
+const skyScene = new THREE.Scene(); skyScene.add(new THREE.Mesh(new THREE.SphereGeometry(900, 64, 32), skyMaterial()));
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envTex = pmrem.fromScene(skyScene, 0).texture;
+
+function lights(sc) {
+  sc.environment = envTex;
+  const sun = new THREE.DirectionalLight(0xfff4dc, 3.0); sun.position.copy(SUN).multiplyScalar(40).add(new THREE.Vector3(0, 0, 10));
+  sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 120 }); sun.shadow.radius = 6;
+  sc.add(sun, new THREE.HemisphereLight(0xcfeaff, 0xf1d9a6, 0.9));
+  const fill = new THREE.DirectionalLight(0x9fd8ff, 0.8); fill.position.set(8, 4, 10); sc.add(fill);
+}
+const gloss = (color, extra = {}) => new THREE.MeshPhysicalMaterial({ color, roughness: 0.1, clearcoat: 1, clearcoatRoughness: 0.04, ...extra });
+const glassMat = (extra = {}) => new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 1, thickness: 0.15, roughness: 0.02, ior: 1.45, clearcoat: 1, transparent: true, opacity: 1, ...extra });
+
+// canvas textures for clouds and bubbles
+function cloudTex(k) {
+  const c = document.createElement("canvas"); c.width = 768; c.height = 320; const g = c.getContext("2d");
+  const puffs = []; for (let i = 0; i < 34; i++) { const x = 384 + R(-280, 280) * (k % 2 ? 0.8 : 1), y = 210 + R(-70, 20), r = R(36, 95) * (1 - Math.abs(x - 384) / 420); puffs.push([x, y - (r > 70 ? 25 : 0), Math.max(14, r)]); }
+  puffs.sort((a, b) => a[1] - b[1]);
+  for (const [x, y, r] of puffs) { // shaded underside, bright top
+    const gr = g.createRadialGradient(x - r * 0.25, y - r * 0.45, r * 0.05, x, y, r);
+    gr.addColorStop(0, "#ffffff"); gr.addColorStop(0.55, "#f7fbff"); gr.addColorStop(0.85, "#cfe2f4"); gr.addColorStop(1, "rgba(190,214,238,0)");
+    g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); }
+  g.globalCompositeOperation = "destination-out"; const fl = g.createLinearGradient(0, 240, 0, 320); fl.addColorStop(0, "rgba(0,0,0,0)"); fl.addColorStop(1, "rgba(0,0,0,1)"); g.fillStyle = fl; g.fillRect(0, 0, 768, 320);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+function earthTex() {
+  const w = 1024, h = 512, c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d"); const img = g.createImageData(w, h);
+  const hash = (x, y) => { const s1 = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s1 - Math.floor(s1); };
+  const noise = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const a = hash(xi, yi), b = hash(xi + 1, yi), c2 = hash(xi, yi + 1), d = hash(xi + 1, yi + 1); return a + (b - a) * u + (c2 - a) * v + (a - b - c2 + d) * u * v; };
+  const fbm = (x, y) => { let s1 = 0, amp = 0.5; for (let i = 0; i < 5; i++) { s1 += amp * noise(x, y); x *= 2.1; y *= 2.1; amp *= 0.5; } return s1; };
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const lon = x / w * Math.PI * 2, lat = (y / h - 0.5) * Math.PI;
+    const px = Math.cos(lat) * Math.cos(lon) * 2.2 + 5, py = Math.sin(lat) * 2.2 + 5, pz = Math.cos(lat) * Math.sin(lon) * 2.2;
+    const n = fbm(px + pz * 0.7, py - pz * 0.4); const i = (y * w + x) * 4;
+    let col;
+    if (n > 0.56) col = n > 0.66 ? [70, 170, 40] : [120, 205, 55];
+    else if (n > 0.53) col = [240, 222, 160];
+    else col = [10 + (0.53 - n) * 60, 120 - (0.53 - n) * 150, 225];
+    if (Math.abs(lat) > 1.25) col = [245, 250, 255];
+    img.data[i] = col[0]; img.data[i + 1] = col[1]; img.data[i + 2] = col[2]; img.data[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+
+// ---------- the world ----------
+const world = new THREE.Group();
+// sea: a big wavy plane that mirrors the sky
+const seaGeo = new THREE.PlaneGeometry(800, 800, 400, 400); seaGeo.rotateX(-Math.PI / 2);
+{ const p = seaGeo.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), z = p.getZ(i);
+  p.setY(i, Math.sin(x * 0.9 + z * 0.3) * 0.025 + Math.sin(x * 0.23 - z * 1.7) * 0.03 + Math.sin(x * 3.1 + z * 2.2) * 0.008); } seaGeo.computeVertexNormals(); }
+const sea = new THREE.Mesh(seaGeo, new THREE.MeshPhysicalMaterial({ color: 0x0b86e6, roughness: 0.05, metalness: 0.0, clearcoat: 1, envMapIntensity: 1.6 }));
+sea.position.set(0, 0, -400); sea.receiveShadow = true; world.add(sea);
+// shallows: turquoise band between sea and sand
+const shallow = new THREE.Mesh(new THREE.PlaneGeometry(80, 9, 1, 1), new THREE.MeshPhysicalMaterial({ color: 0x23d3d6, roughness: 0.04, transparent: true, opacity: 0.6, clearcoat: 1 }));
+shallow.rotation.x = -Math.PI / 2; shallow.position.set(0, 0.012, -2.5); world.add(shallow);
+// beach: sand with ripples, rising a little toward the camera
+const sandGeo = new THREE.PlaneGeometry(60, 18, 300, 120); sandGeo.rotateX(-Math.PI / 2);
+{ const p = sandGeo.attributes.position, col = [];
+  for (let i = 0; i < p.count; i++) { const x = p.getX(i), z = p.getZ(i);
+    p.setY(i, Math.max(0, (z + 9) / 18) * 0.35 + Math.sin(x * 3.4 + Math.sin(z * 0.8) * 1.5) * 0.035 + Math.sin(z * 6.3 + x * 0.4) * 0.02);
+    const k = 0.82 + rnd() * 0.18; col.push(0.93 * k, 0.76 * k, 0.5 * k); }
+  sandGeo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3)); sandGeo.computeVertexNormals(); }
+const sand = new THREE.Mesh(sandGeo, new THREE.MeshStandardMaterial({ vertexColors: true, color: 0xf2c27a, roughness: 0.95 }));
+sand.position.set(0, -0.02, 8.5); sand.receiveShadow = true; world.add(sand);
+// wet edge of the beach
+const wet = new THREE.Mesh(new THREE.PlaneGeometry(60, 1.2), new THREE.MeshPhysicalMaterial({ color: 0xc9a46a, roughness: 0.2, clearcoat: 0.6, transparent: true, opacity: 0.6 }));
+wet.rotation.x = -Math.PI / 2; wet.position.set(0, 0.015, -0.2); world.add(wet);
+// foam line
+const foam = new THREE.Mesh(new THREE.PlaneGeometry(60, 0.18), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 }));
+foam.rotation.x = -Math.PI / 2; foam.position.set(0, 0.02, -0.75); world.add(foam);
+// far island with palms (the stretch plant grows on a nearer one)
+function island(x, z, s) {
+  const g = new THREE.Group();
+  const mound = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xf0d79a, roughness: 0.9 }));
+  mound.scale.set(3 * s, 0.6 * s, 2 * s); g.add(mound);
+  const green = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2), gloss(0x3fbf3a, { roughness: 0.35 }));
+  green.scale.set(2.1 * s, 0.9 * s, 1.4 * s); green.position.y = 0.2 * s; g.add(green);
+  g.position.set(x, -0.05, z); return g;
+}
+world.add(island(-26, -120, 4.5));
+world.add(island(30, -160, 6));
+// clouds: billboards at several depths
+const ctex = [cloudTex(0), cloudTex(1), cloudTex(2), cloudTex(3)];
+[[-70, 14, -260, 70], [55, 11, -230, 55], [10, 26, -420, 120], [-150, 32, -520, 150], [170, 38, -600, 170], [-25, 7, -160, 30], [30, 5, -140, 22]].forEach(([x, y, z, s], i) => {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(s, s * 320 / 768), new THREE.MeshBasicMaterial({ map: ctex[i % 4], transparent: true, depthWrite: false, fog: false }));
+  m.position.set(x, y, z); m.lookAt(camera.position); world.add(m);
+});
+
+const bubbleMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 1, thickness: 0.02, roughness: 0, ior: 1.2, iridescence: 1, iridescenceIOR: 1.3, iridescenceThicknessRange: [200, 600], clearcoat: 1, transparent: true });
+[[3.2, 7.6, -14, 0.9], [-4.5, 9.5, -30, 1.6], [6, 12, -40, 2.2], [1.2, 5.6, -6, 0.35], [-1.8, 4.6, -3, 0.22], [4.2, 4.2, -2, 0.28], [-6, 6.5, -18, 0.7], [0.4, 9.2, -24, 0.6]].forEach(([x, y, z, r]) => {
+  const b = new THREE.Mesh(new THREE.SphereGeometry(r, 64, 32), bubbleMat); b.position.set(x, y, z); world.add(b); });
+
+// ---------- the needs ----------
+const NEEDS = {};
+// WATER: a tall glass on the sand, close to the camera
+NEEDS.water = (level) => {
+  const g = new THREE.Group();
+  const prof = [[0.0001, 0], [0.42, 0], [0.47, 0.06], [0.52, 1.75], [0.55, 1.78], [0.5, 1.78], [0.46, 0.08], [0.0001, 0.1]].map(([x, y]) => new THREE.Vector2(x, y));
+  const cup = new THREE.Mesh(new THREE.LatheGeometry(prof, 96), glassMat({ thickness: 0.3, attenuationColor: new THREE.Color(0xdff6ff), attenuationDistance: 3 }));
+  cup.castShadow = true; g.add(cup);
+  if (level > 0.01) {
+    const h = 0.12 + level * 1.5;
+    const water = new THREE.Mesh(new THREE.CylinderGeometry(0.455 + level * 0.04, 0.445, h, 96), new THREE.MeshPhysicalMaterial({ color: 0x1b9cff, roughness: 0.03, clearcoat: 1, emissive: 0x0060c0, emissiveIntensity: 0.3 }));
+    water.position.y = 0.1 + h / 2; g.add(water);
+    const top = new THREE.Mesh(new THREE.CircleGeometry(0.455 + level * 0.04, 64), gloss(0x8fdcff)); top.rotation.x = -Math.PI / 2; top.position.y = 0.1 + h + 0.001; g.add(top);
+    for (let i = 0; i < 9 * level; i++) { const b = new THREE.Mesh(new THREE.SphereGeometry(R(0.02, 0.05), 16, 8), glassMat({ thickness: 0.05 })); b.position.set(R(-0.3, 0.3), 0.2 + R(0, h - 0.1), R(-0.3, 0.3)); g.add(b); }
+  }
+  const straw = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 2.2, 24), gloss(0xff5aa5)); straw.position.set(0.18, 1.25, 0.05); straw.rotation.z = -0.22; g.add(straw);
+  const lemon = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.05, 48, 1, false, 0, Math.PI), gloss(0xffd21f)); lemon.position.set(-0.46, 1.66, 0.05); lemon.rotation.set(Math.PI / 2, 0, 0.9); g.add(lemon);
+  g.position.set(-0.95, 0.18, 5.6); g.rotation.y = 0.3; g.scale.setScalar(0.72); return g;
+};
+// EAT: a glossy bowl bobbing on the water, mid-distance
+NEEDS.eat = (level) => {
+  const g = new THREE.Group();
+  const out = []; for (let i = 0; i <= 40; i++) { const a = (i / 40) * Math.PI / 2; out.push(new THREE.Vector2(Math.sin(a) * 1.0 + 0.0001, -Math.cos(a) * 0.6)); }
+  const inn = []; for (let i = 40; i >= 0; i--) { const a = (i / 40) * Math.PI / 2; inn.push(new THREE.Vector2(Math.sin(a) * 0.92 + 0.0001, -Math.cos(a) * 0.53 + 0.02)); }
+  const bowl = new THREE.Mesh(new THREE.LatheGeometry([...out, new THREE.Vector2(1.04, 0.04), new THREE.Vector2(0.94, 0.06), ...inn], 96), gloss(0xffffff, { side: THREE.DoubleSide }));
+  g.add(bowl);
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.99, 0.04, 16, 96), gloss(0xff7a00)); band.rotation.x = Math.PI / 2; band.position.y = -0.14; g.add(band);
+  if (level > 0.01) {
+    const y = -0.5 + level * 0.52, r = Math.sqrt(Math.max(0.01, 0.92 * 0.92 * (1 - Math.pow((y + 0.02) / 0.53, 2))));
+    const soup = new THREE.Mesh(new THREE.CircleGeometry(Math.min(0.9, r), 64), gloss(0xff8c12, { roughness: 0.04 })); soup.rotation.x = -Math.PI / 2; soup.position.y = Math.min(0.0, y); g.add(soup);
+    [[0.3, 0.2, 0x55d000], [-0.35, -0.2, 0xffe24a], [0.05, -0.4, 0x55d000], [-0.1, 0.35, 0xff4a2a], [0.45, -0.15, 0xffffff]].slice(0, Math.ceil(level * 5)).forEach(([x, z, c]) => {
+      const s = new THREE.Mesh(new THREE.SphereGeometry(0.11, 24, 12), gloss(c)); s.scale.y = 0.5; s.position.set(x * Math.min(1, r / 0.9), Math.min(0.0, y) + 0.02, z * Math.min(1, r / 0.9)); g.add(s); });
+  }
+  g.position.set(-2.2, 0.3, -11.0); g.rotation.set(0.15, 0, 0.05); g.scale.setScalar(1.35); return g;
+};
+// BATHROOM: a door standing on the beach, mid-right; its porthole fills with warm light
+NEEDS.bathroom = (level) => {
+  const g = new THREE.Group();
+  const panel = new THREE.Mesh(new RoundedBoxGeometry(1.2, 2.3, 0.16, 6, 0.1), gloss(0xfbfdff)); panel.position.y = 1.15; panel.castShadow = true; g.add(panel);
+  const frame = new THREE.Mesh(new RoundedBoxGeometry(1.42, 2.48, 0.1, 6, 0.08), gloss(0x0b7fe0)); frame.position.set(0, 1.2, -0.07); frame.castShadow = true; g.add(frame);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.055, 20, 64), gloss(0x0b7fe0)); ring.position.set(0, 1.72, 0.09); g.add(ring);
+  const back = new THREE.Mesh(new THREE.CircleGeometry(0.29, 64), gloss(0xbfe9ff)); back.position.set(0, 1.72, 0.081); g.add(back);
+  if (level > 0.01) {
+    const fill = new THREE.Mesh(new THREE.CircleGeometry(0.29, 64), new THREE.MeshPhysicalMaterial({ color: 0xffc21a, emissive: 0xffa800, emissiveIntensity: 0.6 + level * 0.8, roughness: 0.1, clearcoat: 1,
+      clippingPlanes: [new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.72 - 0.29 + level * 0.58)] }));
+    fill.position.set(0, 1.72, 0.083); g.add(fill);
+  }
+  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.08, 32, 16), gloss(0xffcf3b, { metalness: 0.7, roughness: 0.15 })); knob.position.set(0.42, 1.05, 0.12); g.add(knob);
+  g.position.set(1.7, 0.2, 2.6); g.rotation.y = -0.4; g.scale.setScalar(0.95); return g;
+};
+// STRETCH: a little grassy island in the shallows where a sprout grows tall
+NEEDS.stretch = (level) => {
+  const g = new THREE.Group();
+  const mound = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xf3dca2, roughness: 0.9 })); mound.scale.set(1.5, 0.35, 1.1); mound.castShadow = true; g.add(mound);
+  const turf = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2), gloss(0x6fd626, { roughness: 0.3 })); turf.scale.set(1.0, 0.42, 0.75); turf.position.y = 0.05; g.add(turf);
+  const h = 0.35 + level * 1.9;
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.07, h, 16), gloss(0x2f9a10)); stem.position.y = 0.35 + h / 2; stem.rotation.z = 0.06; g.add(stem);
+  const leafGeo = () => { const geo = new THREE.SphereGeometry(1, 64, 32); const p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++) { let x = p.getX(i), y = p.getY(i), z = p.getZ(i); const t = (y + 1) / 2; x *= Math.sin(Math.PI * Math.pow(t, 0.85)) * 0.6; z *= 0.1; z -= x * x * 0.4; p.setXYZ(i, x, y, z); }
+    geo.computeVertexNormals(); return geo; };
+  const n = 2 + Math.round(level * 5);
+  for (let i = 0; i < n; i++) {
+    const leaf = new THREE.Mesh(leafGeo(), gloss(i % 2 ? 0x8ee21a : 0x5ccc1a, { roughness: 0.08 }));
+    const y = 0.5 + (h * (i + 1)) / (n + 0.5), side = i % 2 ? 1 : -1;
+    leaf.scale.setScalar(0.32 + level * 0.12); leaf.position.set(side * 0.28, y, 0); leaf.rotation.set(0.2, side * 0.6, -side * 1.0); g.add(leaf);
+  }
+  const top = new THREE.Mesh(leafGeo(), gloss(0xa6ef2a)); top.scale.setScalar(0.3 + level * 0.15); top.position.set(0, 0.35 + h + 0.2, 0); top.rotation.z = 0.1; g.add(top);
+  g.position.set(0.7, 0.0, -6.5); g.scale.setScalar(1.15); return g;
+};
+// WALK: a giant glass globe far off in the sky; its sea rises as it's time to get outside
+NEEDS.walk = (level) => {
+  // A glossy planet far off in the sky; a golden orbit fills around it as it gets time to go outside.
+  const g = new THREE.Group(); const Rg = 13;
+  const planet = new THREE.Mesh(new THREE.SphereGeometry(Rg, 128, 64), new THREE.MeshPhysicalMaterial({ map: earthTex(), roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.03 })); planet.rotation.set(0.3, 2.2, 0); g.add(planet);
+  const air = new THREE.Mesh(new THREE.SphereGeometry(Rg * 1.06, 96, 48), new THREE.MeshPhysicalMaterial({ color: 0x9fdcff, transparent: true, opacity: 0.22, roughness: 0.05, clearcoat: 1 })); g.add(air);
+  const track = new THREE.Mesh(new THREE.TorusGeometry(Rg * 1.45, 0.45, 16, 200), gloss(0xffffff, { transparent: true, opacity: 0.45 }));
+  const tilt = new THREE.Group(); tilt.rotation.set(1.2, 0.15, -0.35); tilt.add(track);
+  if (level > 0.01) { const arc = new THREE.Mesh(new THREE.TorusGeometry(Rg * 1.45, 0.75, 20, 240, Math.PI * 2 * Math.min(1, level)), gloss(0xffc21a, { emissive: 0xffa000, emissiveIntensity: 0.5, metalness: 0.3 })); arc.rotation.z = Math.PI / 2; tilt.add(arc);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(1.4, 32, 16), gloss(0xffffff, { emissive: 0xfff2b0, emissiveIntensity: 0.8 })); const a2 = Math.PI / 2 + Math.PI * 2 * Math.min(1, level); head.position.set(Math.cos(a2) * Rg * 1.45, Math.sin(a2) * Rg * 1.45, 0); tilt.add(head); }
+  g.add(tilt);
+  g.position.set(-16, 46, -150); return g;
+};
+// ambient sprites: a gull and a tropical fish
+const SPRITES = {
+  gull() {
+    const g = new THREE.Group(); const white = gloss(0xffffff, { roughness: 0.35 }), grey = gloss(0x9aa7b3, { roughness: 0.35 });
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.3, 32, 16), white); body.scale.set(2.2, 0.8, 0.8); g.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 24, 12), white); head.position.set(0.62, 0.12, 0); g.add(head);
+    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.25, 12), gloss(0xffb21a)); beak.rotation.z = -Math.PI / 2; beak.position.set(0.88, 0.1, 0); g.add(beak);
+    [1, -1].forEach((s) => { const w = new THREE.Mesh(new RoundedBoxGeometry(0.9, 0.05, 1.6, 4, 0.02), white); w.position.set(0, 0.25, s * 0.85); w.rotation.set(s * 0.45, 0, 0.1); g.add(w);
+      const tip = new THREE.Mesh(new RoundedBoxGeometry(0.5, 0.06, 0.5, 4, 0.02), grey); tip.position.set(-0.1, 0.62, s * 1.65); tip.rotation.set(s * 0.6, 0, 0.1); g.add(tip); });
+    g.rotation.set(-0.35, 0.5, 0.1); return g;
+  },
+  fish() {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32), gloss(0xffe11a)); body.scale.set(1.1, 0.95, 0.28); g.add(body);
+    const stripe = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32, 0, Math.PI * 2, 0, Math.PI), gloss(0x111111)); stripe.scale.set(0.22, 0.97, 0.3); stripe.position.x = 0.45; g.add(stripe);
+    const white = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32), gloss(0xf6f9ff)); white.scale.set(0.55, 0.85, 0.3); white.position.x = -0.15; g.add(white);
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.55, 0.7, 3), gloss(0xffd400)); tail.rotation.z = Math.PI / 2; tail.position.x = -1.25; tail.scale.z = 0.2; g.add(tail);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 8), gloss(0x111111)); eye.position.set(0.85, 0.2, 0.22); g.add(eye);
+    g.rotation.set(0.1, -0.4, 0.15); return g;
+  },
+  bubble() {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32), glassMat({ thickness: 0.05, iridescence: 1, iridescenceIOR: 1.3, roughness: 0.0 }));
+    return m;
+  },
+};
+
+function scene() { const sc = new THREE.Scene(); lights(sc); return sc; }
+function catcher(x, z, size) { const m = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.ShadowMaterial({ opacity: 0.2 })); m.rotation.x = -Math.PI / 2; m.position.set(x, 0.14, z); m.receiveShadow = true; return m; }
+
+window.renderLayer = (name, level = 0) => {
+  const sc = scene();
+  if (name === "bg") { sc.background = null; sc.add(new THREE.Mesh(new THREE.SphereGeometry(900, 64, 32), skyMaterial())); sc.add(world); }
+  else {
+    const obj = NEEDS[name](level); obj.traverse((o) => { if (o.isMesh) o.castShadow = true; }); sc.add(obj);
+    if (name === "water") sc.add(catcher(-0.95, 5.6, 5));
+    if (name === "bathroom") sc.add(catcher(1.7, 2.6, 6));
+  }
+  renderer.setClearColor(0x000000, 0);
+  renderer.render(sc, camera);
+  return renderer.domElement.toDataURL("image/png");
+};
+// sprites render on their own small canvas, centered
+const small = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+small.setSize(512, 512); small.outputColorSpace = THREE.SRGBColorSpace; small.toneMapping = THREE.ACESFilmicToneMapping;
+window.renderSprite = (name) => {
+  const sc = new THREE.Scene(); sc.environment = pmrem.fromScene(skyScene, 0).texture;
+  sc.add(new THREE.DirectionalLight(0xffffff, 2.5).translateX(-3).translateY(5).translateZ(4), new THREE.HemisphereLight(0xdff4ff, 0x9fd36a, 1));
+  sc.add(SPRITES[name]());
+  const cam = new THREE.PerspectiveCamera(30, 1, 0.1, 50); cam.position.set(0, 0.3, 6); cam.lookAt(0, 0, 0);
+  small.setClearColor(0, 0); small.render(sc, cam); return small.domElement.toDataURL("image/png");
+};
+window.ready = true;
+</script>
+</body></html>
