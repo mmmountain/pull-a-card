@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions, ActivityIndicator, Alert, AppState, KeyboardAvoidingView, Modal, Platform, Pressable, Share,
-  ScrollView, StyleSheet, Switch, Text, TextInput, View,
+  ScrollView, StyleSheet, Switch, Text, TextInput, View, Image, ImageBackground,
   Animated, PanResponder, Vibration, useWindowDimensions, AccessibilityInfo, Easing,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
@@ -1914,6 +1914,10 @@ function FocusView({ ctx, libSt, me, prefs, act, onEnd }) {
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 15000); return () => clearInterval(t); }, []);
   useEffect(() => { try { KeepAwake?.activateKeepAwakeAsync?.("focus"); } catch {} return () => { try { KeepAwake?.deactivateKeepAwake?.("focus"); } catch {} }; }, []);
   const needs = useFocusNeeds(ctx, libSt, me, prefs, now);
+  // The look of the scene: an aesthetic selector, starting with Frutiger Aero. Remembered on this phone.
+  const [look, setLook] = useState("aero");
+  useEffect(() => { AsyncStorage.getItem(LOOK_KEY).then((v) => { if (v && FOCUS_LOOKS.some((l) => l[0] === v)) setLook(v); }).catch(() => {}); }, []);
+  const pickLook = (v) => { setLook(v); AsyncStorage.setItem(LOOK_KEY, v).catch(() => {}); };
   const alarmKey = needs.map((n) => n.card.id + ":" + Math.round(n.fullAt / 6e4)).join("|");
   useEffect(() => { N.focusAlarms(needs.map((n) => ({ cardId: n.card.id, label: n.card.label, fullAt: n.fullAt }))); }, [alarmKey]);
   const play = (n) => act(async () => {
@@ -1927,12 +1931,17 @@ function FocusView({ ctx, libSt, me, prefs, act, onEnd }) {
   const sky = hour < 7 || hour >= 20 ? "#2b3a67" : hour < 10 ? "#bfe0f2" : hour < 17 ? "#9fd1ef" : "#f2b98a";
   const by = Object.fromEntries(needs.map((n) => [n.key, n]));
   const left = (n) => n.fill >= 1 ? "now" : Math.max(1, Math.round((n.fullAt - now) / 6e4)) + "m";
+  if (look === "aero") return (
+    <Modal visible animationType="fade" onRequestClose={onEnd}>
+      <AeroFocus needs={needs} left={left} onPlay={play} onEnd={onEnd} look={look} setLook={pickLook} />
+    </Modal>
+  );
   return (
     <Modal visible animationType="fade" onRequestClose={onEnd}>
       <View style={[st.screen, { paddingTop: ins.top + 8, paddingBottom: ins.bottom + 12, alignItems: "center" }]}>
         <View style={[st.row, { width: W, justifyContent: "space-between" }]}>
           <View><Text style={st.label}>FOCUS · SELF-CARE ONLY</Text><Text style={st.miniMeta}>Swipe a thing up when you've done it.</Text></View>
-          <Btn label="End focus" onPress={onEnd} />
+          <View style={st.row}><Btn label="Look ▾" onPress={() => pickLook(FOCUS_LOOKS[(FOCUS_LOOKS.findIndex((l) => l[0] === look) + 1) % FOCUS_LOOKS.length][0])} /><Btn label="End focus" onPress={onEnd} /></View>
         </View>
         <View style={[st.scene, { width: W, height: H, marginTop: 12 }]}>
           {/* window */}
@@ -1984,6 +1993,107 @@ function FocusView({ ctx, libSt, me, prefs, act, onEnd }) {
     </Modal>
   );
 }
+/* ---------------- focus looks ---------------- */
+const LOOK_KEY = "pac.focusLook.v1";
+const FOCUS_LOOKS = [["aero", "Frutiger Aero"], ["classic", "Classic desk"]];
+// Frutiger Aero: glass orbs over a bright sky and glossy hills. Art is pre-rendered (3D icons in three.js,
+// glass and liquid layers on canvas) and lives in assets/aero.
+const AERO = {
+  land: require("./assets/aero/landscape.jpg"), back: require("./assets/aero/orb-back.png"), front: require("./assets/aero/orb-front.png"), halo: require("./assets/aero/halo.png"),
+  liquid: { water: require("./assets/aero/liquid-water.png"), eat: require("./assets/aero/liquid-eat.png"), stretch: require("./assets/aero/liquid-stretch.png"), bathroom: require("./assets/aero/liquid-bathroom.png"), walk: require("./assets/aero/liquid-walk.png") },
+  icon: { water: require("./assets/aero/icon-drop.png"), eat: require("./assets/aero/icon-bowl.png"), stretch: require("./assets/aero/icon-leaf.png"), bathroom: require("./assets/aero/icon-door.png"), walk: require("./assets/aero/icon-sneaker.png") },
+};
+const AERO_INK = "#0b3d6e";
+const AERO_SPOTS = { water: [0.5, 0.25, 0.46], eat: [0.25, 0.53, 0.32], stretch: [0.75, 0.52, 0.32], bathroom: [0.27, 0.77, 0.3], walk: [0.73, 0.76, 0.3] }; // center x, center y, size (of width)
+function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
+  const ins = useSafeAreaInsets();
+  const win = useWindowDimensions();
+  const W = win.width, H = win.height;
+  const name = FOCUS_LOOKS.find((l) => l[0] === look)?.[1] || "";
+  return (
+    <ImageBackground source={AERO.land} resizeMode="cover" style={{ flex: 1, backgroundColor: "#4cbcff" }}>
+      <View style={[st.aeroBar, { marginTop: ins.top + 8 }]}>
+        <View style={{ flex: 1 }}>
+          <Text style={st.aeroTitle}>Focus</Text>
+          <Text style={st.aeroSub}>Swipe a bubble up when you've done it.</Text>
+        </View>
+        <Pressable onPress={onEnd} style={st.aeroBtn} accessibilityRole="button"><Text style={st.aeroBtnTxt}>End</Text></Pressable>
+      </View>
+      {needs.map((n, i) => {
+        const [cx, cy, sz] = AERO_SPOTS[n.key] || [0.5, 0.5, 0.3];
+        const size = Math.min(W * sz, H * sz * 0.6);
+        return <AeroOrb key={n.key} n={n} i={i} size={size} x={W * cx - size / 2} y={ins.top + 70 + (H - ins.top - ins.bottom - 150) * cy - size / 2} left={left(n)} onPlay={onPlay} />;
+      })}
+      <View style={[st.aeroLooks, { bottom: ins.bottom + 14 }]}>
+        <Text style={st.aeroSub}>LOOK</Text>
+        {FOCUS_LOOKS.map(([k, l]) => (
+          <Pressable key={k} onPress={() => setLook(k)} style={[st.aeroChip, k === look && st.aeroChipOn]} accessibilityRole="radio" accessibilityState={{ selected: k === look }}>
+            <Text style={[st.aeroChipTxt, k === look && { color: "#ffffff" }]}>{l}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </ImageBackground>
+  );
+}
+/** A glass bubble: liquid rises inside at its card's pace, the 3D icon floats in front. Swipe up to play. */
+function AeroOrb({ n, i, size, x, y, left, onPlay }) {
+  const bob = useRef(new Animated.Value(0)).current;
+  const sway = useRef(new Animated.Value(0)).current;
+  const lift = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0)).current;
+  const level = useRef(new Animated.Value(Math.min(1.02, n.fill))).current;
+  const full = n.fill >= 1;
+  useEffect(() => {
+    const a = Animated.loop(Animated.sequence([Animated.timing(bob, { toValue: 1, duration: 2600 + i * 370, easing: Easing.inOut(Easing.sin), useNativeDriver: true }), Animated.timing(bob, { toValue: 0, duration: 2600 + i * 370, easing: Easing.inOut(Easing.sin), useNativeDriver: true })]));
+    const b = Animated.loop(Animated.sequence([Animated.timing(sway, { toValue: 1, duration: 1900 + i * 230, easing: Easing.inOut(Easing.sin), useNativeDriver: true }), Animated.timing(sway, { toValue: -1, duration: 1900 + i * 230, easing: Easing.inOut(Easing.sin), useNativeDriver: true })]));
+    a.start(); b.start(); return () => { a.stop(); b.stop(); };
+  }, []);
+  useEffect(() => { Animated.timing(level, { toValue: Math.min(1.02, n.fill), duration: 900, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(); }, [n.fill]);
+  useEffect(() => {
+    if (!full) { pulse.setValue(0); return; }
+    const l = Animated.loop(Animated.sequence([Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }), Animated.timing(pulse, { toValue: 0, duration: 700, useNativeDriver: true })]));
+    l.start(); return () => l.stop();
+  }, [full]);
+  const live = useRef(onPlay); live.current = onPlay;
+  const nn = useRef(n); nn.current = n;
+  const pr = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderMove: (_, g) => lift.setValue(Math.min(0, g.dy)),
+    onPanResponderRelease: (_, g) => {
+      if (g.dy < -50) {
+        Animated.timing(lift, { toValue: -900, duration: 420, easing: Easing.in(Easing.quad), useNativeDriver: true }).start(() => {
+          live.current(nn.current); level.setValue(0); lift.setValue(220);
+          Animated.spring(lift, { toValue: 0, friction: 6, useNativeDriver: true }).start();
+        });
+      } else Animated.spring(lift, { toValue: 0, useNativeDriver: true }).start();
+    },
+  }), []);
+  const lw = size * 1.3, lh = lw * 900 / 640;
+  const liqY = level.interpolate({ inputRange: [0, 1.02], outputRange: [size * 1.02, -size * 0.07] });
+  return (
+    <Animated.View {...pr.panHandlers} accessibilityRole="adjustable" accessibilityLabel={n.card.label + (full ? ", full" : ", " + left + " until full")}
+      style={{ position: "absolute", left: x, top: y, width: size, height: size + 34, alignItems: "center",
+        transform: [{ translateY: Animated.add(lift, bob.interpolate({ inputRange: [0, 1], outputRange: [-5, 5] })) },
+          { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.05] }) }] }}>
+      <View style={{ width: size, height: size }}>
+        <Image source={AERO.back} style={StyleSheet.absoluteFill} />
+        <View style={{ position: "absolute", left: size * 0.012, top: size * 0.012, width: size * 0.976, height: size * 0.976, borderRadius: size, overflow: "hidden" }}>
+          <Animated.Image source={AERO.liquid[n.key]} style={{ position: "absolute", left: -(lw - size) / 2, top: 0, width: lw, height: lh,
+            transform: [{ translateY: liqY }, { translateX: sway.interpolate({ inputRange: [-1, 1], outputRange: [-size * 0.08, size * 0.08] }) }] }} />
+        </View>
+        <Image source={AERO.halo} style={{ position: "absolute", left: size * 0.12, top: size * 0.12, width: size * 0.76, height: size * 0.76, opacity: 0.85 }} />
+        <Animated.Image source={AERO.icon[n.key]} style={{ position: "absolute", left: size * 0.13, top: size * 0.11, width: size * 0.74, height: size * 0.74,
+          transform: [{ translateY: bob.interpolate({ inputRange: [0, 1], outputRange: [3, -3] }) }] }} />
+        <Image source={AERO.front} style={StyleSheet.absoluteFill} />
+        {full && <View style={st.aeroBang}><Text style={st.aeroBangTxt}>!</Text></View>}
+      </View>
+      <View style={st.aeroLabel}><Text style={st.aeroLabelTxt} numberOfLines={1}>{n.name} · {left}</Text></View>
+    </Animated.View>
+  );
+}
+
 function Fill({ f, color }) {
   const h = Math.min(1, f) * 100;
   return <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: h + "%", backgroundColor: color, opacity: 0.9 }} />;
@@ -2899,6 +3009,21 @@ function makeStyles() { return StyleSheet.create({
   sceneBubble: { position: "absolute", top: -14, right: -10, width: 24, height: 24, borderRadius: 12, backgroundColor: C.paper, borderWidth: 2, alignItems: "center", justifyContent: "center" },
   sceneBubbleTxt: { fontSize: 14, fontWeight: "900", color: C.ink },
   focusChip: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 40, paddingHorizontal: 10, borderRadius: 20, borderWidth: 1.5, borderColor: C.line },
+  aeroBar: { flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 14, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.42)", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.85)" },
+  aeroTitle: { fontFamily: Platform.select({ ios: "HelveticaNeue-Medium", default: "sans-serif-medium" }), fontSize: 24, color: "#0b3d6e", letterSpacing: 0.3 },
+  aeroSub: { fontSize: 12, color: "#0b3d6e", opacity: 0.8, letterSpacing: 0.4 },
+  aeroBtn: { minHeight: 42, paddingHorizontal: 18, borderRadius: 21, justifyContent: "center", backgroundColor: "rgba(255,255,255,0.7)", borderWidth: 1.5, borderColor: "#ffffff" },
+  aeroBtnTxt: { fontSize: 15, fontWeight: "700", color: "#0b3d6e" },
+  aeroLabel: { marginTop: 6, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.55)", borderWidth: 1, borderColor: "rgba(255,255,255,0.95)" },
+  aeroLabelTxt: { fontSize: 12, fontWeight: "700", color: "#0b3d6e" },
+  aeroBang: { position: "absolute", top: 0, right: 0, width: 28, height: 28, borderRadius: 14, backgroundColor: "#ffffff", borderWidth: 2, borderColor: "#ffb020", alignItems: "center", justifyContent: "center", elevation: 4 },
+  aeroBangTxt: { fontSize: 16, fontWeight: "900", color: "#e07b00" },
+  aeroLooks: { position: "absolute", left: 14, right: 14, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, padding: 8, borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.4)", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.85)" },
+  aeroChip: { minHeight: 36, paddingHorizontal: 14, borderRadius: 18, justifyContent: "center", backgroundColor: "rgba(255,255,255,0.6)" },
+  aeroChipOn: { backgroundColor: "#1e9be8" },
+  aeroChipTxt: { fontSize: 13, fontWeight: "700", color: "#0b3d6e" },
   deckLogo: { position: "absolute", flexDirection: "row", gap: 2, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1.5, backgroundColor: C.paper },
   deckLogoTxt: { fontSize: 22 },
   emojiCell: { width: 44, height: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.paper, borderWidth: 2, borderColor: "transparent" },

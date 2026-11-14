@@ -1,0 +1,115 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<script type="importmap">{ "imports": { "three": "./node_modules/three/build/three.module.js", "three/addons/": "./node_modules/three/examples/jsm/" } }</script>
+<style>body{margin:0;background:transparent}</style></head>
+<body>
+<script type="module">
+// Glossy, Frutiger-Aero style 3D icons for Prompt's focus scene: drop, bowl, leaf, door, sneaker.
+import * as THREE from "three";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+
+const S = 512;
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(S, S); renderer.setPixelRatio(1);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NeutralToneMapping; renderer.toneMappingExposure = 1.0;
+renderer.setClearColor(0x000000, 0);
+document.body.appendChild(renderer.domElement);
+const pmrem = new THREE.PMREMGenerator(renderer);
+const env = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+
+function scene() {
+  const sc = new THREE.Scene(); sc.environment = env;
+  const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(-2, 4, 3); sc.add(key);
+  const rim = new THREE.DirectionalLight(0xbfe8ff, 1.6); rim.position.set(3, 1, -2); sc.add(rim);
+  sc.add(new THREE.HemisphereLight(0xdff4ff, 0x9fd36a, 0.9));
+  return sc;
+}
+const cam = () => { const c = new THREE.PerspectiveCamera(30, 1, 0.1, 50); c.position.set(0, 1.1, 5.2); c.lookAt(0, 0, 0); return c; };
+const gloss = (color, extra = {}) => new THREE.MeshPhysicalMaterial({ color, roughness: 0.12, metalness: 0.0, clearcoat: 1, clearcoatRoughness: 0.04, sheen: 0.3, ...extra });
+const lathe = (pts, seg = 96) => new THREE.LatheGeometry(pts.map(([x, y]) => new THREE.Vector2(x, y)), seg);
+
+const BUILD = {
+  drop() {
+    // A plump teardrop: a sphere pulled up into a soft point.
+    const geo = new THREE.SphereGeometry(1, 96, 64); const p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      let x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      const t = (y + 1) / 2;                      // 0 bottom → 1 top
+      const pinch = 1 - Math.pow(t, 2.2) * 0.92;
+      x *= pinch; z *= pinch; y = y < 0 ? y : y * (1 + t * 0.95);
+      p.setXYZ(i, x, y, z);
+    }
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, gloss(0x1ea7ff, { transmission: 0.45, thickness: 1.4, ior: 1.33, roughness: 0.02, attenuationColor: new THREE.Color(0x0068d6), attenuationDistance: 1.0 }));
+    const streak = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.55, 8, 16), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 }));
+    streak.position.set(-0.45, -0.05, 0.84); streak.rotation.z = 0.25; streak.scale.set(1, 1.3, 1);
+    const g = new THREE.Group(); g.add(m, streak); g.scale.setScalar(0.78); g.position.y = -0.25; g.rotation.z = -0.1; return g;
+  },
+  bowl() {
+    const outer = [], inner = [];
+    for (let i = 0; i <= 40; i++) { const a = (i / 40) * Math.PI / 2; outer.push([Math.sin(a) * 1.25 + 0.0001, -Math.cos(a) * 0.75]); }
+    for (let i = 40; i >= 0; i--) { const a = (i / 40) * Math.PI / 2; inner.push([Math.sin(a) * 1.15 + 0.0001, -Math.cos(a) * 0.66 + 0.02]); }
+    const shell = new THREE.Mesh(lathe([...outer, [1.3, 0.04], [1.18, 0.06], ...inner]), gloss(0xffffff, { side: THREE.DoubleSide }));
+    const band = new THREE.Mesh(new THREE.TorusGeometry(1.24, 0.045, 16, 96), gloss(0xff9d2e)); band.rotation.x = Math.PI / 2; band.position.y = -0.18;
+    const soup = new THREE.Mesh(new THREE.CircleGeometry(1.1, 64), gloss(0xff7a00, { roughness: 0.04 })); soup.rotation.x = -Math.PI / 2; soup.position.y = -0.12;
+    const bits = new THREE.Group();
+    [[0.35, 0.2, 0x7ed321], [-0.4, -0.25, 0xffd84a], [0.05, -0.45, 0x7ed321], [-0.15, 0.4, 0xff5a3c]].forEach(([x, z, c]) => {
+      const s = new THREE.Mesh(new THREE.SphereGeometry(0.16, 24, 12), gloss(c)); s.scale.y = 0.5; s.position.set(x, -0.1, z); bits.add(s);
+    });
+    const steam = new THREE.Group();
+    [-0.35, 0.05, 0.45].forEach((x, i) => { const s = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.035, 12, 32, Math.PI * 1.2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 })); s.position.set(x, 0.45 + (i % 2) * 0.18, 0); s.rotation.z = 0.6 + i; steam.add(s); });
+    const g = new THREE.Group(); g.add(shell, band, soup, bits, steam); g.rotation.x = 0.5; g.position.y = 0.0; g.scale.setScalar(0.95); return g;
+  },
+  leaf() {
+    // A smooth leaf: a flattened sphere shaped to a pointed oval and cupped.
+    const geo = new THREE.SphereGeometry(1, 128, 64); const p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      let x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      const t = (y + 1) / 2;
+      const w = Math.sin(Math.PI * Math.pow(t, 0.85)) * 0.78;   // widest a little below the middle, pointed tip
+      x *= w; z *= 0.11; y *= 1.35;
+      z -= x * x * 0.45; z += Math.sin(t * Math.PI) * 0.12;
+      p.setXYZ(i, x, y, z);
+    }
+    geo.computeVertexNormals();
+    const leaf = new THREE.Mesh(geo, gloss(0x7ccf12, { roughness: 0.06 }));
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 0.55, 12), gloss(0x4f9a0c)); stem.position.y = -1.55;
+    const dew = new THREE.Mesh(new THREE.SphereGeometry(0.17, 32, 16), gloss(0xeaf9ff, { transmission: 0.75, thickness: 0.4, ior: 1.33, roughness: 0.02 })); dew.position.set(0.3, 0.3, 0.2); dew.scale.z = 0.65;
+    const g = new THREE.Group(); g.add(leaf, stem, dew); g.rotation.set(0.3, -0.35, -0.55); g.scale.setScalar(0.88); return g;
+  },
+  door() {
+    const panel = new THREE.Mesh(new RoundedBoxGeometry(1.5, 2.5, 0.22, 6, 0.14), gloss(0xfafdff));
+    const frame = new THREE.Mesh(new RoundedBoxGeometry(1.75, 2.72, 0.12, 6, 0.1), gloss(0x2f9be8)); frame.position.z = -0.09; frame.position.y = -0.03;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.06, 20, 64), gloss(0x2f9be8)); ring.position.set(0, 0.62, 0.13);
+    const glass = new THREE.Mesh(new THREE.CircleGeometry(0.33, 48), gloss(0x9fe3ff, { transmission: 0.3, roughness: 0.03 })); glass.position.set(0, 0.62, 0.115);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.12, 32, 16), gloss(0xffc93b, { metalness: 0.6, roughness: 0.18 })); knob.position.set(0.52, -0.1, 0.2);
+    const g = new THREE.Group(); g.add(frame, panel, ring, glass, knob); g.rotation.y = -0.38; g.scale.setScalar(0.85); return g;
+  },
+  sneaker() {
+    // A chunky glossy runner, seen from the side and a little above.
+    const g = new THREE.Group();
+    const sole = new THREE.Mesh(new RoundedBoxGeometry(2.4, 0.3, 0.95, 8, 0.14), gloss(0xffffff)); sole.position.set(0, -0.6, 0);
+    const stripe = new THREE.Mesh(new RoundedBoxGeometry(2.42, 0.08, 0.97, 4, 0.035), gloss(0x1ea7ff)); stripe.position.set(0, -0.5, 0);
+    const upper = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32), gloss(0x1fc7a2)); upper.scale.set(1.15, 0.5, 0.46); upper.position.set(0.1, -0.32, 0);
+    const heel = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32), gloss(0x1fc7a2)); heel.scale.set(0.55, 0.62, 0.45); heel.position.set(-0.62, -0.05, 0);
+    const tongue = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), gloss(0x7de8cf)); tongue.scale.set(0.38, 0.42, 0.34); tongue.position.set(-0.2, 0.12, 0); tongue.rotation.z = 0.5;
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), gloss(0xffffff)); cap.scale.set(0.42, 0.3, 0.47); cap.position.set(1.0, -0.42, 0);
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.07, 16, 48), gloss(0xffffff)); collar.rotation.x = Math.PI / 2; collar.position.set(-0.55, 0.5, 0); collar.scale.set(1.25, 0.85, 1);
+    const swoosh = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.06, 12, 48, Math.PI * 0.6), gloss(0x8bd11a)); swoosh.position.set(-0.05, -0.15, 0.44); swoosh.rotation.z = 3.6;
+    g.add(sole, stripe, upper, heel, tongue, cap, collar, swoosh);
+    [0, 1, 2].forEach((i) => { const l = new THREE.Mesh(new THREE.CapsuleGeometry(0.03, 0.36, 6, 12), gloss(0xffffff)); l.rotation.x = Math.PI / 2; l.position.set(0.0 + i * 0.2, 0.08 - i * 0.07, 0.1); g.add(l); });
+    g.rotation.set(0.32, -0.3, 0.02); g.scale.setScalar(0.85); g.position.y = 0.15; return g;
+  },
+};
+
+window.render = (name) => {
+  const sc = scene(); const obj = BUILD[name](); sc.add(obj);
+  // soft contact glow under the object
+  renderer.render(sc, cam());
+  return renderer.domElement.toDataURL("image/png");
+};
+window.ready = true;
+</script>
+</body></html>
