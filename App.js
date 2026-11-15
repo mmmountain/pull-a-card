@@ -2019,7 +2019,7 @@ const AERO = {
   pod: require("./assets/aero3/pod.webp"), podLit: require("./assets/aero3/pod_lit.webp"),
 };
 const AERO_INK = "#0b3d6e";
-const AERO_ORDER = ["walk", "stretch", "bathroom", "water", "eat"]; // far to near (the fruit sits in front of the glass)
+const AERO_ORDER = ["stretch", "walk", "bathroom", "water", "eat"]; // far to near (the fruit sits in front of the glass)
 const AERO_BOB = { walk: 6, stretch: 4 };
 function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
   const ins = useSafeAreaInsets();
