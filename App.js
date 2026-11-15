@@ -2005,6 +2005,7 @@ const AERO = {
   bg: require("./assets/aero3/bg.jpg"), gull: require("./assets/aero3/sprite-gull.png"), dolphin: require("./assets/aero3/dolphin.webp"), dolphinGlow: require("./assets/aero3/dolphin_glow.webp"), dolphinLit: require("./assets/aero3/dolphin_lit.webp"), turtle: require("./assets/aero3/turtle.webp"), turtleGlow: require("./assets/aero3/turtle_glow.webp"),
   layers: {"walk": {x: 330, y: 520, w: 380, h: 338}, "stretch": {x: 640, y: 790, w: 260, h: 144}, "water": {x: 0, y: 847, w: 473, h: 959}, "eat": {x: 290, y: 1188, w: 340, h: 334}, "bathroom": {x: 630, y: 958, w: 440, h: 526}},
   stretchRise: 620, // the turtle climbs this far (art px) from the sea toward the stars as stretch comes due
+  waterGlow: require("./assets/aero3/wf_glow.webp"),
   waterFrames: [ // a photographed glass filling: frames from a generated fill video, picked by how due water is
     require("./assets/aero3/wf-00.webp"), require("./assets/aero3/wf-01.webp"), require("./assets/aero3/wf-02.webp"), require("./assets/aero3/wf-03.webp"), require("./assets/aero3/wf-04.webp"), require("./assets/aero3/wf-05.webp"), require("./assets/aero3/wf-06.webp"), require("./assets/aero3/wf-07.webp"), require("./assets/aero3/wf-08.webp"), require("./assets/aero3/wf-09.webp"), require("./assets/aero3/wf-10.webp"), require("./assets/aero3/wf-11.webp"), require("./assets/aero3/wf-12.webp"), require("./assets/aero3/wf-13.webp"), require("./assets/aero3/wf-14.webp"), require("./assets/aero3/wf-15.webp"), require("./assets/aero3/wf-16.webp"), require("./assets/aero3/wf-17.webp"), require("./assets/aero3/wf-18.webp"), require("./assets/aero3/wf-19.webp"), require("./assets/aero3/wf-20.webp"), require("./assets/aero3/wf-21.webp"), require("./assets/aero3/wf-22.webp"), require("./assets/aero3/wf-23.webp"), require("./assets/aero3/wf-24.webp"),
   ],
@@ -2050,6 +2051,17 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
   const full = !cleared && n.fill >= 1;
   const isDolphin = n.key === "walk", isTurtle = n.key === "stretch";
   const bob = useRef(new Animated.Value(0)).current, lift = useRef(new Animated.Value(0)).current, pulse = useRef(new Animated.Value(0)).current;
+  const flash = useRef(new Animated.Value(0)).current; // a brief glow when it's swiped to say "done"
+  const rise = useRef(new Animated.Value(0)).current; // turtle: how far it has climbed, eased between updates
+  useEffect(() => { if (isTurtle) Animated.timing(rise, { toValue: AERO.stretchRise * pct / 100, duration: cleared ? 900 : 600, easing: Easing.inOut(Easing.cubic), useNativeDriver: true }).start(); }, [pct, cleared]);
+  // water: step through the fill frames; after a swipe, run them back down to empty
+  const nW = AERO.waterFrames.length, wTarget = Math.round(pct / 100 * (nW - 1));
+  const [wIdx, setWIdx] = useState(wTarget), [wShown, setWShown] = useState(wTarget);
+  useEffect(() => {
+    if (n.key !== "water" || wIdx === wTarget) return;
+    if (!cleared) { setWIdx(wTarget); return; }
+    const t = setTimeout(() => setWIdx((k) => Math.max(wTarget, k - 2)), 40); return () => clearTimeout(t);
+  }, [wIdx, wTarget, cleared]);
   useEffect(() => {
     if (!AERO_BOB[n.key]) return;
     const a = Animated.loop(Animated.sequence([Animated.timing(bob, { toValue: 1, duration: isDolphin ? 3600 : 2400 + i * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true }), Animated.timing(bob, { toValue: 0, duration: isDolphin ? 3600 : 2400 + i * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true })]));
@@ -2066,22 +2078,23 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderTerminationRequest: () => false,
-    onPanResponderMove: (_, g) => lift.setValue(Math.min(0, g.dy) * 0.6),
+    onPanResponderMove: (_, g) => { if (isDolphin) lift.setValue(Math.min(0, g.dy) * 0.6); },
     onPanResponderRelease: (_, g) => {
       if (g.dy < -50) {
-        Animated.sequence([Animated.timing(lift, { toValue: -60, duration: 160, useNativeDriver: true }), Animated.spring(lift, { toValue: 0, friction: 4, useNativeDriver: true })]).start();
+        if (isDolphin) Animated.sequence([Animated.timing(lift, { toValue: -60, duration: 160, useNativeDriver: true }), Animated.spring(lift, { toValue: 0, friction: 4, useNativeDriver: true })]).start();
+        Animated.sequence([Animated.timing(flash, { toValue: 1, duration: 140, useNativeDriver: true }), Animated.timing(flash, { toValue: 0, duration: 700, easing: Easing.out(Easing.quad), useNativeDriver: true })]).start();
         setCleared(true); live.current(nn.current);
       } else Animated.spring(lift, { toValue: 0, useNativeDriver: true }).start();
     },
   }), []);
-  const x = ox + L.x * s, y = oy + (L.y - (isTurtle ? AERO.stretchRise * pct / 100 : 0)) * s, w = L.w * s, h = L.h * s;
+  const x = ox + L.x * s, y = oy + L.y * s, w = L.w * s, h = L.h * s;
   const labelTop = n.key === "water" ? -26 : h + 4;
   return (
     <Animated.View {...pr.panHandlers} accessibilityRole="adjustable" accessibilityLabel={n.card.label + (full ? ", full" : ", " + left + " until full")}
       style={{ position: "absolute", left: x, top: y, width: w, height: h,
-        transform: [{ translateY: Animated.add(lift, bob.interpolate({ inputRange: [0, 1], outputRange: [-(AERO_BOB[n.key] || 0), AERO_BOB[n.key] || 0] })) },
+        transform: [{ translateY: Animated.add(Animated.add(lift, Animated.multiply(rise, -s)), bob.interpolate({ inputRange: [0, 1], outputRange: [-(AERO_BOB[n.key] || 0), AERO_BOB[n.key] || 0] })) },
           { rotate: bob.interpolate({ inputRange: [0, 1], outputRange: isDolphin ? ["-1.2deg", "1.2deg"] : ["0deg", "0deg"] }) },
-          { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, isDolphin ? 1.02 : 1.04] }) }] }}>
+          { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, isDolphin || isTurtle ? 1.03 : 1] }) }] }}>
       {isDolphin ? <>
         {/* Walk: a photographed dolphin floating in the sky; its glow builds as walk time comes due */}
         <Animated.Image source={AERO.dolphinGlow} style={{ position: "absolute", left: -w * 0.3, top: -h * 0.3, width: w * 1.6, height: h * 1.6,
@@ -2096,7 +2109,10 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
         <Image source={AERO.turtle} style={{ width: w, height: h }} />
       </> : n.key === "water" ? <>
         {/* Water: the glass fills as water time comes due */}
-        <Image source={AERO.waterFrames[Math.round(pct / 100 * (AERO.waterFrames.length - 1))]} style={{ width: w, height: h }} />
+        {/* the last frame that finished loading stays underneath, so swapping frames never blinks */}
+        <Image source={AERO.waterFrames[wShown]} fadeDuration={0} style={{ position: "absolute", left: 0, top: 0, width: w, height: h }} />
+        <Image key={wIdx} source={AERO.waterFrames[wIdx]} fadeDuration={0} onLoad={() => setWShown(wIdx)} style={{ width: w, height: h }} />
+        <Animated.Image source={AERO.waterGlow} fadeDuration={0} style={{ position: "absolute", left: -w * 0.15, top: -h * 0.08, width: w * 1.3, height: h * 1.16, opacity: full ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.45] }) : flash }} />
       </> : n.key === "eat" ? <>
         {/* Eat: the fruit ripens from grey back to full color as eat time builds */}
         <Image source={AERO.bowlGrey} style={{ width: w, height: h }} />
