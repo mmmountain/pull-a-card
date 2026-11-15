@@ -15,21 +15,12 @@ ys, xs = np.where(a > 0.02); pl_rgba = np.dstack([rgb, a])[ys.min():ys.max() + 1
 pim = Image.fromarray((pl_rgba * 255).astype(np.uint8), "RGBA"); PW = 500; pim = pim.resize((PW, round(PW * pim.height / pim.width)), Image.LANCZOS)
 base = Image.fromarray((bg * 255).astype(np.uint8)).convert("RGBA"); base.alpha_composite(pim, (290 - PW // 2, 360 - pim.height // 2))
 base.convert("RGB").save(f"{OUT}/bg.jpg", quality=93)
-subprocess.run(["python3", "/home/claude/aero-build/photo/water_overlay.py", f"{OUT}/bg.jpg", "/home/claude/aero-build/photo/stream.png", f"{OUT}/bg.jpg", "600", "-95", "950", str(HZ)], check=True)
-# re-cut layers
-old = np.asarray(Image.open("oldbg.png").convert("RGB")).astype(np.float32) / 255
-man = json.load(open("/home/claude/aero-build/pack9/manifest.json"))
-for n in ["eat", "bathroom", "water"]:
-    L = man["layers"][n]; ob = old[L["y"]:L["y"] + L["h"], L["x"]:L["x"] + L["w"]]
-    for f in glob.glob(f"/home/claude/aero-build/pack9/{n}-*.webp"):
-        im = np.asarray(Image.open(f).convert("RGBA")).astype(np.float32) / 255; F, A = im[..., :3], im[..., 3]
-        k = F / np.maximum(ob, 0.03); km = k.mean(-1); ks = k.std(-1)
-        sand = ((ob[..., 0] - ob[..., 2]) > 0.12) & (np.arange(L["y"], L["y"] + L["h"])[:, None] > 1150)  # only where the old world was sand
-        shadow = (ks < 0.08) & (km < 0.985) & (A > 0) & sand
-        sa = nd.gaussian_filter(np.where(shadow, np.clip(1 - km, 0, 1) * A, 0), 2.5)
-        shadow = nd.binary_dilation(shadow, iterations=2) & sand & ~((A > 0) & ~shadow & (ks >= 0.08))
-        out = np.dstack([np.where(shadow[..., None], 0.0, F), np.where(shadow, sa * 1.05, A)])
-        # where it nearly matches the old sand, it's just sand: drop it
-        out[..., 3] = np.where((~shadow) & sand & (np.abs(F - ob).max(-1) < 0.04), 0, out[..., 3])
-        Image.fromarray((np.clip(out, 0, 1) * 255 + .5).astype(np.uint8), "RGBA").save(f"{OUT}/" + os.path.basename(f), quality=86, method=6)
-json.dump({"layers": {n: man["layers"][n] for n in ["eat", "bathroom", "water"]}, "levels": man["levels"]}, open(f"{OUT}/manifest.json", "w"))
+subprocess.run(["python3", "/home/claude/aero-build/photo/water_overlay.py", f"{OUT}/bg.jpg", "stream2.png", f"{OUT}/bg.jpg", "-120", "300", "690", str(HZ)], check=True)
+# soft contact shadows where the photographed objects stand on the sand
+import json as _j
+L = _j.load(open("/home/claude/aero-build/mj/layout.json"))
+b = np.asarray(Image.open(f"{OUT}/bg.jpg").convert("RGB")).astype(np.float32) / 255
+yy, xx = np.mgrid[0:1920, 0:1080].astype(np.float32); sh = np.zeros((1920, 1080), np.float32)
+for k, (cx, cy, rx, ry, d) in L["shadows"].items(): sh = np.maximum(sh, np.exp(-(((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2) * 2.2) * d)
+b = b * (1 - sh[..., None] * np.array([0.9, 0.85, 0.75]))
+Image.fromarray((b * 255 + .5).astype(np.uint8)).save(f"{OUT}/bg.jpg", quality=92)
