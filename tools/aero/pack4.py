@@ -24,6 +24,6 @@ for n in ["walk", "eat", "stretch", "bathroom", "water"]:
         rgba = np.dstack([f, masks[l]])[y0:y1, x0:x1]
         Image.fromarray((rgba * 255 + .5).astype(np.uint8), "RGBA").save(f"{dst}/{n}-{l}.png", optimize=True)
     print(n, man[n])
-for s in ["gull", "fish"]:
+for s in ["gull", "dolphin"]:
     im = Image.open(f"{src}/sprite-{s}.png"); im.crop(im.getbbox()).save(f"{dst}/sprite-{s}.png", optimize=True)
 json.dump({"size": [1080, 1920], "levels": LEVELS, "layers": man}, open(f"{dst}/manifest.json", "w"), indent=1)

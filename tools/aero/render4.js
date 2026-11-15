@@ -28,7 +28,7 @@ const server = http.createServer((q, s) => {
       console.log(n, Date.now() - t0);
     }
     save("mock.png", await p.evaluate(() => window.renderFrame({ walk: 0.6, eat: 0.6, stretch: 0.6, bathroom: 1, water: 0.6 })));
-    for (const s of ["gull", "fish"]) save(`sprite-${s}.png`, await p.evaluate((s) => window.renderSprite(s), s));
+    for (const s of ["gull", "dolphin"]) save(`sprite-${s}.png`, await p.evaluate((s) => window.renderSprite(s), s));
   }
   if (errs.length) console.log("errors:", errs.slice(0, 8));
   await b.close(); server.close();
