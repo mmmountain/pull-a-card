@@ -2002,10 +2002,9 @@ const FOCUS_LOOKS = [["aero", "Frutiger Aero"], ["classic", "Classic desk"]];
 // Generated from tools/aero (scene.html → render3.js): the world, and each need at 8 fill levels, cropped.
 const AERO = {
   size: [1080, 1920], levels: [0,  15,  30,  45,  60,  75,  90,  100],
-  bg: require("./assets/aero3/bg.jpg"), gull: require("./assets/aero3/sprite-gull.png"), dolphin: require("./assets/aero3/dolphin.webp"), dolphinAspect: 641 / 720,
-  layers: {"walk": {x: 141, y: 324, w: 544, h: 382}, "eat": {x: 369, y: 1227, w: 417, h: 269}, "stretch": {x: 347, y: 884, w: 453, h: 390}, "bathroom": {x: 521, y: 884, w: 542, h: 666}, "water": {x: 0, y: 958, w: 374, h: 743}},
-  frames: {
-    walk: { 0: require("./assets/aero3/walk-0.webp"), 15: require("./assets/aero3/walk-15.webp"), 30: require("./assets/aero3/walk-30.webp"), 45: require("./assets/aero3/walk-45.webp"), 60: require("./assets/aero3/walk-60.webp"), 75: require("./assets/aero3/walk-75.webp"), 90: require("./assets/aero3/walk-90.webp"), 100: require("./assets/aero3/walk-100.webp") },
+  bg: require("./assets/aero3/bg.jpg"), gull: require("./assets/aero3/sprite-gull.png"), dolphin: require("./assets/aero3/dolphin.webp"), dolphinGlow: require("./assets/aero3/dolphin_glow.webp"), dolphinLit: require("./assets/aero3/dolphin_lit.webp"),
+  layers: {"eat": {x: 369, y: 1227, w: 417, h: 269}, "stretch": {x: 347, y: 884, w: 453, h: 390}, "bathroom": {x: 521, y: 884, w: 542, h: 666}, "water": {x: 0, y: 958, w: 374, h: 743}, "walk": {x: 330, y: 611, w: 380, h: 338}},
+  frames: { // walk is the dolphin, not frames
     eat: { 0: require("./assets/aero3/eat-0.webp"), 15: require("./assets/aero3/eat-15.webp"), 30: require("./assets/aero3/eat-30.webp"), 45: require("./assets/aero3/eat-45.webp"), 60: require("./assets/aero3/eat-60.webp"), 75: require("./assets/aero3/eat-75.webp"), 90: require("./assets/aero3/eat-90.webp"), 100: require("./assets/aero3/eat-100.webp") },
     stretch: { 0: require("./assets/aero3/stretch-0.webp"), 15: require("./assets/aero3/stretch-15.webp"), 30: require("./assets/aero3/stretch-30.webp"), 45: require("./assets/aero3/stretch-45.webp"), 60: require("./assets/aero3/stretch-60.webp"), 75: require("./assets/aero3/stretch-75.webp"), 90: require("./assets/aero3/stretch-90.webp"), 100: require("./assets/aero3/stretch-100.webp") },
     bathroom: { 0: require("./assets/aero3/bathroom-0.webp"), 15: require("./assets/aero3/bathroom-15.webp"), 30: require("./assets/aero3/bathroom-30.webp"), 45: require("./assets/aero3/bathroom-45.webp"), 60: require("./assets/aero3/bathroom-60.webp"), 75: require("./assets/aero3/bathroom-75.webp"), 90: require("./assets/aero3/bathroom-90.webp"), 100: require("./assets/aero3/bathroom-100.webp") },
@@ -2014,7 +2013,7 @@ const AERO = {
 };
 const AERO_INK = "#0b3d6e";
 const AERO_ORDER = ["walk", "eat", "stretch", "bathroom", "water"]; // far to near
-const AERO_BOB = { walk: 7 };
+const AERO_BOB = { walk: 6 };
 function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
   const ins = useSafeAreaInsets();
   const win = useWindowDimensions();
@@ -2027,7 +2026,6 @@ function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
       <Image source={AERO.bg} style={{ position: "absolute", left: ox, top: oy, width: AERO.size[0] * s, height: AERO.size[1] * s }} />
       <AeroLife s={s} ox={ox} oy={oy} W={W} />
       {AERO_ORDER.filter((k) => by[k]).map((k, i) => <AeroThing key={k} n={by[k]} i={i} s={s} ox={ox} oy={oy} left={left(by[k])} onPlay={onPlay} />)}
-      <AeroDolphin s={s} ox={ox} oy={oy} />
       <View style={[st.aeroBar, { marginTop: ins.top + 8 }]}>
         <View style={{ flex: 1 }}>
           <Text style={st.aeroTitle}>Focus</Text>
@@ -2054,10 +2052,11 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
   const pct = cleared ? 0 : Math.min(100, n.fill * 100);
   const lvl = AERO.levels.filter((l) => l <= pct + 0.01).pop() || 0;
   const full = !cleared && n.fill >= 1;
+  const isDolphin = n.key === "walk";
   const bob = useRef(new Animated.Value(0)).current, lift = useRef(new Animated.Value(0)).current, pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!AERO_BOB[n.key]) return;
-    const a = Animated.loop(Animated.sequence([Animated.timing(bob, { toValue: 1, duration: 2400 + i * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true }), Animated.timing(bob, { toValue: 0, duration: 2400 + i * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true })]));
+    const a = Animated.loop(Animated.sequence([Animated.timing(bob, { toValue: 1, duration: isDolphin ? 3600 : 2400 + i * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true }), Animated.timing(bob, { toValue: 0, duration: isDolphin ? 3600 : 2400 + i * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true })]));
     a.start(); return () => a.stop();
   }, []);
   useEffect(() => {
@@ -2085,46 +2084,20 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
     <Animated.View {...pr.panHandlers} accessibilityRole="adjustable" accessibilityLabel={n.card.label + (full ? ", full" : ", " + left + " until full")}
       style={{ position: "absolute", left: x, top: y, width: w, height: h,
         transform: [{ translateY: Animated.add(lift, bob.interpolate({ inputRange: [0, 1], outputRange: [-(AERO_BOB[n.key] || 0), AERO_BOB[n.key] || 0] })) },
-          { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }) }] }}>
-      <Image source={AERO.frames[n.key][lvl]} style={{ width: w, height: h }} />
+          { rotate: bob.interpolate({ inputRange: [0, 1], outputRange: isDolphin ? ["-1.2deg", "1.2deg"] : ["0deg", "0deg"] }) },
+          { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, isDolphin ? 1.02 : 1.04] }) }] }}>
+      {isDolphin ? <>
+        {/* Walk: a photographed dolphin floating in the sky; its glow builds as walk time comes due */}
+        <Animated.Image source={AERO.dolphinGlow} style={{ position: "absolute", left: -w * 0.3, top: -h * 0.3, width: w * 1.6, height: h * 1.6,
+          opacity: full ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) : Math.pow(pct / 100, 1.3) * 0.85 }} />
+        <Image source={AERO.dolphinGlow} style={{ position: "absolute", left: -w * 0.55, top: -h * 0.55, width: w * 2.1, height: h * 2.1, opacity: Math.max(0, pct / 100 - 0.5) * 2 * (full ? 1 : 0.8) }} />
+        <Image source={AERO.dolphin} style={{ width: w, height: h }} />
+        <Image source={AERO.dolphinLit} style={{ position: "absolute", left: 0, top: 0, width: w, height: h, opacity: Math.pow(pct / 100, 1.5) * 0.9 }} />
+      </> : <Image source={AERO.frames[n.key][lvl]} style={{ width: w, height: h }} />}
       <View style={[st.aeroLabel, { position: "absolute", top: labelTop, alignSelf: "center" }, full && { backgroundColor: "#ffffff", borderColor: "#ffb020" }]}>
         <Text style={st.aeroLabelTxt} numberOfLines={1}>{full ? "! " : ""}{n.name} · {left}</Text>
       </View>
     </Animated.View>
-  );
-}
-/** Now and then a dolphin breaks the sea far out, climbs into the sky and swoops toward us, growing until it sails off
- *  past the bottom corner. Drawn above everything else in the scene, since at the end it's the nearest thing there. */
-const DOLPHIN_KEYS = { // t → art-space center x, y, size (width in art px), tilt
-  t: [0, 0.06, 0.12, 0.35, 0.58, 0.8, 1],
-  x: [470, 472, 485, 530, 650, 800, 1300], y: [1012, 990, 930, 640, 520, 820, 1650],
-  w: [50, 60, 75, 170, 330, 720, 1500], r: ["-35deg", "-30deg", "-22deg", "-8deg", "4deg", "16deg", "26deg"],
-};
-function AeroDolphin({ s, ox, oy }) {
-  const t = useRef(new Animated.Value(0)).current, wig = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loops = [
-      Animated.loop(Animated.sequence([Animated.delay(9000), Animated.timing(t, { toValue: 1, duration: 7500, easing: Easing.inOut(Easing.sin), useNativeDriver: true }), Animated.timing(t, { toValue: 0, duration: 0, useNativeDriver: true }), Animated.delay(26000)])),
-      Animated.loop(Animated.sequence([Animated.timing(wig, { toValue: 1, duration: 420, easing: Easing.inOut(Easing.sin), useNativeDriver: true }), Animated.timing(wig, { toValue: 0, duration: 420, easing: Easing.inOut(Easing.sin), useNativeDriver: true })])),
-    ];
-    loops.forEach((l) => l.start()); return () => loops.forEach((l) => l.stop());
-  }, []);
-  const K = DOLPHIN_KEYS, base = 1000 * s, aspect = AERO.dolphinAspect;
-  const at = (arr, f) => t.interpolate({ inputRange: K.t, outputRange: arr.map(f) });
-  const sea = oy + 1012 * s;
-  return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      {/* splash where it breaks the surface */}
-      <Animated.View style={{ position: "absolute", left: ox + 470 * s - 60 * s, top: sea - 8 * s, width: 120 * s, height: 16 * s, borderRadius: 60 * s, backgroundColor: "rgba(255,255,255,0.9)",
-        opacity: t.interpolate({ inputRange: [0, 0.04, 0.1, 0.2, 1], outputRange: [0, 0.9, 0.7, 0, 0] }),
-        transform: [{ scaleX: t.interpolate({ inputRange: [0, 0.2], outputRange: [0.3, 1.6], extrapolate: "clamp" }) }] }} />
-      <Animated.Image source={AERO.dolphin} resizeMode="contain" style={{ position: "absolute", left: -base / 2, top: -base * aspect / 2, width: base, height: base * aspect,
-        opacity: t.interpolate({ inputRange: [0, 0.03, 0.97, 1], outputRange: [0, 1, 1, 0] }),
-        transform: [{ translateX: at(K.x, (v) => ox + v * s) }, { translateY: at(K.y, (v) => oy + v * s) },
-          { scale: at(K.w, (v) => v / 1000) }, { rotate: t.interpolate({ inputRange: K.t, outputRange: K.r }) },
-          { rotate: wig.interpolate({ inputRange: [0, 1], outputRange: ["-2.5deg", "2.5deg"] }) },
-          { scaleY: wig.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1.02, 0.98, 1.02] }) }] }} />
-    </View>
   );
 }
 /** Things that live in the world: gulls crossing the sky, bubbles drifting up. */
