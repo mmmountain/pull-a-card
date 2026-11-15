@@ -2003,9 +2003,11 @@ const FOCUS_LOOKS = [["aero", "Frutiger Aero"], ["classic", "Classic desk"]];
 const AERO = {
   size: [1080, 1920], levels: [0,  15,  30,  45,  60,  75,  90,  100],
   bg: require("./assets/aero3/bg.jpg"), gull: require("./assets/aero3/sprite-gull.png"), dolphin: require("./assets/aero3/dolphin.webp"), dolphinGlow: require("./assets/aero3/dolphin_glow.webp"), dolphinLit: require("./assets/aero3/dolphin_lit.webp"), turtle: require("./assets/aero3/turtle.webp"), turtleGlow: require("./assets/aero3/turtle_glow.webp"),
-  layers: {"walk": {x: 330, y: 520, w: 380, h: 338}, "stretch": {x: 640, y: 790, w: 260, h: 144}, "water": {x: 30, y: 1000, w: 318, h: 700}, "eat": {x: 290, y: 1188, w: 340, h: 334}, "bathroom": {x: 630, y: 958, w: 440, h: 526}},
+  layers: {"walk": {x: 330, y: 520, w: 380, h: 338}, "stretch": {x: 640, y: 790, w: 260, h: 144}, "water": {x: 0, y: 847, w: 473, h: 959}, "eat": {x: 290, y: 1188, w: 340, h: 334}, "bathroom": {x: 630, y: 958, w: 440, h: 526}},
   stretchRise: 620, // the turtle climbs this far (art px) from the sea toward the stars as stretch comes due
-  glassWalls: require("./assets/aero3/glass_walls.webp"), glassWater: require("./assets/aero3/glass_water.webp"), waterSpan: [0.04, 0.86], // water fills this band of the glass image
+  waterFrames: [ // a photographed glass filling: frames from a generated fill video, picked by how due water is
+    require("./assets/aero3/wf-00.webp"), require("./assets/aero3/wf-01.webp"), require("./assets/aero3/wf-02.webp"), require("./assets/aero3/wf-03.webp"), require("./assets/aero3/wf-04.webp"), require("./assets/aero3/wf-05.webp"), require("./assets/aero3/wf-06.webp"), require("./assets/aero3/wf-07.webp"), require("./assets/aero3/wf-08.webp"), require("./assets/aero3/wf-09.webp"), require("./assets/aero3/wf-10.webp"), require("./assets/aero3/wf-11.webp"), require("./assets/aero3/wf-12.webp"), require("./assets/aero3/wf-13.webp"), require("./assets/aero3/wf-14.webp"), require("./assets/aero3/wf-15.webp"), require("./assets/aero3/wf-16.webp"), require("./assets/aero3/wf-17.webp"), require("./assets/aero3/wf-18.webp"), require("./assets/aero3/wf-19.webp"), require("./assets/aero3/wf-20.webp"), require("./assets/aero3/wf-21.webp"), require("./assets/aero3/wf-22.webp"), require("./assets/aero3/wf-23.webp"), require("./assets/aero3/wf-24.webp"),
+  ],
   bowl: require("./assets/aero3/bowl.webp"), bowlGrey: require("./assets/aero3/bowl_grey.webp"),
   pod: require("./assets/aero3/pod.webp"), podLit: require("./assets/aero3/pod_lit.webp"),
 };
@@ -2092,17 +2094,10 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
         <Animated.Image source={AERO.turtleGlow} style={{ position: "absolute", left: -w * 0.3, top: -h * 0.3, width: w * 1.6, height: h * 1.6,
           opacity: full ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] }) : Math.max(0, pct / 100 - 0.8) * 3 }} />
         <Image source={AERO.turtle} style={{ width: w, height: h }} />
-      </> : n.key === "water" ? (() => {
-        // Water: a photographed glass; the water (with its ice and lime) rises inside as water time comes due
-        const [t0, t1] = AERO.waterSpan, cut = h * (t1 - (t1 - t0) * pct / 100);
-        return <>
-          <View style={{ position: "absolute", left: 0, top: cut, width: w, height: h - cut, overflow: "hidden" }}>
-            <Image source={AERO.glassWater} style={{ position: "absolute", left: 0, top: -cut, width: w, height: h }} />
-          </View>
-          {pct > 2 && <View style={{ position: "absolute", left: w * 0.1, width: w * 0.8, top: cut - 1, height: 2, borderRadius: 1, backgroundColor: "rgba(255,255,255,0.7)" }} />}
-          <Image source={AERO.glassWalls} style={{ width: w, height: h }} />
-        </>;
-      })() : n.key === "eat" ? <>
+      </> : n.key === "water" ? <>
+        {/* Water: the glass fills as water time comes due */}
+        <Image source={AERO.waterFrames[Math.round(pct / 100 * (AERO.waterFrames.length - 1))]} style={{ width: w, height: h }} />
+      </> : n.key === "eat" ? <>
         {/* Eat: the fruit ripens from grey back to full color as eat time builds */}
         <Image source={AERO.bowlGrey} style={{ width: w, height: h }} />
         <Image source={AERO.bowl} style={{ position: "absolute", left: 0, top: 0, width: w, height: h, opacity: Math.pow(pct / 100, 1.2) }} />
