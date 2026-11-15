@@ -2002,8 +2002,11 @@ const FOCUS_LOOKS = [["aero", "Frutiger Aero"], ["classic", "Classic desk"]];
 // Generated from tools/aero (scene.html → render3.js): the world, and each need at 8 fill levels, cropped.
 const AERO = {
   size: [1080, 1920], levels: [0,  15,  30,  45,  60,  75,  90,  100],
-  bg: require("./assets/aero3/bg.jpg"), gull: require("./assets/aero3/sprite-gull.png"), dolphin: require("./assets/aero3/dolphin.webp"), dolphinGlow: require("./assets/aero3/dolphin_glow.webp"), dolphinLit: require("./assets/aero3/dolphin_lit.webp"), turtle: require("./assets/aero3/turtle.webp"), turtleGlow: require("./assets/aero3/turtle_glow.webp"),
-  layers: {"walk": {x: 330, y: 520, w: 380, h: 338}, "stretch": {x: 640, y: 790, w: 260, h: 144}, "water": {x: 0, y: 847, w: 473, h: 959}, "eat": {x: 163, y: 1329, w: 744, h: 579}, "bathroom": {x: 630, y: 958, w: 440, h: 526}},
+  bg: require("./assets/aero3/bg.jpg"), gull: require("./assets/aero3/sprite-gull.png"), dolphin: require("./assets/aero3/dolphin.webp"), dolphinGlow: require("./assets/aero3/d_glow.webp"),
+  dolphinFrames: [ // the dolphin turns away to leave as walk time comes due (frames from a generated video)
+    require("./assets/aero3/d-00.webp"), require("./assets/aero3/d-01.webp"), require("./assets/aero3/d-02.webp"), require("./assets/aero3/d-03.webp"), require("./assets/aero3/d-04.webp"), require("./assets/aero3/d-05.webp"), require("./assets/aero3/d-06.webp"), require("./assets/aero3/d-07.webp"), require("./assets/aero3/d-08.webp"), require("./assets/aero3/d-09.webp"), require("./assets/aero3/d-10.webp"), require("./assets/aero3/d-11.webp"), require("./assets/aero3/d-12.webp"), require("./assets/aero3/d-13.webp"), require("./assets/aero3/d-14.webp"), require("./assets/aero3/d-15.webp"), require("./assets/aero3/d-16.webp"), require("./assets/aero3/d-17.webp"),
+  ], turtle: require("./assets/aero3/turtle.webp"), turtleGlow: require("./assets/aero3/turtle_glow.webp"),
+  layers: {"walk": {x: 24, y: 274, w: 829, h: 860}, "stretch": {x: 640, y: 790, w: 260, h: 144}, "water": {x: 0, y: 847, w: 473, h: 959}, "eat": {x: 163, y: 1329, w: 744, h: 579}, "bathroom": {x: 630, y: 958, w: 440, h: 526}},
   stretchRise: 620, // the turtle climbs this far (art px) from the sea toward the stars as stretch comes due
   waterGlow: require("./assets/aero3/wf_glow.webp"),
   waterFrames: [ // a photographed glass filling: frames from a generated fill video, picked by how due water is
@@ -2058,7 +2061,8 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
   const rise = useRef(new Animated.Value(0)).current; // turtle: how far it has climbed, eased between updates
   useEffect(() => { if (isTurtle) Animated.timing(rise, { toValue: AERO.stretchRise * pct / 100, duration: cleared ? 900 : 600, easing: Easing.inOut(Easing.cubic), useNativeDriver: true }).start(); }, [pct, cleared]);
   // water: step through the fill frames; after a swipe, run them back down to empty
-  const seq = n.key === "water" ? AERO.waterFrames : n.key === "eat" ? AERO.pileFrames : null, seqGlow = n.key === "water" ? AERO.waterGlow : AERO.pileGlow;
+  const seq = n.key === "water" ? AERO.waterFrames : n.key === "eat" ? AERO.pileFrames : n.key === "walk" ? AERO.dolphinFrames : null;
+  const seqGlow = n.key === "water" ? AERO.waterGlow : n.key === "walk" ? AERO.dolphinGlow : AERO.pileGlow;
   const nW = seq ? seq.length : 1, wTarget = Math.round(pct / 100 * (nW - 1));
   const [wIdx, setWIdx] = useState(wTarget), [wShown, setWShown] = useState(wTarget);
   useEffect(() => {
@@ -2092,21 +2096,14 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
     },
   }), []);
   const x = ox + L.x * s, y = oy + L.y * s, w = L.w * s, h = L.h * s;
-  const labelTop = n.key === "water" ? -26 : n.key === "eat" ? h * 0.74 : h + 4;
+  const labelTop = n.key === "water" ? -26 : n.key === "eat" ? h * 0.74 : n.key === "walk" ? h * 0.55 : h + 4;
   return (
     <Animated.View {...pr.panHandlers} accessibilityRole="adjustable" accessibilityLabel={n.card.label + (full ? ", full" : ", " + left + " until full")}
       style={{ position: "absolute", left: x, top: y, width: w, height: h,
         transform: [{ translateY: Animated.add(Animated.add(lift, Animated.multiply(rise, -s)), bob.interpolate({ inputRange: [0, 1], outputRange: [-(AERO_BOB[n.key] || 0), AERO_BOB[n.key] || 0] })) },
           { rotate: bob.interpolate({ inputRange: [0, 1], outputRange: isDolphin ? ["-1.2deg", "1.2deg"] : ["0deg", "0deg"] }) },
           { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, isDolphin || isTurtle ? 1.03 : 1] }) }] }}>
-      {isDolphin ? <>
-        {/* Walk: a photographed dolphin floating in the sky; its glow builds as walk time comes due */}
-        <Animated.Image source={AERO.dolphinGlow} style={{ position: "absolute", left: -w * 0.3, top: -h * 0.3, width: w * 1.6, height: h * 1.6,
-          opacity: full ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) : Math.pow(pct / 100, 1.3) * 0.85 }} />
-        <Image source={AERO.dolphinGlow} style={{ position: "absolute", left: -w * 0.55, top: -h * 0.55, width: w * 2.1, height: h * 2.1, opacity: Math.max(0, pct / 100 - 0.5) * 2 * (full ? 1 : 0.8) }} />
-        <Image source={AERO.dolphin} style={{ width: w, height: h }} />
-        <Image source={AERO.dolphinLit} style={{ position: "absolute", left: 0, top: 0, width: w, height: h, opacity: Math.pow(pct / 100, 1.5) * 0.9 }} />
-      </> : isTurtle ? <>
+      {isTurtle ? <>
         {/* Stretch: a turtle rising from the sea toward the stars; it lights up with starlight when it gets there */}
         <Animated.Image source={AERO.turtleGlow} style={{ position: "absolute", left: -w * 0.3, top: -h * 0.3, width: w * 1.6, height: h * 1.6,
           opacity: full ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] }) : Math.max(0, pct / 100 - 0.8) * 3 }} />
@@ -2116,7 +2113,7 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
             loading stays underneath, so swapping frames never blinks. */}
         <Image source={seq[wShown]} fadeDuration={0} style={{ position: "absolute", left: 0, top: 0, width: w, height: h }} />
         <Image key={wIdx} source={seq[wIdx]} fadeDuration={0} onLoad={() => setWShown(wIdx)} style={{ width: w, height: h }} />
-        <Animated.Image source={seqGlow} fadeDuration={0} style={{ position: "absolute", left: n.key === "water" ? -w * 0.15 : -w * 0.12, top: n.key === "water" ? -h * 0.08 : -h * 0.12, width: n.key === "water" ? w * 1.3 : w * 1.24, height: n.key === "water" ? h * 1.16 : h * 1.24, opacity: full ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.45] }) : flash }} />
+        <Animated.Image source={seqGlow} fadeDuration={0} style={{ position: "absolute", ...(n.key === "walk" ? { left: 0, top: 0, width: w, height: h } : n.key === "water" ? { left: -w * 0.15, top: -h * 0.08, width: w * 1.3, height: h * 1.16 } : { left: -w * 0.12, top: -h * 0.12, width: w * 1.24, height: h * 1.24 }), opacity: full ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.45] }) : flash }} />
       </> : <>
         {/* Bathroom: a restroom pod whose lights come up as bathroom time comes due */}
         <Image source={AERO.pod} style={{ width: w, height: h }} />
