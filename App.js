@@ -2002,18 +2002,18 @@ const FOCUS_LOOKS = [["aero", "Frutiger Aero"], ["classic", "Classic desk"]];
 // Generated from tools/aero (scene.html → render3.js): the world, and each need at 8 fill levels, cropped.
 const AERO = {
   size: [1080, 1920], levels: [0,  15,  30,  45,  60,  75,  90,  100],
-  bg: require("./assets/aero3/bg.jpg"), gull: require("./assets/aero3/sprite-gull.png"), dolphin: require("./assets/aero3/dolphin.webp"), dolphinGlow: require("./assets/aero3/dolphin_glow.webp"), dolphinLit: require("./assets/aero3/dolphin_lit.webp"),
-  layers: {"eat": {x: 369, y: 1227, w: 417, h: 269}, "stretch": {x: 347, y: 884, w: 453, h: 390}, "bathroom": {x: 521, y: 884, w: 542, h: 666}, "water": {x: 0, y: 958, w: 374, h: 743}, "walk": {x: 330, y: 611, w: 380, h: 338}},
-  frames: { // walk is the dolphin, not frames
+  bg: require("./assets/aero3/bg.jpg"), gull: require("./assets/aero3/sprite-gull.png"), dolphin: require("./assets/aero3/dolphin.webp"), dolphinGlow: require("./assets/aero3/dolphin_glow.webp"), dolphinLit: require("./assets/aero3/dolphin_lit.webp"), turtle: require("./assets/aero3/turtle.webp"), turtleGlow: require("./assets/aero3/turtle_glow.webp"),
+  layers: {"eat": {x: 369, y: 1227, w: 417, h: 269}, "bathroom": {x: 521, y: 884, w: 542, h: 666}, "water": {x: 0, y: 958, w: 374, h: 743}, "walk": {x: 330, y: 520, w: 380, h: 338}, "stretch": {x: 640, y: 790, w: 260, h: 144}},
+  stretchRise: 620, // the turtle climbs this far (art px) from the sea toward the stars as stretch comes due
+  frames: { // walk is the dolphin and stretch the turtle, not frames
     eat: { 0: require("./assets/aero3/eat-0.webp"), 15: require("./assets/aero3/eat-15.webp"), 30: require("./assets/aero3/eat-30.webp"), 45: require("./assets/aero3/eat-45.webp"), 60: require("./assets/aero3/eat-60.webp"), 75: require("./assets/aero3/eat-75.webp"), 90: require("./assets/aero3/eat-90.webp"), 100: require("./assets/aero3/eat-100.webp") },
-    stretch: { 0: require("./assets/aero3/stretch-0.webp"), 15: require("./assets/aero3/stretch-15.webp"), 30: require("./assets/aero3/stretch-30.webp"), 45: require("./assets/aero3/stretch-45.webp"), 60: require("./assets/aero3/stretch-60.webp"), 75: require("./assets/aero3/stretch-75.webp"), 90: require("./assets/aero3/stretch-90.webp"), 100: require("./assets/aero3/stretch-100.webp") },
     bathroom: { 0: require("./assets/aero3/bathroom-0.webp"), 15: require("./assets/aero3/bathroom-15.webp"), 30: require("./assets/aero3/bathroom-30.webp"), 45: require("./assets/aero3/bathroom-45.webp"), 60: require("./assets/aero3/bathroom-60.webp"), 75: require("./assets/aero3/bathroom-75.webp"), 90: require("./assets/aero3/bathroom-90.webp"), 100: require("./assets/aero3/bathroom-100.webp") },
     water: { 0: require("./assets/aero3/water-0.webp"), 15: require("./assets/aero3/water-15.webp"), 30: require("./assets/aero3/water-30.webp"), 45: require("./assets/aero3/water-45.webp"), 60: require("./assets/aero3/water-60.webp"), 75: require("./assets/aero3/water-75.webp"), 90: require("./assets/aero3/water-90.webp"), 100: require("./assets/aero3/water-100.webp") },
   },
 };
 const AERO_INK = "#0b3d6e";
 const AERO_ORDER = ["walk", "eat", "stretch", "bathroom", "water"]; // far to near
-const AERO_BOB = { walk: 6 };
+const AERO_BOB = { walk: 6, stretch: 4 };
 function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
   const ins = useSafeAreaInsets();
   const win = useWindowDimensions();
@@ -2052,7 +2052,7 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
   const pct = cleared ? 0 : Math.min(100, n.fill * 100);
   const lvl = AERO.levels.filter((l) => l <= pct + 0.01).pop() || 0;
   const full = !cleared && n.fill >= 1;
-  const isDolphin = n.key === "walk";
+  const isDolphin = n.key === "walk", isTurtle = n.key === "stretch";
   const bob = useRef(new Animated.Value(0)).current, lift = useRef(new Animated.Value(0)).current, pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!AERO_BOB[n.key]) return;
@@ -2078,7 +2078,7 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
       } else Animated.spring(lift, { toValue: 0, useNativeDriver: true }).start();
     },
   }), []);
-  const x = ox + L.x * s, y = oy + L.y * s, w = L.w * s, h = L.h * s;
+  const x = ox + L.x * s, y = oy + (L.y - (isTurtle ? AERO.stretchRise * pct / 100 : 0)) * s, w = L.w * s, h = L.h * s;
   const labelTop = n.key === "water" ? -26 : h + 4;
   return (
     <Animated.View {...pr.panHandlers} accessibilityRole="adjustable" accessibilityLabel={n.card.label + (full ? ", full" : ", " + left + " until full")}
@@ -2093,6 +2093,11 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
         <Image source={AERO.dolphinGlow} style={{ position: "absolute", left: -w * 0.55, top: -h * 0.55, width: w * 2.1, height: h * 2.1, opacity: Math.max(0, pct / 100 - 0.5) * 2 * (full ? 1 : 0.8) }} />
         <Image source={AERO.dolphin} style={{ width: w, height: h }} />
         <Image source={AERO.dolphinLit} style={{ position: "absolute", left: 0, top: 0, width: w, height: h, opacity: Math.pow(pct / 100, 1.5) * 0.9 }} />
+      </> : isTurtle ? <>
+        {/* Stretch: a turtle rising from the sea toward the stars; it lights up with starlight when it gets there */}
+        <Animated.Image source={AERO.turtleGlow} style={{ position: "absolute", left: -w * 0.3, top: -h * 0.3, width: w * 1.6, height: h * 1.6,
+          opacity: full ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] }) : Math.max(0, pct / 100 - 0.8) * 3 }} />
+        <Image source={AERO.turtle} style={{ width: w, height: h }} />
       </> : <Image source={AERO.frames[n.key][lvl]} style={{ width: w, height: h }} />}
       <View style={[st.aeroLabel, { position: "absolute", top: labelTop, alignSelf: "center" }, full && { backgroundColor: "#ffffff", borderColor: "#ffb020" }]}>
         <Text style={st.aeroLabelTxt} numberOfLines={1}>{full ? "! " : ""}{n.name} · {left}</Text>
