@@ -2026,13 +2026,9 @@ function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
       <Image source={AERO.bg} style={{ position: "absolute", left: ox, top: oy, width: AERO.size[0] * s, height: AERO.size[1] * s }} />
       <AeroLife s={s} ox={ox} oy={oy} W={W} />
       {AERO_ORDER.filter((k) => by[k]).map((k, i) => <AeroThing key={k} n={by[k]} i={i} s={s} ox={ox} oy={oy} left={left(by[k])} onPlay={onPlay} />)}
-      <View style={[st.aeroBar, { marginTop: ins.top + 8 }]}>
-        <View style={{ flex: 1 }}>
-          <Text style={st.aeroTitle}>Focus</Text>
-          <Text style={st.aeroSub}>Swipe a thing up when you've done it.</Text>
-        </View>
-        <Pressable onPress={onEnd} style={st.aeroBtn} accessibilityRole="button"><Text style={st.aeroBtnTxt}>End</Text></Pressable>
-      </View>
+      <Pressable onPress={onEnd} style={[st.aeroEnd, { top: ins.top + 10 }]} accessibilityRole="button" accessibilityLabel="End focus" hitSlop={10}>
+        <Text style={st.aeroEndTxt}>End</Text>
+      </Pressable>
       <View style={[st.aeroLooks, { bottom: ins.bottom + 14 }]}>
         <Text style={st.aeroSub}>LOOK</Text>
         {FOCUS_LOOKS.map(([k, l]) => (
@@ -3060,6 +3056,8 @@ function makeStyles() { return StyleSheet.create({
   aeroSub: { fontSize: 12, color: "#0b3d6e", opacity: 0.8, letterSpacing: 0.4 },
   aeroBtn: { minHeight: 42, paddingHorizontal: 18, borderRadius: 21, justifyContent: "center", backgroundColor: "rgba(255,255,255,0.7)", borderWidth: 1.5, borderColor: "#ffffff" },
   aeroBtnTxt: { fontSize: 15, fontWeight: "700", color: "#0b3d6e" },
+  aeroEnd: { position: "absolute", right: 14, width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.55)", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.9)" },
+  aeroEndTxt: { fontSize: 12, fontWeight: "700", color: "#0b3d6e" },
   aeroLabel: { marginTop: 6, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.55)", borderWidth: 1, borderColor: "rgba(255,255,255,0.95)" },
   aeroLabelTxt: { fontSize: 12, fontWeight: "700", color: "#0b3d6e" },
   aeroBubble: { position: "absolute", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.8)", backgroundColor: "rgba(200,240,255,0.12)" },
