@@ -2003,17 +2003,20 @@ const FOCUS_LOOKS = [["aero", "Frutiger Aero"], ["classic", "Classic desk"]];
 const AERO = {
   size: [1080, 1920], levels: [0,  15,  30,  45,  60,  75,  90,  100],
   bg: require("./assets/aero3/bg.jpg"), gull: require("./assets/aero3/sprite-gull.png"), dolphin: require("./assets/aero3/dolphin.webp"), dolphinGlow: require("./assets/aero3/dolphin_glow.webp"), dolphinLit: require("./assets/aero3/dolphin_lit.webp"), turtle: require("./assets/aero3/turtle.webp"), turtleGlow: require("./assets/aero3/turtle_glow.webp"),
-  layers: {"walk": {x: 330, y: 520, w: 380, h: 338}, "stretch": {x: 640, y: 790, w: 260, h: 144}, "water": {x: 0, y: 847, w: 473, h: 959}, "eat": {x: 290, y: 1188, w: 340, h: 334}, "bathroom": {x: 630, y: 958, w: 440, h: 526}},
+  layers: {"walk": {x: 330, y: 520, w: 380, h: 338}, "stretch": {x: 640, y: 790, w: 260, h: 144}, "water": {x: 0, y: 847, w: 473, h: 959}, "eat": {x: 163, y: 1329, w: 744, h: 579}, "bathroom": {x: 630, y: 958, w: 440, h: 526}},
   stretchRise: 620, // the turtle climbs this far (art px) from the sea toward the stars as stretch comes due
   waterGlow: require("./assets/aero3/wf_glow.webp"),
   waterFrames: [ // a photographed glass filling: frames from a generated fill video, picked by how due water is
     require("./assets/aero3/wf-00.webp"), require("./assets/aero3/wf-01.webp"), require("./assets/aero3/wf-02.webp"), require("./assets/aero3/wf-03.webp"), require("./assets/aero3/wf-04.webp"), require("./assets/aero3/wf-05.webp"), require("./assets/aero3/wf-06.webp"), require("./assets/aero3/wf-07.webp"), require("./assets/aero3/wf-08.webp"), require("./assets/aero3/wf-09.webp"), require("./assets/aero3/wf-10.webp"), require("./assets/aero3/wf-11.webp"), require("./assets/aero3/wf-12.webp"), require("./assets/aero3/wf-13.webp"), require("./assets/aero3/wf-14.webp"), require("./assets/aero3/wf-15.webp"), require("./assets/aero3/wf-16.webp"), require("./assets/aero3/wf-17.webp"), require("./assets/aero3/wf-18.webp"), require("./assets/aero3/wf-19.webp"), require("./assets/aero3/wf-20.webp"), require("./assets/aero3/wf-21.webp"), require("./assets/aero3/wf-22.webp"), require("./assets/aero3/wf-23.webp"), require("./assets/aero3/wf-24.webp"),
   ],
-  bowl: require("./assets/aero3/bowl.webp"), bowlGrey: require("./assets/aero3/bowl_grey.webp"),
+  pileGlow: require("./assets/aero3/pile_glow.webp"),
+  pileFrames: [ // stop-motion: fruit added to the pile one piece at a time as eat time builds
+    require("./assets/aero3/pile-0.webp"), require("./assets/aero3/pile-1.webp"), require("./assets/aero3/pile-2.webp"), require("./assets/aero3/pile-3.webp"), require("./assets/aero3/pile-4.webp"), require("./assets/aero3/pile-5.webp"), require("./assets/aero3/pile-6.webp"),
+  ],
   pod: require("./assets/aero3/pod.webp"), podLit: require("./assets/aero3/pod_lit.webp"),
 };
 const AERO_INK = "#0b3d6e";
-const AERO_ORDER = ["walk", "stretch", "bathroom", "eat", "water"]; // far to near
+const AERO_ORDER = ["walk", "stretch", "bathroom", "water", "eat"]; // far to near (the fruit sits in front of the glass)
 const AERO_BOB = { walk: 6, stretch: 4 };
 function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
   const ins = useSafeAreaInsets();
@@ -2055,12 +2058,13 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
   const rise = useRef(new Animated.Value(0)).current; // turtle: how far it has climbed, eased between updates
   useEffect(() => { if (isTurtle) Animated.timing(rise, { toValue: AERO.stretchRise * pct / 100, duration: cleared ? 900 : 600, easing: Easing.inOut(Easing.cubic), useNativeDriver: true }).start(); }, [pct, cleared]);
   // water: step through the fill frames; after a swipe, run them back down to empty
-  const nW = AERO.waterFrames.length, wTarget = Math.round(pct / 100 * (nW - 1));
+  const seq = n.key === "water" ? AERO.waterFrames : n.key === "eat" ? AERO.pileFrames : null, seqGlow = n.key === "water" ? AERO.waterGlow : AERO.pileGlow;
+  const nW = seq ? seq.length : 1, wTarget = Math.round(pct / 100 * (nW - 1));
   const [wIdx, setWIdx] = useState(wTarget), [wShown, setWShown] = useState(wTarget);
   useEffect(() => {
-    if (n.key !== "water" || wIdx === wTarget) return;
+    if (!seq || wIdx === wTarget) return;
     if (!cleared) { setWIdx(wTarget); return; }
-    const t = setTimeout(() => setWIdx((k) => Math.max(wTarget, k - 2)), 40); return () => clearTimeout(t);
+    const t = setTimeout(() => setWIdx((k) => Math.max(wTarget, k - (nW > 10 ? 2 : 1))), nW > 10 ? 40 : 90); return () => clearTimeout(t);
   }, [wIdx, wTarget, cleared]);
   useEffect(() => {
     if (!AERO_BOB[n.key]) return;
@@ -2088,7 +2092,7 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
     },
   }), []);
   const x = ox + L.x * s, y = oy + L.y * s, w = L.w * s, h = L.h * s;
-  const labelTop = n.key === "water" ? -26 : h + 4;
+  const labelTop = n.key === "water" ? -26 : n.key === "eat" ? h * 0.74 : h + 4;
   return (
     <Animated.View {...pr.panHandlers} accessibilityRole="adjustable" accessibilityLabel={n.card.label + (full ? ", full" : ", " + left + " until full")}
       style={{ position: "absolute", left: x, top: y, width: w, height: h,
@@ -2107,16 +2111,12 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
         <Animated.Image source={AERO.turtleGlow} style={{ position: "absolute", left: -w * 0.3, top: -h * 0.3, width: w * 1.6, height: h * 1.6,
           opacity: full ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] }) : Math.max(0, pct / 100 - 0.8) * 3 }} />
         <Image source={AERO.turtle} style={{ width: w, height: h }} />
-      </> : n.key === "water" ? <>
-        {/* Water: the glass fills as water time comes due */}
-        {/* the last frame that finished loading stays underneath, so swapping frames never blinks */}
-        <Image source={AERO.waterFrames[wShown]} fadeDuration={0} style={{ position: "absolute", left: 0, top: 0, width: w, height: h }} />
-        <Image key={wIdx} source={AERO.waterFrames[wIdx]} fadeDuration={0} onLoad={() => setWShown(wIdx)} style={{ width: w, height: h }} />
-        <Animated.Image source={AERO.waterGlow} fadeDuration={0} style={{ position: "absolute", left: -w * 0.15, top: -h * 0.08, width: w * 1.3, height: h * 1.16, opacity: full ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.45] }) : flash }} />
-      </> : n.key === "eat" ? <>
-        {/* Eat: the fruit ripens from grey back to full color as eat time builds */}
-        <Image source={AERO.bowlGrey} style={{ width: w, height: h }} />
-        <Image source={AERO.bowl} style={{ position: "absolute", left: 0, top: 0, width: w, height: h, opacity: Math.pow(pct / 100, 1.2) }} />
+      </> : seq ? <>
+        {/* Water: the glass fills; Eat: fruit is added to the pile piece by piece. The last frame that finished
+            loading stays underneath, so swapping frames never blinks. */}
+        <Image source={seq[wShown]} fadeDuration={0} style={{ position: "absolute", left: 0, top: 0, width: w, height: h }} />
+        <Image key={wIdx} source={seq[wIdx]} fadeDuration={0} onLoad={() => setWShown(wIdx)} style={{ width: w, height: h }} />
+        <Animated.Image source={seqGlow} fadeDuration={0} style={{ position: "absolute", left: n.key === "water" ? -w * 0.15 : -w * 0.12, top: n.key === "water" ? -h * 0.08 : -h * 0.12, width: n.key === "water" ? w * 1.3 : w * 1.24, height: n.key === "water" ? h * 1.16 : h * 1.24, opacity: full ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.45] }) : flash }} />
       </> : <>
         {/* Bathroom: a restroom pod whose lights come up as bathroom time comes due */}
         <Image source={AERO.pod} style={{ width: w, height: h }} />
