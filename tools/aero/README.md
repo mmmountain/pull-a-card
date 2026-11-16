@@ -6,7 +6,7 @@ dithered frames per need, glows, the sparkle and ambient-life GIFs, the cleaned 
 `python3 tools/aero/preview.py 0.5 /tmp/p.jpg [glow]`.
 
 Sources (`src/`): `bg_plate.jpg` (the outpainted beach), `water/` glass filling, `pile/` fruit stop-motion,
-`dolphin/` turning away, `turtle_withdraw.mp4` (shot on black), `ball_deflate.mp4` plus SAM3 masks `ball/m*.png`
+`dolphin/` turning away, `turtle_src.webp` plus SAM3 part masks `turtle_*.png` (the turtle tucks in part by part), `ball_deflate.mp4` plus SAM3 masks `ball/m*.png`
 (played backwards: inflated = due). How those were made — Midjourney edits, FLUX Kontext, Wan first/last-frame and
 image-to-video on Hugging Face — lives in `mj/`, `pile/`, `dolphin/`, `gen/`, `photo/`.
 

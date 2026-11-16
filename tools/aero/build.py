@@ -122,20 +122,51 @@ def dolphin():
         fr.append(np.asarray(im).astype(np.float32) / 255)
     return {"rect": {"x": round(ax) - 90, "y": round(ay), "w": Wc, "h": Hc}, "frames": fr, "obj": [f[..., 3] for f in fr]}  # nudged left of where the photo had it
 
-def turtle():  # flippers and head draw into the shell as stretch comes due (video shot on black: key out by brightness)
-    fs = video_frames(f"{SRC}/turtle_withdraw.mp4")
-    pick = [0, 12, 18, 24, 30, 36, 42, 48, 52, 56]
-    raw = []
-    for i in pick:
-        p = np.asarray(Image.open(fs[i]).convert("RGB")).astype(np.float32) / 255
-        L = p.max(-1); a = np.clip((L - 0.07) / 0.18, 0, 1); a = nd.binary_fill_holes(a > 0.5) * np.maximum(a, 0.0)
-        a = np.maximum(a, nd.binary_fill_holes(a > 0.5) * 1.0); a = nd.gaussian_filter(a, 0.7)
-        rgb = np.clip(p / np.maximum(a[..., None], 0.2), 0, 1); raw.append(np.dstack([rgb, a]))
-    U = np.max([r[..., 3] for r in raw], 0) > 0.1; ys, xs = np.where(U); m = 4
-    y0, y1, x0, x1 = ys.min() - m, ys.max() + m, xs.min() - m, xs.max() + m
-    cx, cy, Wt = 840, 870, 380                                    # where the old still sat, bigger
-    k = Wt / (x1 - x0); Ht = round((y1 - y0) * k)
-    fr = [np.asarray(rgba(r[y0:y1, x0:x1]).resize((Wt, Ht), Image.LANCZOS)).astype(np.float32) / 255 for r in raw]
+def turtle():
+    """Stretch: the turtle draws its head and flippers into its shell as stretch comes due. Not a generated video (those
+    morphed the shell): the photo is split into parts with SAM3 masks (src/turtle_*.png) and each part slides in under
+    the shell and shrinks, staggered, so the shell itself never changes."""
+    src = np.asarray(Image.open(f"{SRC}/turtle_src.webp").convert("RGB")).astype(np.float32) / 255
+    L = src.max(-1); alpha = nd.gaussian_filter(nd.binary_fill_holes(L > 0.08).astype(np.float32), 0.7)
+    mk = lambda k: nd.gaussian_filter((np.asarray(Image.open(f"{SRC}/turtle_{k}.png")) > 127).astype(np.float32), 0.7)
+    shell = mk("sh"); parts = {k: mk(k) for k in ("f1", "f2", "f3", "hd")}
+    # The head and flippers hid bits of the shell's rim in the photo: complete the shell to its convex outline and fill
+    # the missing rim by diffusing the nearby shell colour in (normalized blur), so nothing is bitten out once they go.
+    from skimage.morphology import convex_hull_image
+    hull = nd.gaussian_filter(convex_hull_image(shell > 0.5).astype(np.float32), 0.7)
+    have = ((alpha > 0.5) & (sum(parts.values()) < 0.5)).astype(np.float32); fill = src.copy()   # photo pixels that aren't a limb
+    for r in (2, 4, 8, 16):
+        num = nd.gaussian_filter(src * have[..., None], (r, r, 0)); den = nd.gaussian_filter(have, r)[..., None]
+        fill = np.where(((have < 0.5)[..., None]) & (den > 1e-3), num / np.maximum(den, 1e-6), fill)
+        have = np.maximum(have, (den[..., 0] > 0.05).astype(np.float32))
+    own = ((alpha > 0.5) & (sum(parts.values()) < 0.5))[..., None]
+    shell_rgb = np.where(own, src, fill); shell = np.maximum(hull, shell)
+    skin = np.clip(alpha - shell - sum(parts.values()), 0, 1); skin = nd.gaussian_filter(nd.binary_opening(skin > 0.5, iterations=2).astype(np.float32), 0.7)
+    cen = lambda m: np.array(nd.center_of_mass(m > 0.5))
+    C = cen(shell)
+    # when each part starts and finishes tucking in (0..1 of the way to due), and how far it goes toward the shell's centre
+    timing = {"f2": (0.0, 0.55, 0.95), "f3": (0.1, 0.65, 0.95), "hd": (0.25, 0.8, 0.9), "f1": (0.35, 0.9, 1.0), "skin": (0.3, 1.0, 0.55)}
+    ease = lambda x: x * x * (3 - 2 * x)
+    def place(rgb, m, k, T):
+        t0, t1, reach = timing[k]; u = ease(np.clip((T - t0) / (t1 - t0), 0, 1))
+        c = cen(m); d = (C - c) * reach * u; sc = 1 - 0.45 * u
+        # move and shrink about the part's own centre: out(y) = c + d + (y - c) * sc  ->  in(y) = c + (y - c - d) / sc
+        mat = np.eye(2) / sc; off = c - (c + d) / sc
+        warp = lambda ch: nd.affine_transform(ch, mat, offset=off, order=1)
+        return np.dstack([warp(rgb[..., i] * m) for i in range(3)]), warp(m)
+    def over(dst_rgb, dst_a, rgb_pm, a):  # premultiplied "over"
+        return rgb_pm + dst_rgb * (1 - a[..., None]), a + dst_a * (1 - a)
+    ys, xs = np.where(alpha > 0.05); y0, y1, x0, x1 = ys.min() - 6, ys.max() + 7, xs.min() - 6, xs.max() + 7
+    fr = []
+    for T in np.linspace(0, 1, 16):
+        rgb, a = np.zeros_like(src), np.zeros(L.shape, np.float32)
+        for k in ("f1", "skin", "f2", "f3", "hd"):            # back to front, all under the shell
+            pm, pa = place(src, skin if k == "skin" else parts[k], k, T); rgb, a = over(rgb, a, pm, pa)
+        rgb, a = over(rgb, a, shell_rgb * shell[..., None], shell)
+        out = np.dstack([rgb / np.maximum(a[..., None], 1e-4), a])[y0:y1, x0:x1]; fr.append(out)
+    cx, cy, Wt = 840, 870, 380
+    Ht = round((y1 - y0) * Wt / (x1 - x0))
+    fr = [np.asarray(rgba(f).resize((Wt, Ht), Image.LANCZOS)).astype(np.float32) / 255 for f in fr]
     return {"rect": {"x": cx - Wt // 2, "y": cy - Ht // 2, "w": Wt, "h": Ht}, "frames": fr, "obj": [f[..., 3] for f in fr]}
 
 def ball():
