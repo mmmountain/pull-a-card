@@ -251,7 +251,7 @@ def plate():
 
 # ---------------------------------------------------------------- build
 THINGS = {  # key: (builder, file prefix, extra manifest fields)
-    "walk": (dolphin, "walk", {"bob": 6, "sway": 1.2, "lift": True, "spark": [0.68, 0.6, 0.15]}),
+    "walk": (dolphin, "walk", {"reverse": True, "bob": 6, "sway": 1.2, "lift": True, "spark": [0.6, 0.48, 0.3]}),
     "stretch": (turtle, "stretch", {"bob": 4, "rise": 620, "spark": [0.5, 0.5, 0.65]}),
     "bathroom": (ball, "bath", {"spark": [0.5, 0.4, 0.45]}),
     "water": (water, "water", {"spark": [0.4, 0.45, 0.42]}),
@@ -265,7 +265,9 @@ def main():
            "order": ["stretch", "walk", "bathroom", "water", "eat"], "touch": ["walk", "bathroom", "water", "eat", "stretch"],
            "life": life_boxes, "things": {}}
     for key, (fn, pre, extra) in THINGS.items():
-        t = fn(); t["frames"] = [drop_matching(f, bgA, t["rect"]) for f in t["frames"]]; fr = dither_seq(t["frames"])
+        t = fn()
+        if extra.pop("reverse", False): t["frames"], t["obj"] = t["frames"][::-1], t["obj"][::-1]   # play the clip backwards
+        t["frames"] = [drop_matching(f, bgA, t["rect"]) for f in t["frames"]]; fr = dither_seq(t["frames"])
         names = []
         for j, im in enumerate(fr):
             n = f"{pre}-{j:02d}.webp"; im.save(f"{OUT}/{n}", lossless=True, method=6); names.append(n)

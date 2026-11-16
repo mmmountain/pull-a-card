@@ -18,6 +18,7 @@ export default function AeroFocus({ needs, left, onPlay, onEnd, look, looks, set
   const by = Object.fromEntries(needs.map((n) => [n.key, n]));
   const [info, setInfo] = useState(null); // { key, done }: the full-info card after a swipe
   const [showLooks, setShowLooks] = useState(false);
+  const [scrub, setScrub] = useState(null); // preview: 0..1 drives every thing's frames instead of the clock (cards untouched)
   const infoT = useRef(null);
   const onInfo = (n, done) => { setInfo({ key: n.key, done }); clearTimeout(infoT.current); infoT.current = setTimeout(() => setInfo(null), done ? 2600 : 5000); };
   useEffect(() => () => clearTimeout(infoT.current), []);
@@ -28,7 +29,11 @@ export default function AeroFocus({ needs, left, onPlay, onEnd, look, looks, set
       <Image source={LOOK.bg} style={{ position: "absolute", left: ox, top: oy - LOOK.plateTop * s, width: LOOK.plate[0] * s, height: LOOK.plate[1] * s }} />
       {/* ambient life: retro GIF loops over the photo (stars twinkling in the Milky Way, glints along the water stream) */}
       {Object.entries(LOOK.life).map(([k, b]) => <Image key={k} source={b.src} fadeDuration={0} pointerEvents="none" style={place(b)} />)}
-      {LOOK.order.filter((k) => by[k]).map((k, i) => <Thing key={k} k={k} n={by[k]} i={i} s={s} ox={ox} oy={oy} left={left(by[k])} onPlay={onPlay} onInfo={onInfo} />)}
+      {LOOK.order.filter((k) => by[k]).map((k, i) => {
+        const n = scrub == null ? by[k] : { ...by[k], fill: scrub };
+        return <Thing key={k} k={k} n={n} i={i} s={s} ox={ox} oy={oy} left={scrub == null ? left(n) : Math.round(scrub * 100) + "%"} onPlay={scrub == null ? onPlay : () => {}} onInfo={scrub == null ? onInfo : () => {}} preview={scrub != null} />;
+      })}
+      {scrub != null && <Scrub value={scrub} onChange={setScrub} onClose={() => setScrub(null)} bottom={ins.bottom + 14} />}
       <Pressable onPress={onEnd} onLongPress={() => setShowLooks((v) => !v)} style={[st.end, { top: ins.top + 10, zIndex: 60 }]} accessibilityRole="button" accessibilityLabel="End focus" accessibilityHint="Hold to choose a look" hitSlop={10}>
         <Text style={st.endTxt}>End</Text>
       </Pressable>
@@ -46,6 +51,9 @@ export default function AeroFocus({ needs, left, onPlay, onEnd, look, looks, set
       )}
       {showLooks && <View style={[st.looks, { bottom: ins.bottom + 14, zIndex: 60 }]}>
         <Text style={st.sub}>LOOK</Text>
+        <Pressable onPress={() => { setScrub((v) => (v == null ? 0 : null)); setShowLooks(false); }} style={[st.chip, scrub != null && st.chipOn]} accessibilityRole="button">
+          <Text style={[st.chipTxt, scrub != null && { color: "#ffffff" }]}>Scrub</Text>
+        </Pressable>
         {looks.map(([k, l]) => (
           <Pressable key={k} onPress={() => setLook(k)} style={[st.chip, k === look && st.chipOn]} accessibilityRole="radio" accessibilityState={{ selected: k === look }}>
             <Text style={[st.chipTxt, k === look && { color: "#ffffff" }]}>{l}</Text>
@@ -56,9 +64,35 @@ export default function AeroFocus({ needs, left, onPlay, onEnd, look, looks, set
   );
 }
 
+/** Preview bar: drag along it to set every thing from just-done (left) to due (right). Frame numbers show per thing. */
+function Scrub({ value, onChange, onClose, bottom }) {
+  const [w, setW] = useState(1);
+  const live = useRef({}); live.current = { w, onChange };
+  const set = (x) => live.current.onChange(Math.max(0, Math.min(1, x / live.current.w)));
+  const pr = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true, onMoveShouldSetPanResponder: () => true, onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: (e) => set(e.nativeEvent.locationX), onPanResponderMove: (e) => set(e.nativeEvent.locationX),
+  }), []);
+  return (
+    <View style={[st.scrub, { bottom, zIndex: 70 }]}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <Text style={st.sub}>PREVIEW · {Math.round(value * 100)}%</Text>
+        <View style={{ flexDirection: "row", gap: 6 }}>
+          {[0, 0.25, 0.5, 0.75, 1].map((v) => <Pressable key={v} onPress={() => onChange(v)} style={st.scrubBtn} hitSlop={6}><Text style={st.chipTxt}>{v * 100}</Text></Pressable>)}
+          <Pressable onPress={onClose} style={st.scrubBtn} hitSlop={6}><Text style={st.chipTxt}>✕</Text></Pressable>
+        </View>
+      </View>
+      <View {...pr.panHandlers} onLayout={(e) => setW(e.nativeEvent.layout.width)} style={st.scrubTrack}>
+        <View pointerEvents="none" style={[st.scrubFill, { width: value * 100 + "%" }]} />
+        <View pointerEvents="none" style={[st.scrubKnob, { left: value * w - 14 }]} />
+      </View>
+    </View>
+  );
+}
+
 /** One need in the scene: its frame shows how due it is. Hold for the time left, swipe up when done, down for details.
  *  Nothing slides under your finger except a thing marked `lift` (the dolphin); the others run their frames back. */
-function Thing({ k, n, i, s, ox, oy, left, onPlay, onInfo }) {
+function Thing({ k, n, i, s, ox, oy, left, onPlay, onInfo, preview }) {
   const T = LOOK.things[k], R = T.rect, seq = T.frames, nF = seq.length;
   const [cleared, setCleared] = useState(false);
   useEffect(() => { setCleared(false); }, [Math.round(n.last / 1000)]);
@@ -138,9 +172,9 @@ function Thing({ k, n, i, s, ox, oy, left, onPlay, onInfo }) {
       accessibilityHint="Hold for the time left. Swipe up when done, swipe down for details."
       accessibilityActions={[{ name: "activate", label: "Mark done" }]} onAccessibilityAction={done}
       style={{ position: "absolute", zIndex: 20 + LOOK.touch.indexOf(k), left: hx, top: hy, width: hw, height: hh, transform: follow }} />
-    {peek && (
-      <Animated.View pointerEvents="none" style={[st.label, { position: "absolute", zIndex: 50, left: hx + hw / 2 - 40, width: 80, top: Math.max(hy - 34, 8), alignItems: "center", transform: follow }, full && { backgroundColor: "#ffffff", borderColor: "#ffb020" }]}>
-        <Text style={st.labelTxt} numberOfLines={1}>{left}</Text>
+    {(peek || preview) && (
+      <Animated.View pointerEvents="none" style={[st.label, { position: "absolute", zIndex: 50, left: hx + hw / 2 - 60, width: 120, top: Math.max(hy - 34, 8), alignItems: "center", transform: follow }, full && { backgroundColor: "#ffffff", borderColor: "#ffb020" }]}>
+        <Text style={st.labelTxt} numberOfLines={1}>{preview ? k + " " + (idx + 1) + "/" + nF : left}</Text>
       </Animated.View>
     )}
   </>);
@@ -160,5 +194,10 @@ const st = StyleSheet.create({
   looks: { position: "absolute", left: 14, right: 14, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, padding: 8, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.45)", borderWidth: 1, borderColor: "rgba(255,255,255,0.9)" },
   chip: { minHeight: 36, paddingHorizontal: 14, borderRadius: 18, justifyContent: "center", backgroundColor: "rgba(255,255,255,0.6)" },
   chipOn: { backgroundColor: "#1e9be8" },
+  scrub: { position: "absolute", left: 14, right: 14, padding: 12, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.8)", borderWidth: 1, borderColor: "#ffffff" },
+  scrubBtn: { minWidth: 36, height: 30, paddingHorizontal: 8, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.9)" },
+  scrubTrack: { height: 36, borderRadius: 18, backgroundColor: "rgba(11,61,110,0.15)", justifyContent: "center", overflow: "visible" },
+  scrubFill: { position: "absolute", left: 0, top: 0, bottom: 0, borderRadius: 18, backgroundColor: "rgba(30,155,232,0.45)" },
+  scrubKnob: { position: "absolute", width: 28, height: 28, borderRadius: 14, backgroundColor: "#1e9be8", borderWidth: 2, borderColor: "#ffffff" },
   chipTxt: { fontSize: 13, fontWeight: "700", color: INK },
 });
