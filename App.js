@@ -2002,7 +2002,8 @@ const FOCUS_LOOKS = [["aero", "Frutiger Aero"], ["classic", "Classic desk"]];
 // full), a door on the beach (bathroom: its porthole fills), a fruit bowl on the sand (eat), a glass of water up close.
 // Generated from tools/aero (scene.html → render3.js): the world, and each need at 8 fill levels, cropped.
 const AERO = {
-  size: [1080, 1920], levels: [0,  15,  30,  45,  60,  75,  90,  100],
+  size: [1080, 1920], // the scene the layers are placed in
+  plate: [1080, 2304], plateTop: 192, // the background is taller (outpainted sky and sand) so tall phones fit the full width
   bg: require("./assets/aero3/bg.jpg"), gull: require("./assets/aero3/sprite-gull.png"), dolphin: require("./assets/aero3/dolphin.webp"), dolphinGlow: require("./assets/aero3/d_glow.webp"),
   dolphinFrames: [ // the dolphin turns away to leave as walk time comes due (frames from a generated video)
     require("./assets/aero3/d-00.webp"), require("./assets/aero3/d-01.webp"), require("./assets/aero3/d-02.webp"), require("./assets/aero3/d-03.webp"), require("./assets/aero3/d-04.webp"), require("./assets/aero3/d-05.webp"), require("./assets/aero3/d-06.webp"), require("./assets/aero3/d-07.webp"), require("./assets/aero3/d-08.webp"), require("./assets/aero3/d-09.webp"), require("./assets/aero3/d-10.webp"), require("./assets/aero3/d-11.webp"), require("./assets/aero3/d-12.webp"), require("./assets/aero3/d-13.webp"), require("./assets/aero3/d-14.webp"), require("./assets/aero3/d-15.webp"), require("./assets/aero3/d-16.webp"), require("./assets/aero3/d-17.webp"),
@@ -2034,8 +2035,9 @@ function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
   const ins = useSafeAreaInsets();
   const win = useWindowDimensions();
   const W = win.width, H = win.height;
-  const s = Math.max(W / AERO.size[0], H / AERO.size[1]);
-  const ox = (W - AERO.size[0] * s) / 2, oy = (H - AERO.size[1] * s) / 2;
+  // Fill the screen with the tall plate; on 19.5:9 phones that means the full width shows, on shorter ones a bit of sky/sand trims.
+  const s = Math.max(W / AERO.plate[0], H / AERO.plate[1]);
+  const ox = (W - AERO.size[0] * s) / 2, oy = (H - AERO.plate[1] * s) / 2 + AERO.plateTop * s;
   const by = Object.fromEntries(needs.map((n) => [n.key, n]));
   const [info, setInfo] = useState(null); // { key, done }: the full-info card, after a swipe
   const [showLooks, setShowLooks] = useState(false);
@@ -2045,7 +2047,7 @@ function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
   const iN = info && by[info.key];
   return (
     <View style={{ flex: 1, backgroundColor: "#0b86e6", overflow: "hidden" }}>
-      <Image source={AERO.bg} style={{ position: "absolute", left: ox, top: oy, width: AERO.size[0] * s, height: AERO.size[1] * s }} />
+      <Image source={AERO.bg} style={{ position: "absolute", left: ox, top: oy - AERO.plateTop * s, width: AERO.plate[0] * s, height: AERO.plate[1] * s }} />
       <AeroLife s={s} ox={ox} oy={oy} W={W} />
       {AERO_ORDER.filter((k) => by[k]).map((k, i) => <AeroThing key={k} n={by[k]} i={i} s={s} ox={ox} oy={oy} left={left(by[k])} onPlay={onPlay} onInfo={onInfo} />)}
       <Pressable onPress={onEnd} onLongPress={() => setShowLooks((v) => !v)} style={[st.aeroEnd, { top: ins.top + 10, zIndex: 60 }]} accessibilityRole="button" accessibilityLabel="End focus" accessibilityHint="Hold to choose a look" hitSlop={10}>
