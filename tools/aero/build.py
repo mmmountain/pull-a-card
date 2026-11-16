@@ -142,10 +142,22 @@ def turtle():
     own = ((alpha > 0.5) & (sum(parts.values()) < 0.5))[..., None]
     shell_rgb = np.where(own, src, fill); shell = np.maximum(hull, shell)
     skin = np.clip(alpha - shell - sum(parts.values()), 0, 1); skin = nd.gaussian_filter(nd.binary_opening(skin > 0.5, iterations=2).astype(np.float32), 0.7)
+    # The underside: the skin and plastron right under the shell's rim stays put (only the neck beyond it goes in with the
+    # head), completed to a solid outline and filled where the flippers had covered it, so the shell has a bottom.
+    near = nd.distance_transform_edt(shell < 0.5) < 40
+    belly_own = (skin > 0.5) & near
+    belly = nd.gaussian_filter(convex_hull_image((shell > 0.5) | belly_own).astype(np.float32), 0.7)
+    have = belly_own.astype(np.float32); bfill = src.copy()
+    for r in (2, 4, 8, 16, 32):
+        num = nd.gaussian_filter(src * have[..., None], (r, r, 0)); den = nd.gaussian_filter(have, r)[..., None]
+        bfill = np.where(((have < 0.5)[..., None]) & (den > 1e-3), num / np.maximum(den, 1e-6), bfill)
+        have = np.maximum(have, (den[..., 0] > 0.05).astype(np.float32))
+    belly_rgb = np.where(belly_own[..., None], src, bfill)
+    skin = skin * (1 - belly_own)                                  # what's left of the skin is the neck: it goes in with the head
     cen = lambda m: np.array(nd.center_of_mass(m > 0.5))
     C = cen(shell)
     # when each part starts and finishes tucking in (0..1 of the way to due), and how far it goes toward the shell's centre
-    timing = {"f2": (0.0, 0.55, 0.95), "f3": (0.1, 0.65, 0.95), "hd": (0.25, 0.8, 0.9), "f1": (0.35, 0.9, 1.0), "skin": (0.3, 1.0, 0.55)}
+    timing = {"f2": (0.0, 0.55, 0.95), "f3": (0.1, 0.65, 0.95), "hd": (0.25, 0.8, 0.9), "f1": (0.35, 0.9, 1.0), "skin": (0.25, 0.8, 0.9)}
     ease = lambda x: x * x * (3 - 2 * x)
     def place(rgb, m, k, T):
         t0, t1, reach = timing[k]; u = ease(np.clip((T - t0) / (t1 - t0), 0, 1))
@@ -162,6 +174,7 @@ def turtle():
         rgb, a = np.zeros_like(src), np.zeros(L.shape, np.float32)
         for k in ("f1", "skin", "f2", "f3", "hd"):            # back to front, all under the shell
             pm, pa = place(src, skin if k == "skin" else parts[k], k, T); rgb, a = over(rgb, a, pm, pa)
+        rgb, a = over(rgb, a, belly_rgb * belly[..., None], belly)
         rgb, a = over(rgb, a, shell_rgb * shell[..., None], shell)
         out = np.dstack([rgb / np.maximum(a[..., None], 1e-4), a])[y0:y1, x0:x1]; fr.append(out)
     cx, cy, Wt = 840, 870, 380
@@ -283,7 +296,7 @@ def plate():
 # ---------------------------------------------------------------- build
 THINGS = {  # key: (builder, file prefix, extra manifest fields)
     "walk": (dolphin, "walk", {"reverse": True, "bob": 6, "sway": 1.2, "lift": True, "spark": [0.6, 0.48, 0.3]}),
-    "stretch": (turtle, "stretch", {"bob": 4, "rise": 620, "spark": [0.5, 0.5, 0.65]}),
+    "stretch": (turtle, "stretch", {"colours": 96, "bob": 4, "rise": 620, "spark": [0.5, 0.5, 0.65]}),
     "bathroom": (ball, "bath", {"spark": [0.5, 0.4, 0.45]}),
     "water": (water, "water", {"spark": [0.4, 0.45, 0.42]}),
     "eat": (pile, "eat", {"spark": [0.52, 0.42, 0.32]}),
@@ -298,7 +311,7 @@ def main():
     for key, (fn, pre, extra) in THINGS.items():
         t = fn()
         if extra.pop("reverse", False): t["frames"], t["obj"] = t["frames"][::-1], t["obj"][::-1]   # play the clip backwards
-        t["frames"] = [drop_matching(f, bgA, t["rect"]) for f in t["frames"]]; fr = dither_seq(t["frames"])
+        t["frames"] = [drop_matching(f, bgA, t["rect"]) for f in t["frames"]]; fr = dither_seq(t["frames"], extra.pop("colours", 48))
         names = []
         for j, im in enumerate(fr):
             n = f"{pre}-{j:02d}.webp"; im.save(f"{OUT}/{n}", lossless=True, method=6); names.append(n)
