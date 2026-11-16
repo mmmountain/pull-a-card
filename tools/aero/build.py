@@ -78,7 +78,18 @@ def load_rgba(f):
 # ---------------------------------------------------------------- sources -> smooth RGBA frames on their layer
 def water():  # glass filling: 25 smooth frames -> 13
     fs = sorted(glob.glob(f"{SRC}/water/wf-*.webp"))[::2]
-    fr = [load_rgba(f) for f in fs]; return {"rect": {"x": 0, "y": 847, "w": 473, "h": 959}, "frames": fr, "obj": [f[..., 3] for f in fr]}
+    # The frames came out of the photo with a ragged patch of sea and sand around the glass: keep only the glass and
+    # lime (SAM3 mask, src/water/mask.png) and give it a clean contact shadow on the sand instead.
+    m = nd.gaussian_filter((np.asarray(Image.open(f"{SRC}/water/mask.png")) > 127).astype(np.float32), 1.0)
+    ys, xs = np.where(m > 0.5); base = ys.max(); foot = xs[ys > base - 30]; cx, ew = (foot.min() + foot.max()) / 2, (foot.max() - foot.min()) * 0.62
+    yy, xx = np.mgrid[0:m.shape[0], 0:m.shape[1]]
+    sh = nd.gaussian_filter((((xx - cx) / ew) ** 2 + ((yy - base + 8) / (ew * 0.2)) ** 2 < 1).astype(np.float32), ew * 0.1) * 0.45
+    fr = []
+    for f in fs:
+        a = load_rgba(f); ga = a[..., 3] * m; al = ga + sh * (1 - ga)
+        rgb = (a[..., :3] * ga[..., None] + np.array([0.30, 0.27, 0.24]) * (sh * (1 - ga))[..., None]) / np.maximum(al[..., None], 1e-4)
+        fr.append(np.dstack([rgb, al]))
+    return {"rect": {"x": 0, "y": 847, "w": 473, "h": 959}, "frames": fr, "obj": [f[..., 3] * m for f in [load_rgba(x) for x in fs]]}
 
 def pile():  # fruit added one piece at a time: 7 stop-motion frames
     fr = [load_rgba(f) for f in sorted(glob.glob(f"{SRC}/pile/pile-*.webp"))]
