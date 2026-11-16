@@ -2017,11 +2017,14 @@ const AERO = {
   pileFrames: [ // stop-motion: fruit added to the pile one piece at a time as eat time builds
     require("./assets/aero3/pile-0.webp"), require("./assets/aero3/pile-1.webp"), require("./assets/aero3/pile-2.webp"), require("./assets/aero3/pile-3.webp"), require("./assets/aero3/pile-4.webp"), require("./assets/aero3/pile-5.webp"), require("./assets/aero3/pile-6.webp"),
   ],
+  sparkle: require("./assets/aero3/sparkle.gif"),
   pod: require("./assets/aero3/pod.webp"), podLit: require("./assets/aero3/pod_lit.webp"),
 };
 const AERO_INK = "#0b3d6e";
 const AERO_ORDER = ["stretch", "walk", "bathroom", "water", "eat"]; // far to near (the fruit sits in front of the glass)
 const AERO_BOB = { walk: 6, stretch: 4 };
+// Retro touch: a looping GIF of twinkling stars sits on whatever is due. [center x, center y, size] as fractions of the layer.
+const AERO_SPARK = { walk: [0.68, 0.6, 0.42], stretch: [0.5, 0.5, 1.5], water: [0.4, 0.45, 0.95], eat: [0.52, 0.42, 0.7], bathroom: [0.5, 0.45, 0.95] };
 function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
   const ins = useSafeAreaInsets();
   const win = useWindowDimensions();
@@ -2120,6 +2123,8 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
         <Image source={AERO.pod} style={{ width: w, height: h }} />
         <Animated.Image source={AERO.podLit} style={{ position: "absolute", left: 0, top: 0, width: w, height: h, opacity: full ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) : Math.pow(pct / 100, 1.3) }} />
       </>}
+      {full && (() => { const [cx, cy, k] = AERO_SPARK[n.key], d = Math.max(w, h) * k * (isTurtle ? 0.6 : 1) * (n.key === "walk" ? 0.5 : 0.6);
+        return <Image source={AERO.sparkle} fadeDuration={0} pointerEvents="none" style={{ position: "absolute", left: w * cx - d / 2, top: h * cy - d / 2, width: d, height: d }} />; })()}
       <View style={[st.aeroLabel, { position: "absolute", top: labelTop, alignSelf: "center" }, full && { backgroundColor: "#ffffff", borderColor: "#ffb020" }]}>
         <Text style={st.aeroLabelTxt} numberOfLines={1}>{full ? "! " : ""}{n.name} · {left}</Text>
       </View>
