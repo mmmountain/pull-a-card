@@ -95,9 +95,31 @@ def pile():  # fruit added one piece at a time: 7 stop-motion frames
     fr = [load_rgba(f) for f in sorted(glob.glob(f"{SRC}/pile/pile-*.webp"))]
     return {"rect": {"x": 163, "y": 1329, "w": 744, "h": 579}, "frames": fr, "obj": [f[..., 3] for f in fr]}
 
-def dolphin():  # turns away to leave: 18 -> 9
-    fs = sorted(glob.glob(f"{SRC}/dolphin/out_d-*.webp")); fs = fs[::2] if len(fs) % 2 else fs[::2][:-1] + [fs[-1]]
-    fr = [load_rgba(f) for f in fs]; return {"rect": {"x": 24, "y": 274, "w": 829, "h": 860}, "frames": fr, "obj": [f[..., 3] for f in fr]}
+def dolphin():
+    """Turns away to leave as walk comes due: every usable frame of the generated video (on black, keyed by brightness),
+    skipping the few where the tail leaves the frame. Frame 0 is the original sharp photo, exactly where the video starts."""
+    from PIL import ImageFilter
+    fs = video_frames(f"{SRC}/dolphin_turn.mp4"); pick = [i for i in range(len(fs)) if not 25 <= i <= 31]
+    def matte(v):
+        core = nd.binary_opening(v > 0.07, iterations=1); lab, n = nd.label(core)
+        keep = lab == (np.argmax(nd.sum(core, lab, range(1, n + 1))) + 1); keep = nd.binary_fill_holes(nd.binary_closing(keep, iterations=3))
+        soft = nd.gaussian_filter(keep.astype(np.float32), 0.8); edge = np.clip((v - 0.02) / 0.07, 0, 1)
+        return np.where(soft > 0.99, 1.0, np.minimum(soft, np.maximum(edge, soft * 0.6)))
+    F = [np.asarray(Image.open(fs[i]).convert("RGB")).astype(np.float32) / 255 for i in pick]; A = [matte(f.max(-1)) for f in F]
+    u = np.any([a > 0.03 for a in A], axis=0); ys, xs = np.where(u)
+    X0, X1, Y0, Y1 = max(0, xs.min() - 4), min(640, xs.max() + 5), max(0, ys.min() - 4), min(640, ys.max() + 5)
+    ys0, xs0 = np.where(A[0] > 0.5); k = 380 / (xs0.max() - xs0.min())   # frame 0 -> the photo's rect (330, 520, 380x338)
+    ax, ay = 330 - (xs0.min() - X0) * k, 520 - (ys0.min() - Y0) * k; Wc, Hc = round((X1 - X0) * k), round((Y1 - Y0) * k)
+    fr = []
+    for j, (f, a) in enumerate(zip(F, A)):
+        rgb = np.clip(f / np.maximum(a[..., None], 0.05), 0, 1)
+        im = Image.fromarray((np.dstack([rgb, a])[Y0:Y1, X0:X1] * 255 + .5).astype(np.uint8), "RGBA").resize((Wc, Hc), Image.LANCZOS)
+        im = Image.merge("RGBA", (*im.convert("RGB").filter(ImageFilter.UnsharpMask(2, 60, 2)).split(), im.getchannel("A")))
+        if j == 0:
+            im = Image.new("RGBA", (Wc, Hc), (0, 0, 0, 0)); d = Image.open(f"{SRC}/dolphin_still.webp").convert("RGBA").resize((380, 338), Image.LANCZOS)
+            im.alpha_composite(d, (round(330 - ax), round(520 - ay)))
+        fr.append(np.asarray(im).astype(np.float32) / 255)
+    return {"rect": {"x": round(ax), "y": round(ay), "w": Wc, "h": Hc}, "frames": fr, "obj": [f[..., 3] for f in fr]}
 
 def turtle():  # flippers and head draw into the shell as stretch comes due (video shot on black: key out by brightness)
     fs = video_frames(f"{SRC}/turtle_withdraw.mp4")

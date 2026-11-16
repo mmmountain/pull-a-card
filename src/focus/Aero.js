@@ -74,7 +74,7 @@ function Thing({ k, n, i, s, ox, oy, left, onPlay, onInfo }) {
   useEffect(() => {
     if (idx === target) return;
     if (!cleared) { setIdx(target); return; }
-    const t = setTimeout(() => setIdx((j) => Math.max(target, j - 1)), 70); return () => clearTimeout(t);
+    const t = setTimeout(() => setIdx((j) => Math.max(target, j - Math.ceil(nF / 16))), 60); // about a second, however many frames return () => clearTimeout(t);
   }, [idx, target, cleared]);
   useEffect(() => {
     if (!T.bob) return;
