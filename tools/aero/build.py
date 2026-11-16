@@ -58,6 +58,19 @@ def drop_matching(f, bgA, r):
     d = nd.gaussian_filter(np.abs(comp - under).max(-1), 2)
     keep = np.clip((d - 0.035) / 0.04, 0, 1); g = f.copy(); g[..., 3] *= keep; return g
 
+EDITS = os.path.join(SRC, "edits")
+def export_and_override(key, t):
+    """Hand-editing: every smooth frame (before dithering) is written to /tmp/aero-frames/<thing>/NN.png. A PNG of the
+    same size dropped in tools/aero/src/edits/<thing>/NN.png replaces that frame on the next build."""
+    out = f"/tmp/aero-frames/{key}"; os.makedirs(out, exist_ok=True)
+    for j, f in enumerate(t["frames"]):
+        rgba(f).save(f"{out}/{j:02d}.png")
+        e = f"{EDITS}/{key}/{j:02d}.png"
+        if os.path.exists(e):
+            g = load_rgba(e)
+            if g.shape != f.shape: g = np.asarray(rgba(g).resize((f.shape[1], f.shape[0]), Image.LANCZOS)).astype(np.float32) / 255
+            t["frames"][j] = g; t["obj"][j] = g[..., 3]; print("  edited:", key, j)
+
 def fill_gaps(hits):
     for j in range(len(hits)):
         if hits[j] is None: hits[j] = next(h for h in hits[j:] + hits[::-1] if h)
@@ -311,6 +324,7 @@ def main():
     for key, (fn, pre, extra) in THINGS.items():
         t = fn()
         if extra.pop("reverse", False): t["frames"], t["obj"] = t["frames"][::-1], t["obj"][::-1]   # play the clip backwards
+        export_and_override(key, t)
         t["frames"] = [drop_matching(f, bgA, t["rect"]) for f in t["frames"]]; fr = dither_seq(t["frames"], extra.pop("colours", 48))
         names = []
         for j, im in enumerate(fr):
