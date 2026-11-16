@@ -2023,6 +2023,11 @@ const AERO = {
 const AERO_INK = "#0b3d6e";
 const AERO_ORDER = ["stretch", "walk", "bathroom", "water", "eat"]; // far to near (the fruit sits in front of the glass)
 const AERO_BOB = { walk: 6, stretch: 4 };
+// Where each thing can be touched: the visible object, not its whole image. [x, y, w, h] as fractions of its layer;
+// the dolphin and the fruit pile have one box per frame because they move or grow. Measured from the art's alpha.
+const AERO_HIT = {"water": [0.08, 0.0, 0.84, 0.97], "eat": [[0.465, 0.496, 0.321, 0.411], [0.465, 0.496, 0.321, 0.411], [0.077, 0.496, 0.71, 0.418], [0.077, 0.304, 0.71, 0.61], [0.077, 0.304, 0.833, 0.61], [0.077, 0.223, 0.833, 0.691], [0.077, 0.126, 0.833, 0.788]], "bathroom": [0.03, 0.008, 0.912, 0.985], "stretch": [0.009, 0.016, 0.98, 0.965], "walk": [[0.418, 0.328, 0.361, 0.306], [0.425, 0.314, 0.393, 0.306], [0.442, 0.302, 0.436, 0.318], [0.449, 0.289, 0.462, 0.326], [0.453, 0.267, 0.474, 0.348], [0.443, 0.249, 0.471, 0.373], [0.397, 0.231, 0.477, 0.401], [0.266, 0.219, 0.538, 0.44], [0.116, 0.081, 0.642, 0.571], [0.091, 0.121, 0.642, 0.518], [0.122, 0.37, 0.598, 0.278], [0.15, 0.415, 0.563, 0.415], [0.305, 0.432, 0.416, 0.493], [0.412, 0.419, 0.309, 0.479], [0.485, 0.405, 0.286, 0.421], [0.533, 0.4, 0.274, 0.356], [0.542, 0.4, 0.259, 0.273], [0.535, 0.4, 0.254, 0.219]]};
+const AERO_TOUCH = ["walk", "bathroom", "water", "eat", "stretch"]; // touch order, bottom to top: small things win
+const aeroDur = (ms) => { const m = Math.round(ms / 6e4); return m >= 60 ? Math.floor(m / 60) + "h" + (m % 60 ? " " + (m % 60) + "m" : "") : m + "m"; };
 // Retro touch: a looping GIF of twinkling stars sits on whatever is due. [center x, center y, size] as fractions of the layer.
 const AERO_SPARK = { walk: [0.68, 0.6, 0.42], stretch: [0.5, 0.5, 1.5], water: [0.4, 0.45, 0.95], eat: [0.52, 0.42, 0.7], bathroom: [0.5, 0.45, 0.95] };
 function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
@@ -2032,32 +2037,49 @@ function AeroFocus({ needs, left, onPlay, onEnd, look, setLook }) {
   const s = Math.max(W / AERO.size[0], H / AERO.size[1]);
   const ox = (W - AERO.size[0] * s) / 2, oy = (H - AERO.size[1] * s) / 2;
   const by = Object.fromEntries(needs.map((n) => [n.key, n]));
+  const [info, setInfo] = useState(null); // { key, done }: the full-info card, after a swipe
+  const [showLooks, setShowLooks] = useState(false);
+  const infoT = useRef(null);
+  const onInfo = (n, done) => { setInfo({ key: n.key, done }); clearTimeout(infoT.current); infoT.current = setTimeout(() => setInfo(null), done ? 2600 : 5000); };
+  useEffect(() => () => clearTimeout(infoT.current), []);
+  const iN = info && by[info.key];
   return (
     <View style={{ flex: 1, backgroundColor: "#0b86e6", overflow: "hidden" }}>
       <Image source={AERO.bg} style={{ position: "absolute", left: ox, top: oy, width: AERO.size[0] * s, height: AERO.size[1] * s }} />
       <AeroLife s={s} ox={ox} oy={oy} W={W} />
-      {AERO_ORDER.filter((k) => by[k]).map((k, i) => <AeroThing key={k} n={by[k]} i={i} s={s} ox={ox} oy={oy} left={left(by[k])} onPlay={onPlay} />)}
-      <Pressable onPress={onEnd} style={[st.aeroEnd, { top: ins.top + 10 }]} accessibilityRole="button" accessibilityLabel="End focus" hitSlop={10}>
+      {AERO_ORDER.filter((k) => by[k]).map((k, i) => <AeroThing key={k} n={by[k]} i={i} s={s} ox={ox} oy={oy} left={left(by[k])} onPlay={onPlay} onInfo={onInfo} />)}
+      <Pressable onPress={onEnd} onLongPress={() => setShowLooks((v) => !v)} style={[st.aeroEnd, { top: ins.top + 10, zIndex: 60 }]} accessibilityRole="button" accessibilityLabel="End focus" accessibilityHint="Hold to choose a look" hitSlop={10}>
         <Text style={st.aeroEndTxt}>End</Text>
       </Pressable>
-      <View style={[st.aeroLooks, { bottom: ins.bottom + 14 }]}>
+      {iN && (
+        <Pressable onPress={() => setInfo(null)} style={[st.aeroInfo, { top: ins.top + 14, zIndex: 55 }]} accessibilityLiveRegion="polite">
+          <Text style={st.aeroInfoTitle} numberOfLines={1}>{iN.card.label}</Text>
+          {info.done
+            ? <Text style={st.aeroInfoLine}>Done · next in about {aeroDur(iN.every)}</Text>
+            : <>
+              <Text style={st.aeroInfoLine}>{iN.fill >= 1 ? "Due now" : "Due in " + left(iN)} · every {aeroDur(iN.every)}</Text>
+              <Text style={st.aeroInfoLine}>Counting from {fmtTime(new Date(iN.last))} · {Math.min(100, Math.round(iN.fill * 100))}% there</Text>
+              <Text style={st.aeroInfoHint}>Swipe it up when you've done it</Text>
+            </>}
+        </Pressable>
+      )}
+      {showLooks && <View style={[st.aeroLooks, { bottom: ins.bottom + 14, zIndex: 60 }]}>
         <Text style={st.aeroSub}>LOOK</Text>
         {FOCUS_LOOKS.map(([k, l]) => (
           <Pressable key={k} onPress={() => setLook(k)} style={[st.aeroChip, k === look && st.aeroChipOn]} accessibilityRole="radio" accessibilityState={{ selected: k === look }}>
             <Text style={[st.aeroChipTxt, k === look && { color: "#ffffff" }]}>{l}</Text>
           </Pressable>
         ))}
-      </View>
+      </View>}
     </View>
   );
 }
 /** One need in the world: its frame shows how full it is; it bobs if it floats; swipe it up to play its card. */
-function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
+function AeroThing({ n, i, s, ox, oy, left, onPlay, onInfo }) {
   const L = AERO.layers[n.key];
   const [cleared, setCleared] = useState(false);
   useEffect(() => { setCleared(false); }, [Math.round(n.last / 1000)]);
   const pct = cleared ? 0 : Math.min(100, n.fill * 100);
-  const lvl = AERO.levels.filter((l) => l <= pct + 0.01).pop() || 0;
   const full = !cleared && n.fill >= 1;
   const isDolphin = n.key === "walk", isTurtle = n.key === "stretch";
   const bob = useRef(new Animated.Value(0)).current, lift = useRef(new Animated.Value(0)).current, pulse = useRef(new Animated.Value(0)).current;
@@ -2084,26 +2106,42 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
     const l = Animated.loop(Animated.sequence([Animated.timing(pulse, { toValue: 1, duration: 650, useNativeDriver: true }), Animated.timing(pulse, { toValue: 0, duration: 650, useNativeDriver: true })]));
     l.start(); return () => l.stop();
   }, [full]);
-  const live = useRef(onPlay); live.current = onPlay;
-  const nn = useRef(n); nn.current = n;
-  const pr = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderTerminationRequest: () => false,
-    onPanResponderMove: (_, g) => { if (isDolphin) lift.setValue(Math.min(0, g.dy) * 0.6); },
-    onPanResponderRelease: (_, g) => {
-      if (g.dy < -50) {
-        if (isDolphin) Animated.sequence([Animated.timing(lift, { toValue: -60, duration: 160, useNativeDriver: true }), Animated.spring(lift, { toValue: 0, friction: 4, useNativeDriver: true })]).start();
-        Animated.sequence([Animated.timing(flash, { toValue: 1, duration: 140, useNativeDriver: true }), Animated.timing(flash, { toValue: 0, duration: 700, easing: Easing.out(Easing.quad), useNativeDriver: true })]).start();
-        setCleared(true); live.current(nn.current);
-      } else Animated.spring(lift, { toValue: 0, useNativeDriver: true }).start();
-    },
-  }), []);
+  const live = useRef({}); live.current = { onPlay, onInfo, n };
+  // Touch: hold shows the number; swipe up = done; swipe down = full info. Only the dolphin moves under your finger.
+  const [peek, setPeek] = useState(false);
+  const holdT = useRef(null), peekT = useRef(null);
+  useEffect(() => () => { clearTimeout(holdT.current); clearTimeout(peekT.current); }, []);
+  const pr = useMemo(() => {
+    const endPeek = () => { clearTimeout(holdT.current); clearTimeout(peekT.current); peekT.current = setTimeout(() => setPeek(false), 1400); };
+    return PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: () => { clearTimeout(peekT.current); holdT.current = setTimeout(() => setPeek(true), 300); },
+      onPanResponderMove: (_, g) => { if (Math.abs(g.dx) + Math.abs(g.dy) > 14) clearTimeout(holdT.current); if (isDolphin) lift.setValue(Math.min(0, g.dy) * 0.6); },
+      onPanResponderRelease: (_, g) => {
+        endPeek();
+        if (g.dy < -50) {
+          if (isDolphin) Animated.sequence([Animated.timing(lift, { toValue: -60, duration: 160, useNativeDriver: true }), Animated.spring(lift, { toValue: 0, friction: 4, useNativeDriver: true })]).start();
+          Animated.sequence([Animated.timing(flash, { toValue: 1, duration: 140, useNativeDriver: true }), Animated.timing(flash, { toValue: 0, duration: 700, easing: Easing.out(Easing.quad), useNativeDriver: true })]).start();
+          setPeek(false); setCleared(true); live.current.onInfo(live.current.n, true); live.current.onPlay(live.current.n);
+        } else {
+          if (isDolphin) Animated.spring(lift, { toValue: 0, useNativeDriver: true }).start();
+          if (g.dy > 50) { setPeek(false); live.current.onInfo(live.current.n, false); }
+        }
+      },
+      onPanResponderTerminate: () => { endPeek(); if (isDolphin) Animated.spring(lift, { toValue: 0, useNativeDriver: true }).start(); },
+    });
+  }, []);
   const x = ox + L.x * s, y = oy + L.y * s, w = L.w * s, h = L.h * s;
-  const labelTop = n.key === "water" ? -26 : n.key === "eat" ? h * 0.74 : n.key === "walk" ? h * 0.55 : h + 4;
-  return (
-    <Animated.View {...pr.panHandlers} accessibilityRole="adjustable" accessibilityLabel={n.card.label + (full ? ", full" : ", " + left + " until full")}
-      style={{ position: "absolute", left: x, top: y, width: w, height: h,
+  // The touch box: the visible object (plus a little padding), never the whole transparent image.
+  const hbs = AERO_HIT[n.key], hb = Array.isArray(hbs[0]) ? hbs[Math.min(wIdx, hbs.length - 1)] : hbs, pad = 8; // per frame where the thing moves or grows
+  let hx = x + hb[0] * w - pad, hy = y + hb[1] * h - pad, hw = hb[2] * w + pad * 2, hh = hb[3] * h + pad * 2;
+  if (hw < 52) { hx -= (52 - hw) / 2; hw = 52; } if (hh < 52) { hy -= (52 - hh) / 2; hh = 52; }
+  const follow = isTurtle ? [{ translateY: Animated.multiply(rise, -s) }] : [];
+  return (<>
+    <Animated.View pointerEvents="none"
+      style={{ position: "absolute", zIndex: 1 + i, left: x, top: y, width: w, height: h,
         transform: [{ translateY: Animated.add(Animated.add(lift, Animated.multiply(rise, -s)), bob.interpolate({ inputRange: [0, 1], outputRange: [-(AERO_BOB[n.key] || 0), AERO_BOB[n.key] || 0] })) },
           { rotate: bob.interpolate({ inputRange: [0, 1], outputRange: isDolphin ? ["-1.2deg", "1.2deg"] : ["0deg", "0deg"] }) },
           { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, isDolphin || isTurtle ? 1.03 : 1] }) }] }}>
@@ -2125,11 +2163,17 @@ function AeroThing({ n, i, s, ox, oy, left, onPlay }) {
       </>}
       {full && (() => { const [cx, cy, k] = AERO_SPARK[n.key], d = Math.max(w, h) * k * (isTurtle ? 0.6 : 1) * (n.key === "walk" ? 0.5 : 0.6);
         return <Image source={AERO.sparkle} fadeDuration={0} pointerEvents="none" style={{ position: "absolute", left: w * cx - d / 2, top: h * cy - d / 2, width: d, height: d }} />; })()}
-      <View style={[st.aeroLabel, { position: "absolute", top: labelTop, alignSelf: "center" }, full && { backgroundColor: "#ffffff", borderColor: "#ffb020" }]}>
-        <Text style={st.aeroLabelTxt} numberOfLines={1}>{full ? "! " : ""}{n.name} · {left}</Text>
-      </View>
     </Animated.View>
-  );
+    <Animated.View {...pr.panHandlers} accessible accessibilityRole="button" accessibilityLabel={n.card.label + (full ? ", due now" : ", due in " + left)}
+      accessibilityHint="Hold for the time left. Swipe up when done, swipe down for details."
+      accessibilityActions={[{ name: "activate", label: "Mark done" }]} onAccessibilityAction={() => { setCleared(true); onInfo(n, true); onPlay(n); }}
+      style={{ position: "absolute", zIndex: 20 + AERO_TOUCH.indexOf(n.key), left: hx, top: hy, width: hw, height: hh, transform: follow }} />
+    {peek && (
+      <Animated.View pointerEvents="none" style={[st.aeroLabel, { position: "absolute", zIndex: 50, left: hx + hw / 2 - 40, width: 80, top: Math.max(hy - 34, 8), alignItems: "center", transform: follow }, full && { backgroundColor: "#ffffff", borderColor: "#ffb020" }]}>
+        <Text style={st.aeroLabelTxt} numberOfLines={1}>{left}</Text>
+      </Animated.View>
+    )}
+  </>);
 }
 /** Things that live in the world: gulls crossing the sky, bubbles drifting up. */
 function AeroLife({ s, ox, oy, W }) {
@@ -3088,8 +3132,12 @@ function makeStyles() { return StyleSheet.create({
   aeroBtnTxt: { fontSize: 15, fontWeight: "700", color: "#0b3d6e" },
   aeroEnd: { position: "absolute", right: 14, width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.55)", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.9)" },
   aeroEndTxt: { fontSize: 12, fontWeight: "700", color: "#0b3d6e" },
-  aeroLabel: { marginTop: 6, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.55)", borderWidth: 1, borderColor: "rgba(255,255,255,0.95)" },
-  aeroLabelTxt: { fontSize: 12, fontWeight: "700", color: "#0b3d6e" },
+  aeroLabel: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.55)", borderWidth: 1, borderColor: "rgba(255,255,255,0.95)" },
+  aeroLabelTxt: { fontSize: 15, fontWeight: "800", color: "#0b3d6e" },
+  aeroInfo: { position: "absolute", left: 14, right: 72, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.82)", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.95)" },
+  aeroInfoTitle: { fontSize: 17, fontWeight: "800", color: "#0b3d6e" },
+  aeroInfoLine: { fontSize: 13, color: "#0b3d6e", marginTop: 3 },
+  aeroInfoHint: { fontSize: 12, color: "#0b3d6e", opacity: 0.7, marginTop: 6 },
   aeroBubble: { position: "absolute", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.8)", backgroundColor: "rgba(200,240,255,0.12)" },
   aeroBang: { position: "absolute", top: 0, right: 0, width: 28, height: 28, borderRadius: 14, backgroundColor: "#ffffff", borderWidth: 2, borderColor: "#ffb020", alignItems: "center", justifyContent: "center", elevation: 4 },
   aeroBangTxt: { fontSize: 16, fontWeight: "900", color: "#e07b00" },
