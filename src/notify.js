@@ -36,6 +36,16 @@ export async function setupNotifications() {
       lightColor: "#ff4f86",
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     });
+    // Focus mode: a full gauge buzzes the phone once, silently. No sound, no full-screen takeover.
+    await Notifications.setNotificationChannelAsync("focus-buzz", {
+      name: "Focus: a need is full (vibrate only)",
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: null,
+      vibrationPattern: [0, 350, 200, 350],
+      enableVibrate: true,
+      lightColor: "#4fc3ff",
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    });
     await Notifications.setNotificationChannelAsync("reminders", {
       name: "Reminders you set",
       importance: Notifications.AndroidImportance.MAX,
@@ -316,11 +326,17 @@ export function qpIdle(mins, label = "") {
 }
 
 /**
- * Focus mode: ring full screen when a need has been full for 10 minutes. `needs` = [{ cardId, label, fullAt }].
- * Pass [] to stop them all. Swipes on the alarm play the card like any other alarm.
+ * Focus mode: when a need's gauge fills, buzz once (vibrate only, no sound, no takeover) — the scene shows the rest.
+ * `needs` = [{ cardId, label, fullAt }]. Pass [] to clear them. Also clears any old full-screen focus alarms.
  */
-export function focusAlarms(needs) {
-  if (!Takeover) return;
-  for (const id of Takeover.ids()) if (id.startsWith("focus-")) Takeover.cancel(id);
-  for (const n of needs) Takeover.schedule("focus-" + n.cardId, Math.max(Date.now() + 5000, n.fullAt + 10 * 60e3), n.label.toUpperCase(), "It's full. Swipe up when you've done it.", 3, 10);
+export async function focusAlarms(needs) {
+  if (Takeover) for (const id of Takeover.ids()) if (id.startsWith("focus-")) Takeover.cancel(id);
+  await cancelKind("focus");
+  for (const n of needs) {
+    const at = Math.max(Date.now() + 5000, n.fullAt);
+    await Notifications.scheduleNotificationAsync({
+      content: { title: n.label + " is full", body: "Swipe it up in Focus when you've done it.", data: { kind: "focus", cardId: n.cardId }, color: "#4fc3ff", sound: false },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: new Date(at), channelId: "focus-buzz" },
+    });
+  }
 }
