@@ -1,16 +1,14 @@
 # Focus · Frutiger Aero art
 
-The Aero focus scene is one three.js world, pre-rendered.
+`python3 tools/aero/build.py` (from the repo root) turns the smooth sources in `src/` into everything the app shows:
+dithered frames per need, glows, the sparkle and ambient-life GIFs, the cleaned background, and the manifest
+`src/focus/aeroLook.js` (placement, frames, touch boxes). It wipes `assets/aero3/` first. Preview a fill level with
+`python3 tools/aero/preview.py 0.5 /tmp/p.jpg [glow]`.
 
-- `scene4.html` builds the world (sky, clouds, sea, beach, islands) and the five needs; `window.renderFrame({need: level})`.
-- `render4.js <out> full [ss]` renders the empty world, each need alone at 0–100%, and the gull/fish sprites (headless Chromium + swiftshader).
-- `pack4.py <out> <pack>` runs `post.py` (bloom, sun rays, lens ghosts, grade, vignette) on every frame and cuts each need out where it differs from the empty world, writing cropped layers plus `manifest.json`.
-- Earth textures (NASA Blue Marble, public domain) come from the `three-globe` npm package's example images, copied into `tex/`.
+Sources (`src/`): `bg_plate.jpg` (the outpainted beach), `water/` glass filling, `pile/` fruit stop-motion,
+`dolphin/` turning away, `turtle_withdraw.mp4` (shot on black), `ball_deflate.mp4` plus SAM3 masks `ball/m*.png`
+(played backwards: inflated = due). How those were made — Midjourney edits, FLUX Kontext, Wan first/last-frame and
+image-to-video on Hugging Face — lives in `mj/`, `pile/`, `dolphin/`, `gen/`, `photo/`.
 
-Then convert the layer PNGs to .webp, copy into `assets/aero3/`, and paste the manifest into `AERO` in App.js.
-
-## Photographed water
-
-Splashes and streams are photographs shot on black (`photo/`), not modeled. After `pack4.py`, lay one into the background:
-`python3 photo/water_overlay.py pack/bg.jpg photo/stream.png pack/bg.jpg 560 -88 1100 1012` (x, y, height, horizon y).
-It screens the water's light over the scene, bends and deepens what's behind it, and adds foam where it meets the sea.
+To add a thing or a new look: give it a builder in `build.py` that returns smooth RGBA frames on a scene rect, add it
+to `THINGS`, rebuild. The app code (`src/focus/Aero.js`) needs no change.
