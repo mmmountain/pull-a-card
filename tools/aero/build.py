@@ -52,7 +52,8 @@ def hitbox(obj, inset=0.06):  # visible object -> [x, y, w, h] as fractions of t
 def drop_matching(f, bgA, r):
     """Where a frame just repeats the photo behind it (sea seen through the edge of the glass, sand), let the photo show:
     the dithered copy of the sea would otherwise sit on the smooth sea as a visible patch."""
-    y, x = r["y"] + PLATE_TOP, r["x"]; under = bgA[y:y + f.shape[0], x:x + f.shape[1]]
+    y, x = r["y"] + PLATE_TOP, r["x"]; P = 200                     # pad: a layer may hang off the edge of the scene
+    padded = np.pad(bgA, ((P, P), (P, P), (0, 0)), mode="edge"); under = padded[y + P:y + P + f.shape[0], x + P:x + P + f.shape[1]]
     comp = f[..., :3] * f[..., 3:] + under * (1 - f[..., 3:])
     d = nd.gaussian_filter(np.abs(comp - under).max(-1), 2)
     keep = np.clip((d - 0.035) / 0.04, 0, 1); g = f.copy(); g[..., 3] *= keep; return g
@@ -119,7 +120,7 @@ def dolphin():
             im = Image.new("RGBA", (Wc, Hc), (0, 0, 0, 0)); d = Image.open(f"{SRC}/dolphin_still.webp").convert("RGBA").resize((380, 338), Image.LANCZOS)
             im.alpha_composite(d, (round(330 - ax), round(520 - ay)))
         fr.append(np.asarray(im).astype(np.float32) / 255)
-    return {"rect": {"x": round(ax), "y": round(ay), "w": Wc, "h": Hc}, "frames": fr, "obj": [f[..., 3] for f in fr]}
+    return {"rect": {"x": round(ax) - 90, "y": round(ay), "w": Wc, "h": Hc}, "frames": fr, "obj": [f[..., 3] for f in fr]}  # nudged left of where the photo had it
 
 def turtle():  # flippers and head draw into the shell as stretch comes due (video shot on black: key out by brightness)
     fs = video_frames(f"{SRC}/turtle_withdraw.mp4")
@@ -132,7 +133,7 @@ def turtle():  # flippers and head draw into the shell as stretch comes due (vid
         rgb = np.clip(p / np.maximum(a[..., None], 0.2), 0, 1); raw.append(np.dstack([rgb, a]))
     U = np.max([r[..., 3] for r in raw], 0) > 0.1; ys, xs = np.where(U); m = 4
     y0, y1, x0, x1 = ys.min() - m, ys.max() + m, xs.min() - m, xs.max() + m
-    cx, cy, Wt = 770, 862, 270                                    # where the old still sat, about as wide
+    cx, cy, Wt = 840, 870, 380                                    # where the old still sat, bigger
     k = Wt / (x1 - x0); Ht = round((y1 - y0) * k)
     fr = [np.asarray(rgba(r[y0:y1, x0:x1]).resize((Wt, Ht), Image.LANCZOS)).astype(np.float32) / 255 for r in raw]
     return {"rect": {"x": cx - Wt // 2, "y": cy - Ht // 2, "w": Wt, "h": Ht}, "frames": fr, "obj": [f[..., 3] for f in fr]}
@@ -175,11 +176,11 @@ def ball():
     return {"rect": {"x": int(x0), "y": int(y0), "w": int(x1 - x0), "h": int(y1 - y0)}, "frames": [f[y0:y1, x0:x1] for f in frames], "obj": [o[y0:y1, x0:x1] for o in objs]}
 
 # ---------------------------------------------------------------- ambient life and sparkle
-def gif(frames, out, ms):
+def gif(frames, out, ms, cell=CELL):
     pal = [255, 0, 255, 255, 255, 255, 200, 236, 255, 255, 246, 190, 255, 214, 244, 150, 214, 255] + [0] * (256 * 3 - 18)
     ims = []
     for f in frames:
-        im = Image.new("P", f.shape[::-1], 0); im.putpalette(pal); im.putdata(f.flatten().tolist()); ims.append(im.resize((f.shape[1] * CELL, f.shape[0] * CELL), Image.NEAREST))
+        im = Image.new("P", f.shape[::-1], 0); im.putpalette(pal); im.putdata(f.flatten().tolist()); ims.append(im.resize((f.shape[1] * cell, f.shape[0] * cell), Image.NEAREST))
     ims[0].save(out, save_all=True, append_images=ims[1:], duration=ms, loop=0, transparency=0, disposal=2, optimize=False)
 
 def star(px, x, y, r, c):
@@ -193,7 +194,7 @@ def star(px, x, y, r, c):
 
 def sparkle(out):
     """On whatever is due: a few small, thin four-point stars that twinkle in turn (more delicate than before)."""
-    G, N = 64, 16; stars = [(14, 16, 5, 0, 2), (48, 12, 4, 6, 3), (50, 44, 6, 11, 2), (18, 50, 4, 4, 4), (33, 30, 3, 9, 3)]
+    G, N = 64, 16; stars = [(14, 16, 3, 0, 2), (48, 12, 3, 6, 3), (50, 44, 4, 11, 2), (18, 50, 3, 4, 4), (33, 30, 2, 9, 3)]
     frames = []
     for f in range(N):
         px = np.zeros((G, G), np.uint8)
@@ -214,25 +215,25 @@ def life(plate):
     """Retro GIF loops laid over the photo: stars twinkling in the Milky Way, glints running along the water stream."""
     N = 24; boxes = {}
     # Milky Way (plate coords)
-    box = (390, 0, 780, 720); pts = bright_points(plate, box, 110, 3, 120)
-    w, h = (box[2] - box[0]) // CELL, (box[3] - box[1]) // CELL; frames = []
-    random.seed(7); ph = [random.randrange(N) for _ in pts]; sz = [random.choice([0, 1, 1, 2, 2]) for _ in pts]; col = [random.choice([1, 2, 3, 4]) for _ in pts]
+    box = (390, 0, 780, 720); pts = bright_points(plate, box, 110, 3, 120); C2 = 2   # finer pixels than the rest: stars stay tiny
+    w, h = (box[2] - box[0]) // C2, (box[3] - box[1]) // C2; frames = []
+    random.seed(7); ph = [random.randrange(N) for _ in pts]; sz = [random.choice([0, 0, 0, 1]) for _ in pts]; col = [random.choice([1, 2, 3, 4]) for _ in pts]
     for f in range(N):
         px = np.zeros((h, w), np.uint8)
         for (x, y), p, s, c in zip(pts, ph, sz, col):
             t = ((f + p) % N) / N
-            if t < 0.45: star(px, x // CELL, y // CELL, int(round(s * math.sin(math.pi * t / 0.45))), c)
+            if t < 0.45: star(px, x // C2, y // C2, int(round(s * math.sin(math.pi * t / 0.45))), c)
         frames.append(px)
-    gif(frames, f"{OUT}/life_stars.gif", 110); boxes["stars"] = {"x": box[0], "y": box[1] - PLATE_TOP, "w": w * CELL, "h": h * CELL}
+    gif(frames, f"{OUT}/life_stars.gif", 110, C2); boxes["stars"] = {"x": box[0], "y": box[1] - PLATE_TOP, "w": w * C2, "h": h * C2}
     # water stream (plate coords): glints pop on the brightest highlights, a few at a time
-    box = (0, 640, 1080, 1060); pts = bright_points(plate, box, 120, 11, 225)
+    box = (0, 640, 1080, 1060); pts = bright_points(plate, box, 7, 11, 225); NS = 64   # a long loop, mostly empty
     w, h = (box[2] - box[0]) // CELL, (box[3] - box[1]) // CELL; frames = []
-    random.seed(9); ph = [random.randrange(N) for _ in pts]
-    for f in range(N):
+    random.seed(9); ph = random.sample(range(0, NS, NS // len(pts)), len(pts))
+    for f in range(NS):
         px = np.zeros((h, w), np.uint8)
         for (x, y), p in zip(pts, ph):
-            t = ((f + p) % N) / N
-            if t < 0.25: star(px, x // CELL, y // CELL, 2 if 0.09 < t < 0.16 else 1 if 0.03 < t < 0.22 else 0, 2)
+            t = (f + p) % NS
+            if t < 5: star(px, x // CELL, y // CELL, [0, 1, 2, 1, 0][t], 2)
         frames.append(px)
     gif(frames, f"{OUT}/life_shimmer.gif", 90); boxes["shimmer"] = {"x": box[0], "y": box[1] - PLATE_TOP, "w": w * CELL, "h": h * CELL}
     return boxes
@@ -250,11 +251,11 @@ def plate():
 
 # ---------------------------------------------------------------- build
 THINGS = {  # key: (builder, file prefix, extra manifest fields)
-    "walk": (dolphin, "walk", {"bob": 6, "sway": 1.2, "lift": True, "spark": [0.68, 0.6, 0.21]}),
-    "stretch": (turtle, "stretch", {"bob": 4, "rise": 620, "spark": [0.5, 0.5, 0.9]}),
-    "bathroom": (ball, "bath", {"spark": [0.5, 0.4, 0.6]}),
-    "water": (water, "water", {"spark": [0.4, 0.45, 0.57]}),
-    "eat": (pile, "eat", {"spark": [0.52, 0.42, 0.42]}),
+    "walk": (dolphin, "walk", {"bob": 6, "sway": 1.2, "lift": True, "spark": [0.68, 0.6, 0.15]}),
+    "stretch": (turtle, "stretch", {"bob": 4, "rise": 620, "spark": [0.5, 0.5, 0.65]}),
+    "bathroom": (ball, "bath", {"spark": [0.5, 0.4, 0.45]}),
+    "water": (water, "water", {"spark": [0.4, 0.45, 0.42]}),
+    "eat": (pile, "eat", {"spark": [0.52, 0.42, 0.32]}),
 }
 
 def main():

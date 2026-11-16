@@ -13,5 +13,5 @@ for k in order:
     if len(sys.argv) > 3 and f >= 1:
         g = Image.open(A + re.search(r'aero3/([a-z]+-glow\.webp)', blk).group(1)).convert("RGBA"); pw, ph = round(r["w"] * .15), round(r["h"] * .15)
         bg.alpha_composite(g.resize((r["w"] + 2 * pw, r["h"] + 2 * ph)), (r["x"] - pw, r["y"] + top - ph))
-    bg.alpha_composite(im, (r["x"], r["y"] + top))
+    bg.alpha_composite(im.crop((max(0,-r["x"]),0,im.width,im.height)), (max(0,r["x"]), r["y"] + top))
 bg.convert("RGB").crop((0, top, 1080, top + 1920)).save(out, quality=88)
