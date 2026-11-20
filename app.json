@@ -36,7 +36,8 @@
       [
         "expo-notifications",
         {
-          "color": "#ff7eb6"
+          "color": "#ff7eb6",
+          "icon": "./assets/notification-icon.png"
         }
       ],
       "expo-task-manager",
