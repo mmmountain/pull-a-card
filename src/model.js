@@ -1,6 +1,6 @@
 // Pure game logic. No React, no network — tested with node.
 
-export const SUIT = { body: "●", home: "■", mind: "▲", work: "◆" };
+export const SUIT = { body: "●", home: "●", mind: "●", work: "●" }; // no card suits: a plain dot, told apart by colour
 export const SUITS = ["body", "home", "mind", "work"];
 
 // Dealt from 9:30 PM, takes over the screen at 10:30 PM until you play it.

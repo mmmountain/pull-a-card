@@ -2553,7 +2553,7 @@ function EmojiPicker({ value, onPick }) {
 }
 
 /* ---------------- side menu ---------------- */
-const SECTIONS = [["play", "Play", "♠"], ["focus", "Focus", "◐"], ["quick", "Quick play", "▶"], ["decks", "My decks", "▤"], ["me", "Me", "●"], ["settings", "Settings", "⚙"]];
+const SECTIONS = [["play", "Play", "○"], ["focus", "Focus", "◐"], ["quick", "Quick play", "▶"], ["decks", "My decks", "▤"], ["me", "Me", "●"], ["settings", "Settings", "⚙"]];
 const DRAWER_W = Math.min(300, Dimensions.get("window").width * 0.8);
 // Slides in from the left: tap the ☰ button, or drag from the left edge of the screen. Drag it back or tap outside to close.
 function Drawer({ open, setOpen, section, name, room, onPick }) {
