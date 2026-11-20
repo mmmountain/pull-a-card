@@ -1,6 +1,6 @@
 {
-  "name": "Prompt",
-  "short_name": "Prompt",
+  "name": "Prompter",
+  "short_name": "Prompter",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
