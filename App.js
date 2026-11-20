@@ -106,13 +106,18 @@ function Centered({ children }) {
 
 /* ---------------- join ---------------- */
 function Join({ onDone, initial }) {
+  // First run asks for one thing: your name. You get a table of your own straight away (a private code made from your
+  // name); sharing a table is a choice you make later, or here only if a friend has already given you their code.
   const [name, setName] = useState(initial?.me?.name || "");
-  const [room, setRoom] = useState(initial?.room || "");
+  const [joining, setJoining] = useState(false);
+  const [room, setRoom] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const go = async () => {
-    const r = room.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
-    if (!name.trim() || r.length < 3) { setErr("Enter your name and a table name of at least 3 letters."); return; }
+    if (!name.trim()) { setErr("What should we call you?"); return; }
+    const own = (name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 16) || "me") + "-" + Math.random().toString(36).slice(2, 6);
+    const r = joining ? room.trim().toLowerCase().replace(/[^a-z0-9-]/g, "") : own;
+    if (joining && r.length < 3) { setErr("Enter the code your friend gave you."); return; }
     setBusy(true); setErr("");
     try {
       const me = { id: initial?.me?.id || newId(), name: name.trim() };
@@ -122,18 +127,20 @@ function Join({ onDone, initial }) {
       await S.saveProfile(p);
       onDone(p);
     } catch (e) {
-      setErr("Couldn't reach the table: " + (e.message || e));
+      setErr("Couldn't connect: " + (e.message || e));
     } finally { setBusy(false); }
   };
   return (
     <SafeAreaView style={st.screen}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, padding: 24, justifyContent: "center", gap: 14 }}>
         <Text style={st.h1}>Prompter</Text>
-        <Text style={st.note}>Pick a table name. Give the same name to a friend and you'll share a table.</Text>
-        <Field label="Your name" value={name} onChangeText={setName} placeholder="Scott" />
-        <Field label="Table name" value={room} onChangeText={setRoom} placeholder="scott-and-sam" autoCapitalize="none" />
+        <Field label="What should we call you?" value={name} onChangeText={setName} placeholder="Your name" />
+        {joining && <Field label="Your friend's table code" value={room} onChangeText={setRoom} placeholder="sam-x7k2" autoCapitalize="none" />}
         {!!err && <Text style={[st.note, { color: C.hot }]}>{err}</Text>}
-        <Btn primary label={busy ? "Joining…" : "Sit down"} onPress={go} disabled={busy} />
+        <Btn primary label={busy ? "Starting…" : joining ? "Join their table" : "Start"} onPress={go} disabled={busy} />
+        <Pressable onPress={() => { setJoining((v) => !v); setErr(""); }} hitSlop={10} accessibilityRole="button">
+          <Text style={[st.note, { textAlign: "center", textDecorationLine: "underline" }]}>{joining ? "Start my own instead" : "A friend gave me a table code"}</Text>
+        </Pressable>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -1262,7 +1269,7 @@ function TableView({ state, me, per = null }) {
   const drawN = Math.max(0, myDeck(state.cards, state.players, me.id, state.decks, state.maps).filter((c) => c.active !== false).length - state.hands.filter((h) => h.seat === me.id).length);
   const active = players.find((p) => p.id === state.game.active);
   const Side = ({ p }) => {
-    if (!p) return <View style={st.side}><Text style={[st.h3, { color: C.muted }]}>Open seat</Text><Text style={st.note}>Give a friend your table name so they can sit here.</Text></View>;
+    if (!p) return <View style={st.side}><Text style={[st.h3, { color: C.muted }]}>Open seat</Text><Text style={st.note}>Give a friend your table code so they can sit here.</Text></View>;
     const plays = state.plays.filter((x) => x.seat === p.id && (!since || Date.parse(x.at) >= since)).sort((a, b) => a.at.localeCompare(b.at));
     const held = state.hands.filter((h) => h.seat === p.id).length;
     const isTurn = state.game.active === p.id;
@@ -1570,7 +1577,7 @@ function MeView({ part, profile, rooms, prefs, setProfile, act, state, openSwitc
         <Text style={st.label}>YOU</Text>
         <Text style={st.h2}>{profile.me.name}</Text>
         <Text style={[st.note, { textAlign: "left" }]}>Sitting at {rooms.length} {rooms.length === 1 ? "table" : "tables"}: {rooms.join(", ")}.</Text>
-        <Text style={[st.note, { textAlign: "left" }]}>Friends join a table by entering the same table name.</Text>
+        <Text style={[st.note, { textAlign: "left" }]}>Friends join a table by entering its code.</Text>
         <Btn label="Switch or add tables" onPress={openSwitcher} />
       </View>
       <View style={st.panel}>
@@ -2647,7 +2654,7 @@ function TableSwitcher({ open, ctx, onClose, onPick, onAdd, onLeave, onPause }) 
           );
         })}
         <Text style={st.label}>ADD A TABLE</Text>
-        <Field label="Table name" value={name} onChangeText={setName} placeholder="morning-routine" autoCapitalize="none" />
+        <Field label="New table name, or a friend's code" value={name} onChangeText={setName} placeholder="morning-routine" autoCapitalize="none" />
         {!!err && <Text style={[st.note, { color: C.hot, textAlign: "left" }]}>{err}</Text>}
         <Btn primary label={busy ? "Joining…" : "Sit down at this table"} disabled={busy || !name.trim()} onPress={add} />
       </ScrollView>
