@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Prompt",
+    "name": "Prompter",
     "slug": "pull-a-card",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -25,11 +25,6 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "permissions": [
-        "android.permission.POST_NOTIFICATIONS",
-        "android.permission.USE_EXACT_ALARM",
-        "android.permission.SCHEDULE_EXACT_ALARM",
-        "android.permission.RECEIVE_BOOT_COMPLETED",
-        "android.permission.VIBRATE",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.USE_EXACT_ALARM",
         "android.permission.SCHEDULE_EXACT_ALARM",

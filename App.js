@@ -13,6 +13,7 @@ import * as N from "./src/notify";
 import * as M from "./src/multi";
 import * as A from "./src/alarm";
 import * as CU from "./src/catchup";
+import Constants from "expo-constants";
 import AeroFocus from "./src/focus/Aero";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ORIGINAL, PINK_LEMONADE, randomTheme } from "./src/theme";
@@ -127,7 +128,7 @@ function Join({ onDone, initial }) {
   return (
     <SafeAreaView style={st.screen}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, padding: 24, justifyContent: "center", gap: 14 }}>
-        <Text style={st.h1}>Prompt</Text>
+        <Text style={st.h1}>Prompter</Text>
         <Text style={st.note}>Pick a table name. Give the same name to a friend and you'll share a table.</Text>
         <Field label="Your name" value={name} onChangeText={setName} placeholder="Scott" />
         <Field label="Table name" value={room} onChangeText={setRoom} placeholder="scott-and-sam" autoCapitalize="none" />
@@ -2590,7 +2591,7 @@ function Drawer({ open, setOpen, section, name, room, onPick }) {
       </Animated.View>
       <Animated.View pointerEvents={shown ? "auto" : "none"} style={[st.drawer, { width: DRAWER_W, transform: [{ translateX: x }] }]} {...panel.panHandlers}>
         <SafeAreaView edges={["top", "bottom", "left"]} style={{ flex: 1, gap: 6 }}>
-          <Text style={st.drawerBrand}>Prompt</Text>
+          <Text style={st.drawerBrand}>{Constants.expoConfig?.name || "Prompter"}</Text>
           <Text style={[st.note, { textAlign: "left", marginBottom: 12 }]} numberOfLines={1}>{name} · {room}</Text>
           {SECTIONS.map(([k, l, icon]) => (
             <Pressable key={k} onPress={() => onPick(k)} style={[st.drawerItem, section === k && st.drawerItemOn]} accessibilityRole="menuitem" accessibilityState={{ selected: section === k }}>

@@ -1,14 +1,22 @@
-name: Ship Prompt
+name: Ship Prompter
 
-# Every push to main:
-#   web     → republishes the iPhone/web app (gh-pages)
-#   dealer  → redeploys the Supabase dealer function
+# Two apps, one codebase (see app.config.js):
+#   main → Prompter (everyday app)     dev → Prompter Dev (new work, installed beside it, its own updates)
+# Every push to main or dev:
+#   web     → republishes the iPhone/web app (gh-pages)          main only
+#   dealer  → redeploys the Supabase dealer function              main only
 #   update  → sends an over-the-air update to installed Android apps
 #   apk     → builds a new APK only when the app's native side changed
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
+
+env:
+  APP_VARIANT: ${{ github.ref_name == 'dev' && 'dev' || '' }}
+  CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'production' }}
+  PREFIX: ${{ github.ref_name == 'dev' && 'dev-build-' || 'build-' }}
+  APK: ${{ github.ref_name == 'dev' && 'prompter-dev.apk' || 'prompter.apk' }}
 
 permissions:
   contents: write
@@ -56,12 +64,14 @@ jobs:
         run: |
           HASH=$(npx expo-updates fingerprint:generate --platform android | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).hash))')
           echo "hash=$HASH" >> "$GITHUB_OUTPUT"
-          LAST=$(gh release view --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null | grep -o 'fingerprint: [0-9a-f]*' | cut -d' ' -f2 || true)
+          TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 60 --json tagName -q "[.[] | select(.tagName | startswith(\"$PREFIX\"))][0].tagName" 2>/dev/null || true)
+          LAST=$([ -n "$TAG" ] && gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null | grep -o 'fingerprint: [0-9a-f]*' | cut -d' ' -f2 || true)
           if [ "$HASH" = "$LAST" ]; then echo "need_apk=false" >> "$GITHUB_OUTPUT"; else echo "need_apk=true" >> "$GITHUB_OUTPUT"; fi
           echo "fingerprint $HASH, last APK $LAST"
 
   web:
     needs: setup
+    if: github.ref_name != 'dev'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,6 +85,7 @@ jobs:
 
   dealer:
     needs: setup
+    if: github.ref_name != 'dev'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,7 +107,9 @@ jobs:
       - run: npm ci
       - name: Send the update to installed phones
         env: { EXPO_TOKEN: "${{ secrets.EXPO_TOKEN }}" }
-        run: npx eas-cli@latest update --channel production --platform android --message "${{ github.event.head_commit.message || 'manual run' }}" --non-interactive
+        run: |
+          if [ "$CHANNEL" != production ]; then npx eas-cli@latest channel:create "$CHANNEL" --non-interactive 2>/dev/null || true; fi
+          npx eas-cli@latest update --channel "$CHANNEL" --platform android --message "${{ github.event.head_commit.message || 'manual run' }}" --non-interactive
 
   apk:
     needs: setup
@@ -118,13 +131,13 @@ jobs:
       - name: Build release APK
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
-      - run: cp android/app/build/outputs/apk/release/app-release.apk pull-a-card.apk
+      - run: cp android/app/build/outputs/apk/release/app-release.apk "$APK"
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Prompt build ${{ github.run_number }}
-          make_latest: true
+          tag_name: ${{ env.PREFIX }}${{ github.run_number }}
+          name: ${{ github.ref_name == 'dev' && 'Prompter Dev' || 'Prompter' }} build ${{ github.run_number }}
+          make_latest: ${{ github.ref_name != 'dev' }}
           body: |
             Install this only if Claude says a reinstall is needed. Everyday changes arrive on their own.
             fingerprint: ${{ needs.setup.outputs.fingerprint }}
-          files: pull-a-card.apk
+          files: ${{ env.APK }}
