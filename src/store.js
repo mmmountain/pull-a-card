@@ -543,7 +543,7 @@ export async function addLibraryDeck(room, me, key) {
   const tpl = DECK_LIBRARY.find((d) => d.key === key);
   if (!tpl) throw new Error("That deck isn't in the library.");
   const deckId = me.id + ":" + key;
-  await upsert(room, "decks", deckId, { owner: me.id, name: tpl.name, key, active: true });
+  await upsert(room, "decks", deckId, { owner: me.id, name: tpl.name, key, active: !tpl.paused, ...(tpl.emoji ? { emoji: tpl.emoji } : {}) }); // paused decks are for quick play only
   const existing = new Set((await listColl(room, "cards")).map((c) => c.id));
   for (const c of tpl.cards) {
     const { key: ck, ...data } = c;
